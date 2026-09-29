@@ -4,8 +4,14 @@ import { CliError, type CommandResult } from '../shared.js'
 export const settingsUsage = `  settings get                          Read the profile's settings
   settings set KEY VALUE [KEY VALUE ...]
                                         Change settings: appearance light|dark|system,
-                                        reduced_motion system|on|off
+                                        reduced_motion system|on|off,
+                                        keybindings.COMMAND ACCELERATOR|none
+  settings reset-keybindings [COMMAND ...]
+                                        Return the named commands, or every command,
+                                        to their default keys
 `
+
+const KEYBINDING = 'keybindings.'
 
 export async function runSettingsCommand(
   socketPath: string,
@@ -20,9 +26,20 @@ export async function runSettingsCommand(
   }
   if (action === 'set') {
     if (!rest.length || rest.length % 2) throw new CliError('usage', 'settings set requires KEY VALUE pairs.')
-    const change: Record<string, string> = {}
-    for (let index = 0; index < rest.length; index += 2) change[rest[index]!] = rest[index + 1]!
+    const change: Record<string, unknown> = {}
+    const keybindings: Record<string, string | null> = {}
+    for (let index = 0; index < rest.length; index += 2) {
+      const key = rest[index]!
+      const value = rest[index + 1]!
+      // `none` unbinds the command; it is not an accelerator.
+      if (key.startsWith(KEYBINDING)) keybindings[key.slice(KEYBINDING.length)] = value === 'none' ? null : value
+      else change[key] = value
+    }
+    if (Object.keys(keybindings).length) change.keybindings = keybindings
     return call(socketPath, 'settings.set', change as never)
+  }
+  if (action === 'reset-keybindings') {
+    return call(socketPath, 'settings.set', { reset_keybindings: rest.length ? rest : 'all' } as never)
   }
   return undefined
 }

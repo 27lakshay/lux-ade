@@ -1766,6 +1766,22 @@
       ],
       "type": "object"
     },
+    "AppCommand": {
+      "description": "An app command a key runs: the desktop's application-menu commands\n(F015). Every client reads the same keys for them from the daemon.",
+      "enum": [
+        "new-conversation",
+        "new-tab",
+        "new-terminal",
+        "close-tab",
+        "split-right",
+        "command-palette",
+        "toggle-left-sidebar",
+        "toggle-right-sidebar",
+        "toggle-dev-panel",
+        "open-settings"
+      ],
+      "type": "string"
+    },
     "Appearance": {
       "description": "Light, dark, or follow the system.",
       "enum": [
@@ -14060,6 +14076,103 @@
         }
       ]
     },
+    "KeybindingReset": {
+      "anyOf": [
+        {
+          "description": "The `all` type tag.",
+          "enum": [
+            "all"
+          ],
+          "type": "string"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/AppCommand"
+          },
+          "type": "array"
+        }
+      ],
+      "description": "Which keybindings `settings.set` returns to their defaults: `\"all\"`, or\nthe listed commands."
+    },
+    "Keybindings": {
+      "additionalProperties": false,
+      "description": "Every app command's key: an Electron accelerator, or null when the\ncommand has no key.",
+      "properties": {
+        "close-tab": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "command-palette": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "new-conversation": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "new-tab": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "new-terminal": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "open-settings": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "split-right": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "toggle-dev-panel": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "toggle-left-sidebar": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "toggle-right-sidebar": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "new-conversation",
+        "new-tab",
+        "new-terminal",
+        "close-tab",
+        "split-right",
+        "command-palette",
+        "toggle-left-sidebar",
+        "toggle-right-sidebar",
+        "toggle-dev-panel",
+        "open-settings"
+      ],
+      "type": "object"
+    },
     "Layout": {
       "description": "One window's arrangement of one workspace: the sidebars and the tree of\npanes in the centre with their tabs.",
       "properties": {
@@ -18952,10 +19065,13 @@
       ]
     },
     "ProfileSettings": {
-      "description": "Every profile setting, each at its default until set. Typography (F014)\nand keybindings (F015) join as keys here.",
+      "description": "Every profile setting, each at its default until set. Typography (F014)\njoins as a key here.",
       "properties": {
         "appearance": {
           "$ref": "#/$defs/Appearance"
+        },
+        "keybindings": {
+          "$ref": "#/$defs/Keybindings"
         },
         "reduced_motion": {
           "$ref": "#/$defs/ReducedMotion"
@@ -18963,7 +19079,8 @@
       },
       "required": [
         "appearance",
-        "reduced_motion"
+        "reduced_motion",
+        "keybindings"
       ],
       "type": "object"
     },
@@ -26014,7 +26131,7 @@
     },
     "SettingsSetRequest": {
       "additionalProperties": false,
-      "description": "`settings.set`: change the named settings and leave the others. A key the\nprofile does not keep is refused with `unknown_setting`, before anything\nchanges.",
+      "description": "`settings.set`: change the named settings and leave the others. A key the\nprofile does not keep, or a command in `keybindings` or\n`reset_keybindings` that does not exist, is refused with\n`unknown_setting`, before anything changes.\n\n`keybindings` binds each named command to an Electron accelerator, or\nunbinds it with null; the other commands keep their keys.\n`reset_keybindings` first returns the named commands, or `\"all\"`, to their\ndefault keys; a command may not appear in both. A key that is not an\naccelerator is `invalid_keybinding`; two commands left on the same key is\n`keybinding_conflict`. Either refusal changes nothing.",
       "properties": {
         "appearance": {
           "anyOf": [
@@ -26026,6 +26143,75 @@
             }
           ]
         },
+        "keybindings": {
+          "additionalProperties": false,
+          "properties": {
+            "close-tab": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "command-palette": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "new-conversation": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "new-tab": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "new-terminal": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "open-settings": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "split-right": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "toggle-dev-panel": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "toggle-left-sidebar": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "toggle-right-sidebar": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "type": [
+            "object",
+            "null"
+          ]
+        },
         "op": {
           "const": "settings.set"
         },
@@ -26033,6 +26219,16 @@
           "anyOf": [
             {
               "$ref": "#/$defs/ReducedMotion"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reset_keybindings": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/KeybindingReset"
             },
             {
               "type": "null"

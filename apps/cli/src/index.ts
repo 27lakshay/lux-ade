@@ -79,7 +79,8 @@ Errors are JSON on stderr: {"type":"error","code","message"}, plus "recovery"
 when the daemon names one and "delivery" for a request that reached the socket.
 A terminal_busy error also names the running command as "foreground".
 A workspace_remove_blocked or worktree_delete_blocked error also lists
-"blockers": [{"kind","id","label"}].
+"blockers": [{"kind","id","label"}]. A keybinding_conflict error also names
+the shared "key" and the "commands" that would share it.
 "code" is the daemon's own code, kept as sent. Exit codes:
   2  usage, invalid_request             3  unavailable
   4  incompatible                        5  timeout
@@ -97,6 +98,7 @@ A workspace_remove_blocked or worktree_delete_blocked error also lists
   26 unknown_setting                     27 review_anchor_stale
   28 draft_not_empty                     29 lifecycle_busy
   30 review_prompt_too_long              31 provider_not_found
+  32 invalid_keybinding                  33 keybinding_conflict
   16 also: a workspace worktree operation that ended "failed"
 Commands that change state without their own --request-id take the global
 --operation-id ID. Without it the CLI generates one, and an error names it as
@@ -441,6 +443,9 @@ async function main(): Promise<void> {
         ...(daemon?.recovery ? { recovery: daemon.recovery } : {}),
         ...(Array.isArray(daemon?.details.blockers) ? { blockers: daemon.details.blockers } : {}),
         ...(daemon && 'foreground' in daemon.details ? { foreground: daemon.details.foreground } : {}),
+        ...(daemon?.code === 'keybinding_conflict'
+          ? { key: daemon.details.key, commands: daemon.details.commands }
+          : {}),
         ...(daemon ? { delivery: daemon.delivery } : {}),
         ...(daemon && usedOperationId() ? { operation_id: usedOperationId() } : {}),
       })}\n`,
@@ -492,6 +497,8 @@ const exitCodes: Record<ErrorCode | KnownDaemonErrorCode, number> = {
   lifecycle_busy: 29,
   review_prompt_too_long: 30,
   provider_not_found: 31,
+  invalid_keybinding: 32,
+  keybinding_conflict: 33,
 }
 
 void main()

@@ -242,6 +242,23 @@ pub struct ProjectNotRepository(pub String);
 #[error("Unknown setting {0}")]
 pub struct UnknownSetting(pub String);
 
+/// `settings.set` gave a command a key that is not an Electron accelerator.
+#[derive(Debug, thiserror::Error)]
+#[error("Key {key} for {command} is not an accelerator: {reason}")]
+pub struct InvalidKeybinding {
+    pub command: String,
+    pub key: String,
+    pub reason: String,
+}
+
+/// `settings.set` would leave two or more commands on one key.
+#[derive(Debug, thiserror::Error)]
+#[error("{} would share the key {key}; unbind one or choose another key", commands.join(" and "))]
+pub struct KeybindingConflict {
+    pub key: String,
+    pub commands: Vec<String>,
+}
+
 /// A request named a provider this daemon has neither built in nor
 /// registered. `provider.capabilities` lists the ones it has.
 #[derive(Debug, thiserror::Error)]
@@ -671,6 +688,16 @@ pub fn error_envelope(error: anyhow::Error) -> serde_json::Value {
         return serde_json::json!({"type":"error","message":unknown.to_string(),
             "code":"unknown_setting","recovery":"check_setting_name"});
     }
+    if let Some(invalid) = error.downcast_ref::<InvalidKeybinding>() {
+        return serde_json::json!({"type":"error","message":invalid.to_string(),
+            "code":"invalid_keybinding","recovery":"choose_another_key",
+            "command":invalid.command});
+    }
+    if let Some(conflict) = error.downcast_ref::<KeybindingConflict>() {
+        return serde_json::json!({"type":"error","message":conflict.to_string(),
+            "code":"keybinding_conflict","recovery":"choose_another_key",
+            "key":conflict.key,"commands":conflict.commands});
+    }
     if let Some(unknown) = error.downcast_ref::<ProviderNotFound>() {
         return serde_json::json!({"type":"error","message":unknown.to_string(),
             "code":"provider_not_found","recovery":"list_providers"});
@@ -829,6 +856,31 @@ mod workspace_tests {
         );
         assert_eq!(provider["code"], "provider_not_found");
         assert_eq!(provider["recovery"], "list_providers");
+        let invalid = error_envelope(
+            InvalidKeybinding {
+                command: "new-tab".into(),
+                key: "Ctrl+".into(),
+                reason: "empty".into(),
+            }
+            .into(),
+        );
+        assert_eq!(invalid["code"], "invalid_keybinding");
+        assert_eq!(invalid["command"], "new-tab");
+        let conflict = error_envelope(
+            KeybindingConflict {
+                key: "Ctrl+T".into(),
+                commands: vec!["new-tab".into(), "close-tab".into()],
+            }
+            .into(),
+        );
+        assert_eq!(conflict["code"], "keybinding_conflict");
+        assert_eq!(conflict["commands"][1], "close-tab");
+        assert!(
+            conflict["message"]
+                .as_str()
+                .unwrap()
+                .contains("new-tab and close-tab")
+        );
         let busy =
             error_envelope(LifecycleBusy("Repository lifecycle operation is running").into());
         assert_eq!(busy["code"], "lifecycle_busy");

@@ -53,6 +53,8 @@ export const daemonRefusalCodes = [
   'review_prompt_too_long',
   'lifecycle_busy',
   'provider_not_found',
+  'invalid_keybinding',
+  'keybinding_conflict',
 ] as const
 
 export type KnownDaemonErrorCode = (typeof categoryErrorCodes)[number] | (typeof daemonRefusalCodes)[number]

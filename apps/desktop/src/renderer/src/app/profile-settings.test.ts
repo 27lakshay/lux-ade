@@ -17,7 +17,8 @@ const reduced = () => document.documentElement.hasAttribute('data-reduced-motion
 
 test('the window shows the daemon’s settings when it connects, and follows each change', async () => {
   let feed: (frame: FeedFrame) => void = () => {}
-  const get = vi.fn(async (): Promise<ProfileSettings> => ({ appearance: 'dark', reduced_motion: 'on' }))
+  // Only the appearance and motion settings reach the window here.
+  const get = vi.fn(async () => ({ appearance: 'dark', reduced_motion: 'on' }) as ProfileSettings)
   const host = {
     settings: { get, set: vi.fn() },
     conversations: { onFeedFrame: (listener: (frame: FeedFrame) => void) => ((feed = listener), () => {}) },

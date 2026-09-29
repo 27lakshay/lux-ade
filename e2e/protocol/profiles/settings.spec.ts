@@ -4,18 +4,19 @@
 import { expect, test } from '../fixtures'
 import { subscribeFeed } from '../fixtures/feed'
 import { rawReply } from '../fixtures/raw-reply'
+import { defaultKeybindings as keybindings } from './keybindings'
 
 test('settings default, change through the CLI, reach the feed and survive a restart', async ({ profile }) => {
   expect(await profile.call('settings.get', {})).toEqual({
     type: 'settings',
-    settings: { appearance: 'system', reduced_motion: 'system' },
+    settings: { appearance: 'system', reduced_motion: 'system', keybindings },
   })
   const feed = await subscribeFeed(profile)
   await feed.connected()
 
   const set = await profile.cli('settings', 'set', 'appearance', 'dark', 'reduced_motion', 'on')
   expect(set.code, set.stderr).toBe(0)
-  expect(set.json).toEqual({ type: 'settings', settings: { appearance: 'dark', reduced_motion: 'on' } })
+  expect(set.json).toEqual({ type: 'settings', settings: { appearance: 'dark', reduced_motion: 'on', keybindings } })
   await feed.waitFor(
     (frame) =>
       frame.type === 'settings_changed' &&
@@ -28,10 +29,11 @@ test('settings default, change through the CLI, reach the feed and survive a res
   expect((await profile.call('settings.set', { appearance: 'light' })).settings).toEqual({
     appearance: 'light',
     reduced_motion: 'on',
+    keybindings,
   })
   await profile.restartDaemon('kill')
   const got = await profile.cli('settings', 'get')
-  expect(got.json).toEqual({ type: 'settings', settings: { appearance: 'light', reduced_motion: 'on' } })
+  expect(got.json).toEqual({ type: 'settings', settings: { appearance: 'light', reduced_motion: 'on', keybindings } })
 })
 
 test('an unknown key or value is refused and changes nothing', async ({ profile }) => {
@@ -43,5 +45,9 @@ test('an unknown key or value is refused and changes nothing', async ({ profile 
   // The SDK and the CLI refuse an unknown key before sending it.
   const cli = await profile.cli('settings', 'set', 'colour', 'red')
   expect(cli.code).not.toBe(0)
-  expect((await profile.call('settings.get', {})).settings).toEqual({ appearance: 'system', reduced_motion: 'system' })
+  expect((await profile.call('settings.get', {})).settings).toEqual({
+    appearance: 'system',
+    reduced_motion: 'system',
+    keybindings,
+  })
 })

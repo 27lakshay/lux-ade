@@ -21,4 +21,5 @@ pub mod worktrees;
 
 pub mod diagnostics;
 pub mod error;
+pub mod keybindings;
 pub mod mcp;

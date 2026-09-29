@@ -58,6 +58,7 @@ export type ContractDefinition =
   | AgentRunSpec
   | AgentSendRequest
   | AgentSendReviewRequest
+  | AppCommand
   | Appearance
   | Attachment
   | AttachmentImportRequest
@@ -413,6 +414,8 @@ export type ContractDefinition =
   | Inspection
   | InstallOutcome
   | Installation
+  | KeybindingReset
+  | Keybindings
   | Layout
   | LayoutAction
   | LayoutApplied
@@ -1018,6 +1021,21 @@ export type ProbeOutcome =
  * Whether an adapter may be trusted to have the probed capabilities now.
  */
 export type AdapterReadiness = 'unprobed' | 'ready' | 'failed' | 'stale'
+/**
+ * An app command a key runs: the desktop's application-menu commands
+ * (F015). Every client reads the same keys for them from the daemon.
+ */
+export type AppCommand =
+  | 'new-conversation'
+  | 'new-tab'
+  | 'new-terminal'
+  | 'close-tab'
+  | 'split-right'
+  | 'command-palette'
+  | 'toggle-left-sidebar'
+  | 'toggle-right-sidebar'
+  | 'toggle-dev-panel'
+  | 'open-settings'
 /**
  * Light, dark, or follow the system.
  */
@@ -1686,6 +1704,11 @@ export type Installation =
       source: 'remote'
     }
 export type PackageRegistry = 'npm' | 'pypi' | 'oci'
+/**
+ * Which keybindings `settings.set` returns to their defaults: `"all"`, or
+ * the listed commands.
+ */
+export type KeybindingReset = 'all' | AppCommand[]
 /**
  * A pane or a split, told apart by `type`. Each variant's struct carries its
  * own tag, so clients get one flat type per node.
@@ -8549,6 +8572,22 @@ export interface RegistryStatus {
   [k: string]: unknown
 }
 /**
+ * Every app command's key: an Electron accelerator, or null when the
+ * command has no key.
+ */
+export interface Keybindings {
+  'close-tab': string | null
+  'command-palette': string | null
+  'new-conversation': string | null
+  'new-tab': string | null
+  'new-terminal': string | null
+  'open-settings': string | null
+  'split-right': string | null
+  'toggle-dev-panel': string | null
+  'toggle-left-sidebar': string | null
+  'toggle-right-sidebar': string | null
+}
+/**
  * One window's arrangement of one workspace: the sidebars and the tree of
  * panes in the centre with their tabs.
  */
@@ -10310,10 +10349,11 @@ export interface PresetView {
 }
 /**
  * Every profile setting, each at its default until set. Typography (F014)
- * and keybindings (F015) join as keys here.
+ * joins as a key here.
  */
 export interface ProfileSettings {
   appearance: Appearance
+  keybindings: Keybindings
   reduced_motion: ReducedMotion
   [k: string]: unknown
 }
@@ -13065,13 +13105,34 @@ export interface SettingsGetRequest {
 }
 /**
  * `settings.set`: change the named settings and leave the others. A key the
- * profile does not keep is refused with `unknown_setting`, before anything
- * changes.
+ * profile does not keep, or a command in `keybindings` or
+ * `reset_keybindings` that does not exist, is refused with
+ * `unknown_setting`, before anything changes.
+ *
+ * `keybindings` binds each named command to an Electron accelerator, or
+ * unbinds it with null; the other commands keep their keys.
+ * `reset_keybindings` first returns the named commands, or `"all"`, to their
+ * default keys; a command may not appear in both. A key that is not an
+ * accelerator is `invalid_keybinding`; two commands left on the same key is
+ * `keybinding_conflict`. Either refusal changes nothing.
  */
 export interface SettingsSetRequest {
   appearance?: Appearance | null
+  keybindings?: {
+    'close-tab'?: string | null
+    'command-palette'?: string | null
+    'new-conversation'?: string | null
+    'new-tab'?: string | null
+    'new-terminal'?: string | null
+    'open-settings'?: string | null
+    'split-right'?: string | null
+    'toggle-dev-panel'?: string | null
+    'toggle-left-sidebar'?: string | null
+    'toggle-right-sidebar'?: string | null
+  } | null
   op: 'settings.set'
   reduced_motion?: ReducedMotion | null
+  reset_keybindings?: KeybindingReset | null
 }
 /**
  * `skill.adopt`: take ownership of a skill directory a provider already reads.
