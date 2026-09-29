@@ -95,7 +95,7 @@ export function registerWorkspaceIpc(): void {
         }
         const result =
           kind === 'worktree'
-            ? await dailyUseCommand(endpoint, { op: 'worktree.rebind', repository_id: id, path: folder })
+            ? await dailyUseCommand(endpoint, { op: 'worktree.rebind', project_id: id, path: folder })
             : kind === 'repository'
               ? await dailyUseCommand(endpoint, { op: 'repository.rebind', repository_id: id, path: folder })
               : await dailyUseCommand(endpoint, { op: 'workspace.rebind', workspace_id: id, path: folder })

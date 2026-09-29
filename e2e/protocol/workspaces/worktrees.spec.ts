@@ -69,7 +69,7 @@ test('create_worktree makes the tree, opens it as a named ADE-owned workspace an
 
   // The workspace is in the catalog under the name as typed, in the project.
   const listed = (await catalog(profile)).workspaces.find((workspace) => workspace.id === reply.workspace_id)
-  const listing = await profile.call('worktree.get', { repository_id: main.project_id })
+  const listing = await profile.call('worktree.get', { project_id: main.project_id })
   const tree = listing.worktrees.find((item) => item.path === reply.worktree_path)
   expect(tree?.ade_owned).toBe(true)
   expect(listed).toMatchObject({
@@ -82,7 +82,7 @@ test('create_worktree makes the tree, opens it as a named ADE-owned workspace an
   })
 
   // The lifecycle step is readable under the project ID and this operation ID.
-  const lifecycle = await profile.call('worktree.operation', { repository_id: main.project_id, operation_id: id })
+  const lifecycle = await profile.call('worktree.operation', { project_id: main.project_id, operation_id: id })
   expect(lifecycle.operation).toMatchObject({ status: 'succeeded', worktree_path: reply.worktree_path })
 
   // A retry replays the state; the same ID for another request conflicts.

@@ -1,25 +1,25 @@
 import { dailyUseCommand } from '@ade/client'
 import { CliError, jsonObject, namedOptions, required, type CommandResult } from '../shared.js'
 
-export const worktreeLifecycleUsage = `  worktree new REPOSITORY_ID [--name NAME | --branch BRANCH] [--base BASE] [--path PATH] --request-id ID
+export const worktreeLifecycleUsage = `  worktree new PROJECT_ID [--name NAME | --branch BRANCH] [--base BASE] [--path PATH] --request-id ID
                                         Create a named tree from repository defaults and run setup hooks
-  worktree new REPOSITORY_ID ... [--pr NUMBER | --fetch-ref REF] [--fetch-remote REMOTE] --request-id ID
+  worktree new PROJECT_ID ... [--pr NUMBER | --fetch-ref REF] [--fetch-remote REMOTE] --request-id ID
                                         Start the tree from a ref fetched from a configured remote
                                         (--pr N fetches refs/pull/N/head from origin)
-  worktree carry-preview REPOSITORY_ID SOURCE [PATH...]
+  worktree carry-preview PROJECT_ID SOURCE [PATH...]
                                         List uncommitted changes a carry would move; changes nothing
-  worktree carry REPOSITORY_ID SOURCE TARGET [PATH...] [--expect-head COMMIT] [--clean-source] --request-id ID
+  worktree carry PROJECT_ID SOURCE TARGET [PATH...] [--expect-head COMMIT] [--clean-source] --request-id ID
                                         Save, apply and verify changes in a clean ADE-owned tree;
                                         --clean-source then removes them from SOURCE
-  worktree resources REPOSITORY_ID PATH --request-id ID
+  worktree resources PROJECT_ID PATH --request-id ID
                                         Apply the ignored-resource rules to an ADE-owned tree
-  worktree setup REPOSITORY_ID PATH --request-id ID
+  worktree setup PROJECT_ID PATH --request-id ID
                                         Run setup hooks again in a tree whose setup failed
-  worktree cleanup-plan REPOSITORY_ID   Classify linked trees for cleanup; changes nothing
-  worktree cleanup REPOSITORY_ID PATH... [--delete-merged] --request-id ID
+  worktree cleanup-plan PROJECT_ID   Classify linked trees for cleanup; changes nothing
+  worktree cleanup PROJECT_ID PATH... [--delete-merged] --request-id ID
                                         Tear down, remove and archive eligible trees
-  worktree archived REPOSITORY_ID       List archive records of removed trees
-  worktree configure REPOSITORY_ID CONFIG_JSON
+  worktree archived PROJECT_ID       List archive records of removed trees
+  worktree configure PROJECT_ID CONFIG_JSON
                                         Replace naming defaults, hooks and timeouts
 `
 
@@ -47,9 +47,9 @@ function fetchSource(options: Record<string, string>): { remote: string; ref: st
   return { remote: options['--fetch-remote'] ?? 'origin', ref: pr ? `refs/pull/${pr}/head` : ref }
 }
 
-/** Parses `REPOSITORY_ID SOURCE TARGET [PATH...] [--expect-head COMMIT] [--clean-source]`. */
+/** Parses `PROJECT_ID SOURCE TARGET [PATH...] [--expect-head COMMIT] [--clean-source]`. */
 function carryWords(words: string[]): {
-  repository_id: string
+  project_id: string
   source: string
   target: string
   paths?: string[]
@@ -73,12 +73,12 @@ function carryWords(words: string[]): {
       positional.push(word)
     }
   }
-  const [repositoryId, source, target, ...paths] = positional
-  if (!repositoryId || !source || !target) {
-    throw new CliError('usage', 'worktree carry requires REPOSITORY_ID SOURCE TARGET [PATH...] --request-id ID.')
+  const [projectId, source, target, ...paths] = positional
+  if (!projectId || !source || !target) {
+    throw new CliError('usage', 'worktree carry requires PROJECT_ID SOURCE TARGET [PATH...] --request-id ID.')
   }
   return {
-    repository_id: repositoryId,
+    project_id: projectId,
     source,
     target,
     ...(paths.length > 0 ? { paths } : {}),
@@ -96,7 +96,7 @@ export async function runWorktreeLifecycleCommand(
   if (area !== 'worktree') return undefined
   if (action === 'new') {
     const { rest: words, id } = requestId(rest, 'new')
-    const [repositoryId, ...optionWords] = words
+    const [projectId, ...optionWords] = words
     const options = namedOptions(
       optionWords,
       ['--name', '--branch', '--base', '--path', '--pr', '--fetch-ref', '--fetch-remote'],
@@ -108,7 +108,7 @@ export async function runWorktreeLifecycleCommand(
     const fetch = fetchSource(options)
     const response = await dailyUseCommand(socketPath, {
       op: 'worktree.create',
-      repository_id: required(repositoryId, 'REPOSITORY_ID'),
+      project_id: required(projectId, 'PROJECT_ID'),
       operation_id: id,
       ...(options['--name'] ? { name: options['--name'] } : {}),
       ...(options['--branch'] ? { branch: options['--branch'] } : {}),
@@ -119,13 +119,13 @@ export async function runWorktreeLifecycleCommand(
     return { ...response, request_id: id }
   }
   if (action === 'carry-preview') {
-    const [repositoryId, source, ...paths] = rest
-    if (!repositoryId || !source || paths.some((path) => path.startsWith('--'))) {
-      throw new CliError('usage', 'worktree carry-preview requires REPOSITORY_ID SOURCE [PATH...].')
+    const [projectId, source, ...paths] = rest
+    if (!projectId || !source || paths.some((path) => path.startsWith('--'))) {
+      throw new CliError('usage', 'worktree carry-preview requires PROJECT_ID SOURCE [PATH...].')
     }
     return dailyUseCommand(socketPath, {
       op: 'worktree.carry.preview',
-      repository_id: repositoryId,
+      project_id: projectId,
       source,
       ...(paths.length > 0 ? { paths } : {}),
     })
@@ -138,11 +138,10 @@ export async function runWorktreeLifecycleCommand(
   }
   if (action === 'resources') {
     const { rest: words, id } = requestId(rest, 'resources')
-    if (words.length !== 2)
-      throw new CliError('usage', 'worktree resources requires REPOSITORY_ID PATH --request-id ID.')
+    if (words.length !== 2) throw new CliError('usage', 'worktree resources requires PROJECT_ID PATH --request-id ID.')
     const response = await dailyUseCommand(socketPath, {
       op: 'worktree.resources.apply',
-      repository_id: words[0],
+      project_id: words[0],
       path: words[1],
       operation_id: id,
     })
@@ -150,29 +149,29 @@ export async function runWorktreeLifecycleCommand(
   }
   if (action === 'setup') {
     const { rest: words, id } = requestId(rest, 'setup')
-    if (words.length !== 2) throw new CliError('usage', 'worktree setup requires REPOSITORY_ID PATH --request-id ID.')
+    if (words.length !== 2) throw new CliError('usage', 'worktree setup requires PROJECT_ID PATH --request-id ID.')
     const response = await dailyUseCommand(socketPath, {
       op: 'worktree.setup',
-      repository_id: words[0],
+      project_id: words[0],
       path: words[1],
       operation_id: id,
     })
     return { ...response, request_id: id }
   }
   if (action === 'cleanup-plan') {
-    if (rest.length !== 1) throw new CliError('usage', 'worktree cleanup-plan requires REPOSITORY_ID.')
-    return dailyUseCommand(socketPath, { op: 'worktree.cleanup.plan', repository_id: rest[0] })
+    if (rest.length !== 1) throw new CliError('usage', 'worktree cleanup-plan requires PROJECT_ID.')
+    return dailyUseCommand(socketPath, { op: 'worktree.cleanup.plan', project_id: rest[0] })
   }
   if (action === 'cleanup') {
     const { rest: words, id } = requestId(rest, 'cleanup')
     const merged = words.at(-1) === '--delete-merged'
-    const [repositoryId, ...paths] = merged ? words.slice(0, -1) : words
-    if (!repositoryId || paths.length === 0 || paths.some((path) => path.startsWith('--'))) {
-      throw new CliError('usage', 'worktree cleanup requires REPOSITORY_ID PATH... [--delete-merged] --request-id ID.')
+    const [projectId, ...paths] = merged ? words.slice(0, -1) : words
+    if (!projectId || paths.length === 0 || paths.some((path) => path.startsWith('--'))) {
+      throw new CliError('usage', 'worktree cleanup requires PROJECT_ID PATH... [--delete-merged] --request-id ID.')
     }
     const response = await dailyUseCommand(socketPath, {
       op: 'worktree.cleanup',
-      repository_id: repositoryId,
+      project_id: projectId,
       paths,
       operation_id: id,
       delete_branch: merged ? 'merged' : 'keep',
@@ -180,14 +179,14 @@ export async function runWorktreeLifecycleCommand(
     return { ...response, request_id: id }
   }
   if (action === 'archived') {
-    if (rest.length !== 1) throw new CliError('usage', 'worktree archived requires REPOSITORY_ID.')
-    return dailyUseCommand(socketPath, { op: 'worktree.archived', repository_id: rest[0] })
+    if (rest.length !== 1) throw new CliError('usage', 'worktree archived requires PROJECT_ID.')
+    return dailyUseCommand(socketPath, { op: 'worktree.archived', project_id: rest[0] })
   }
   if (action === 'configure') {
-    if (rest.length !== 2) throw new CliError('usage', 'worktree configure requires REPOSITORY_ID CONFIG_JSON.')
+    if (rest.length !== 2) throw new CliError('usage', 'worktree configure requires PROJECT_ID CONFIG_JSON.')
     return dailyUseCommand(socketPath, {
       op: 'worktree.configure',
-      repository_id: rest[0],
+      project_id: rest[0],
       config: jsonObject(rest[1], 'CONFIG_JSON'),
     })
   }

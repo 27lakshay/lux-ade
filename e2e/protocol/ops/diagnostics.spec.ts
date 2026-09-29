@@ -253,7 +253,7 @@ test('an effect interrupted by a daemon crash is an unknown receipt with its ope
   const started = join(ade.root, 'setup-started')
   const release = join(ade.root, 'setup-release')
   await profile.call('worktree.configure', {
-    repository_id: repositoryId,
+    project_id: repositoryId,
     config: {
       setup: [
         {
@@ -265,7 +265,7 @@ test('an effect interrupted by a daemon crash is an unknown receipt with its ope
     },
   })
   const id = operationId('diagnostics-interrupted')
-  await profile.call('worktree.create', { repository_id: repositoryId, operation_id: id, name: 'interrupted' })
+  await profile.call('worktree.create', { project_id: repositoryId, operation_id: id, name: 'interrupted' })
   await expect.poll(() => existsSync(started), { timeout: 20_000 }).toBe(true)
   expect((await operation(profile, repositoryId, id)).status).toBe('running')
   try {

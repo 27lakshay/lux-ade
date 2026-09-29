@@ -44,7 +44,7 @@ test('a Git lifecycle operation refuses a replacement checkout installed before 
   await writeFile(join(pause, 'armed'), '')
   const operationId = 'reject-replaced-checkout'
   await profile.call('worktree.switch', {
-    repository_id: repositoryId,
+    project_id: repositoryId,
     operation_id: operationId,
     target: 'must-not-be-created',
     base: 'main',
@@ -71,7 +71,7 @@ test('a Git lifecycle worker refuses an in-place replacement Git common director
   await writeFile(join(pause, 'armed'), '')
   const operationId = 'reject-replaced-git-common'
   await profile.call('worktree.switch', {
-    repository_id: repositoryId,
+    project_id: repositoryId,
     operation_id: operationId,
     target: 'must-not-be-created',
     base: 'main',
@@ -93,14 +93,14 @@ test('Git lifecycle removal refuses a replacement target installed after ownersh
   const repo = await ade.repo({ name: 'source', initialFiles: { 'identity.txt': 'source checkout\n' } })
   const repositoryId = await register(profile, repo)
   await profile.call('worktree.switch', {
-    repository_id: repositoryId,
+    project_id: repositoryId,
     operation_id: 'create-owned-for-remove-pin',
     target: 'owned-for-remove-pin',
     base: 'main',
     create: true,
   })
   expect(await settled(profile, repositoryId, 'create-owned-for-remove-pin')).toMatchObject({ status: 'succeeded' })
-  const { worktrees } = await profile.call('worktree.get', { repository_id: repositoryId })
+  const { worktrees } = await profile.call('worktree.get', { project_id: repositoryId })
   const owned = worktrees.find((item) => item.branch === 'owned-for-remove-pin')
   expect(owned).toMatchObject({ ade_owned: true, path: expect.any(String) })
   const target = String(owned?.path)
@@ -108,7 +108,7 @@ test('Git lifecycle removal refuses a replacement target installed after ownersh
 
   await writeFile(join(pause, 'armed'), '')
   await profile.call('worktree.remove', {
-    repository_id: repositoryId,
+    project_id: repositoryId,
     operation_id: 'remove-replaced-target',
     path: target,
     delete_branch: 'keep',

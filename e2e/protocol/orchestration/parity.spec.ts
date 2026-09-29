@@ -65,7 +65,7 @@ const samples: Record<string, Sample> = {
   },
   worktrees: {
     op: 'worktree.get',
-    request: (c) => ({ repository_id: c.repository }),
+    request: (c) => ({ project_id: c.repository }),
     cli: (c) => ['worktree', 'list', c.repository],
   },
   scripts: {

@@ -27,7 +27,7 @@ export async function settledOperation(profile: ScratchProfile, repositoryId: st
   await expect
     .poll(
       async () => {
-        status = (await profile.call('worktree.operation', { repository_id: repositoryId, operation_id: operationId }))
+        status = (await profile.call('worktree.operation', { project_id: repositoryId, operation_id: operationId }))
           .operation.status
         return status
       },
@@ -40,16 +40,16 @@ export async function settledOperation(profile: ScratchProfile, repositoryId: st
 /** Refresh the repository listing and wait for it. */
 export async function refresh(profile: ScratchProfile, repositoryId: string): Promise<void> {
   const operationId = `refresh-${process.pid}-${++refreshes}`
-  await profile.call('worktree.refresh', { repository_id: repositoryId, operation_id: operationId })
+  await profile.call('worktree.refresh', { project_id: repositoryId, operation_id: operationId })
   expect(await settledOperation(profile, repositoryId, operationId)).toBe('succeeded')
 }
 
 /** Register the repository in `profile` and adopt `tree` there, giving that profile removal authority. */
 export async function adopt(profile: ScratchProfile, repoPath: string, tree: string): Promise<string> {
   const repositoryId = (await profile.call('worktree.repository', { path: repoPath })).repository.id
-  await profile.call('worktree.adopt', { repository_id: repositoryId, path: tree, confirm_path: tree })
+  await profile.call('worktree.adopt', { project_id: repositoryId, path: tree, confirm_path: tree })
   await refresh(profile, repositoryId)
-  const state = await profile.call('worktree.get', { repository_id: repositoryId })
+  const state = await profile.call('worktree.get', { project_id: repositoryId })
   expect(state.worktrees.find((item) => item.path === tree)?.ade_owned).toBe(true)
   return repositoryId
 }
@@ -69,7 +69,7 @@ export async function launchShell(profile: ScratchProfile, tree: string) {
 export function removeTree(profile: ScratchProfile, repositoryId: string, operationId: string, tree: string) {
   return rawReply(profile, {
     op: 'worktree.remove',
-    repository_id: repositoryId,
+    project_id: repositoryId,
     operation_id: operationId,
     path: tree,
     confirm_path: tree,

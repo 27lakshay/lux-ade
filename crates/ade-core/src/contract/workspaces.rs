@@ -151,8 +151,7 @@ pub struct WorkspaceRemoveRequest {
 pub struct WorkspaceCreateWorktreeRequest {
     /// The caller's operation ID.
     pub operation_id: String,
-    /// A repository project; a pre-unification lifecycle repository ID is
-    /// accepted as an alias.
+    /// A repository project.
     pub project_id: String,
     /// The name ADE shows; the branch is the project's branch prefix plus
     /// its slug. Trimmed, 1 to 100 characters, no control characters.

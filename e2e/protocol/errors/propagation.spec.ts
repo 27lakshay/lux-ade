@@ -22,7 +22,7 @@ test('a host_resource_conflict keeps its code and recovery through the SDK and t
   const { workspace, shellId, shellPid } = await occupy(worker, tree)
   await waitForClaim(remover, tree)
   const remove = (operationId: string) => ({
-    repository_id: repositoryId,
+    project_id: repositoryId,
     operation_id: operationId,
     path: tree,
     confirm_path: tree,
@@ -193,7 +193,7 @@ test('a host_resources_unavailable keeps its code and recovery through the SDK a
   // The registry goes missing while another profile still holds a claim in it.
   await rename(registry, `${registry}.lost`)
   await remover.restartDaemon()
-  const request = { repository_id: repositoryId, operation_id: 'remove-blocked', path: tree, confirm_path: tree }
+  const request = { project_id: repositoryId, operation_id: 'remove-blocked', path: tree, confirm_path: tree }
   const frame = await rawReply(remover, { op: 'worktree.remove', ...request })
   expect(frame).toMatchObject({ type: 'error', code: 'host_resources_unavailable', recovery: 'recover_host_resources' })
 

@@ -25,19 +25,19 @@ export const workspaceUsage = `  workspace list                        List regi
   repository rebind-list                List restored Git repositories requiring a path
   repository rebind REPOSITORY_ID PATH  Bind a restored Git repository before its workspaces
   worktree register PATH                Register a Git repository lifecycle
-  worktree list REPOSITORY_ID           Inspect linked trees and removal authority
-  worktree refresh REPOSITORY_ID --request-id ID
+  worktree list PROJECT_ID           Inspect linked trees and removal authority
+  worktree refresh PROJECT_ID --request-id ID
                                         Re-read the Git worktree listing under the repository lock
-  worktree create REPOSITORY_ID BRANCH BASE [PATH] --request-id ID
+  worktree create PROJECT_ID BRANCH BASE [PATH] --request-id ID
                                         Create a branch and linked tree
-  worktree adopt REPOSITORY_ID PATH CONFIRM_PATH
+  worktree adopt PROJECT_ID PATH CONFIRM_PATH
                                         Explicitly take ADE removal authority
-  worktree remove REPOSITORY_ID PATH [--delete-merged] --request-id ID
+  worktree remove PROJECT_ID PATH [--delete-merged] --request-id ID
                                         Remove a clean ADE-authorized tree
-  worktree operation REPOSITORY_ID REQUEST_ID
+  worktree operation PROJECT_ID REQUEST_ID
                                         Inspect a lifecycle operation receipt
   worktree rebind-list                  List restored lifecycle repositories requiring a path
-  worktree rebind REPOSITORY_ID PATH    Bind restored Git lifecycle history first
+  worktree rebind PROJECT_ID PATH    Bind restored Git lifecycle history first
 `
 
 function worktreeMutationArgs(
@@ -63,7 +63,7 @@ function worktreeMutationArgs(
     throw new CliError(
       'usage',
       `worktree ${action} requires ${
-        action === 'create' ? 'REPOSITORY_ID BRANCH BASE [PATH]' : 'REPOSITORY_ID PATH [--delete-merged]'
+        action === 'create' ? 'PROJECT_ID BRANCH BASE [PATH]' : 'PROJECT_ID PATH [--delete-merged]'
       } --request-id ID.`,
     )
   }
@@ -167,10 +167,10 @@ export async function runWorkspaceCommand(
     })
   }
   if (area === 'worktree' && action === 'rebind') {
-    if (rest.length !== 2) throw new CliError('usage', 'worktree rebind requires REPOSITORY_ID PATH.')
+    if (rest.length !== 2) throw new CliError('usage', 'worktree rebind requires PROJECT_ID PATH.')
     return dailyUseCommand(socketPath, {
       op: 'worktree.rebind',
-      repository_id: required(rest[0], 'REPOSITORY_ID'),
+      project_id: required(rest[0], 'PROJECT_ID'),
       path: required(rest[1], 'PATH'),
     })
   }
@@ -188,11 +188,11 @@ export async function runWorkspaceCommand(
       rest[2].startsWith('--') ||
       rest[2].length > 256
     ) {
-      throw new CliError('usage', 'worktree refresh requires REPOSITORY_ID --request-id ID.')
+      throw new CliError('usage', 'worktree refresh requires PROJECT_ID --request-id ID.')
     }
     const response = await dailyUseCommand(socketPath, {
       op: 'worktree.refresh',
-      repository_id: required(rest[0], 'REPOSITORY_ID'),
+      project_id: required(rest[0], 'PROJECT_ID'),
       operation_id: rest[2],
     })
     return { ...response, request_id: rest[2] }
@@ -206,14 +206,14 @@ export async function runWorkspaceCommand(
     return dailyUseCommand(socketPath, { op: 'worktree.repository', path: rest[0] })
   }
   if (area === 'worktree' && action === 'list') {
-    if (rest.length !== 1) throw new CliError('usage', 'worktree list requires REPOSITORY_ID.')
-    return dailyUseCommand(socketPath, { op: 'worktree.get', repository_id: rest[0] })
+    if (rest.length !== 1) throw new CliError('usage', 'worktree list requires PROJECT_ID.')
+    return dailyUseCommand(socketPath, { op: 'worktree.get', project_id: rest[0] })
   }
   if (area === 'worktree' && action === 'operation') {
-    if (rest.length !== 2) throw new CliError('usage', 'worktree operation requires REPOSITORY_ID REQUEST_ID.')
+    if (rest.length !== 2) throw new CliError('usage', 'worktree operation requires PROJECT_ID REQUEST_ID.')
     return dailyUseCommand(socketPath, {
       op: 'worktree.operation',
-      repository_id: required(rest[0], 'REPOSITORY_ID'),
+      project_id: required(rest[0], 'PROJECT_ID'),
       operation_id: required(rest[1], 'REQUEST_ID'),
     })
   }
@@ -221,7 +221,7 @@ export async function runWorkspaceCommand(
     const { positionals, requestId } = worktreeMutationArgs(rest, 'create')
     const response = await dailyUseCommand(socketPath, {
       op: 'worktree.switch',
-      repository_id: positionals[0],
+      project_id: positionals[0],
       target: positionals[1],
       base: positionals[2],
       ...(positionals[3] ? { path: positionals[3] } : {}),
@@ -231,11 +231,11 @@ export async function runWorkspaceCommand(
     return { ...response, request_id: requestId }
   }
   if (area === 'worktree' && action === 'adopt') {
-    if (rest.length !== 3) throw new CliError('usage', 'worktree adopt requires REPOSITORY_ID PATH CONFIRM_PATH.')
+    if (rest.length !== 3) throw new CliError('usage', 'worktree adopt requires PROJECT_ID PATH CONFIRM_PATH.')
     return dailyUseCommand(socketPath, {
       op: 'worktree.adopt',
       operation_id: effectOperationId(),
-      repository_id: rest[0],
+      project_id: rest[0],
       path: rest[1],
       confirm_path: rest[2],
     })
@@ -244,7 +244,7 @@ export async function runWorkspaceCommand(
     const { positionals, requestId } = worktreeMutationArgs(rest, 'remove')
     const response = await dailyUseCommand(socketPath, {
       op: 'worktree.remove',
-      repository_id: positionals[0],
+      project_id: positionals[0],
       path: positionals[1],
       delete_branch: positionals[2] ? 'merged' : 'keep',
       operation_id: requestId,

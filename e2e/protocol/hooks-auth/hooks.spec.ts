@@ -27,7 +27,7 @@ async function register(profile: ScratchProfile, repo: ScratchRepo): Promise<str
 }
 
 function lookup(profile: ScratchProfile, repositoryId: string, id: string) {
-  return profile.call('worktree.operation', { repository_id: repositoryId, operation_id: id })
+  return profile.call('worktree.operation', { project_id: repositoryId, operation_id: id })
 }
 
 /** Poll until the operation reports a running hook that satisfies `ready`, and return that reply. */
@@ -74,7 +74,7 @@ test('a running setup hook streams its name, position, finished hooks and bounde
   const release = join(ade.root, 'stream-release')
   const runs = join(ade.root, 'stream-runs')
   await profile.call('worktree.configure', {
-    repository_id: repositoryId,
+    project_id: repositoryId,
     config: {
       setup: [
         sh('prepare', 'echo prepared'),
@@ -97,7 +97,7 @@ test('a running setup hook streams its name, position, finished hooks and bounde
   })
 
   const id = operationId('create')
-  await profile.call('worktree.create', { repository_id: repositoryId, operation_id: id, name: 'streamed' })
+  await profile.call('worktree.create', { project_id: repositoryId, operation_id: id, name: 'streamed' })
   const live = await runningHook(profile, repositoryId, id, (hook) => hook.output.includes('step-two'))
   const tree = live.operation.worktree_path!
   expect(live.operation.status).toBe('running')
@@ -134,11 +134,11 @@ test('a running setup hook streams its name, position, finished hooks and bounde
   })
 
   // A duplicate create with the same operation ID replays; it does not start the hooks again.
-  await profile.call('worktree.create', { repository_id: repositoryId, operation_id: id, name: 'streamed' })
+  await profile.call('worktree.create', { project_id: repositoryId, operation_id: id, name: 'streamed' })
   // Another lifecycle operation is refused while the hook holds the repository.
   await expect(
     profile.call('worktree.create', {
-      repository_id: repositoryId,
+      project_id: repositoryId,
       operation_id: operationId('racing'),
       name: 'racing',
     }),
@@ -166,12 +166,12 @@ test('a teardown hook streams while it runs, a failing one ends with no running 
   const repo = await ade.repo()
   const repositoryId = await register(profile, repo)
   const created = operationId('create')
-  await profile.call('worktree.create', { repository_id: repositoryId, operation_id: created, name: 'torn' })
+  await profile.call('worktree.create', { project_id: repositoryId, operation_id: created, name: 'torn' })
   const tree = (await settled(profile, repositoryId, created)).operation.worktree_path!
   const started = join(ade.root, 'teardown-started')
   const release = join(ade.root, 'teardown-release')
   await profile.call('worktree.configure', {
-    repository_id: repositoryId,
+    project_id: repositoryId,
     config: {
       teardown: [
         sh('stop-services', `echo stopping; ${gated(started, release)}; echo cannot stop >&2; exit 5`, 60),
@@ -181,7 +181,7 @@ test('a teardown hook streams while it runs, a failing one ends with no running 
   })
 
   const id = operationId('remove')
-  await profile.call('worktree.remove', { repository_id: repositoryId, operation_id: id, path: tree })
+  await profile.call('worktree.remove', { project_id: repositoryId, operation_id: id, path: tree })
   const live = await runningHook(profile, repositoryId, id, (hook) => hook.output.includes('stopping'))
   expect(live.running_hook).toMatchObject({
     name: 'stop-services',
@@ -206,7 +206,7 @@ test('a teardown hook streams while it runs, a failing one ends with no running 
   expect(hooks[0].output).toContain('cannot stop')
   // Safe recovery before destructive cleanup: the tree is kept and cleanup refuses it.
   expect(existsSync(tree)).toBe(true)
-  const plan = await profile.call('worktree.cleanup.plan', { repository_id: repositoryId })
+  const plan = await profile.call('worktree.cleanup.plan', { project_id: repositoryId })
   expect(plan.trees.find((candidate) => candidate.path === tree)?.blockers).toContain('teardown_incomplete')
 })
 
@@ -219,12 +219,12 @@ test('a daemon crash during a streaming hook leaves no stale running status: the
   const started = join(ade.root, 'crash-started')
   const release = join(ade.root, 'crash-release')
   await profile.call('worktree.configure', {
-    repository_id: repositoryId,
+    project_id: repositoryId,
     config: { setup: [sh('long', `echo before-crash; ${gated(started, release)}`, 60)] },
   })
 
   const id = operationId('create')
-  await profile.call('worktree.create', { repository_id: repositoryId, operation_id: id, name: 'crashing' })
+  await profile.call('worktree.create', { project_id: repositoryId, operation_id: id, name: 'crashing' })
   const live = await runningHook(profile, repositoryId, id, (hook) => hook.output.includes('before-crash'))
   const tree = live.operation.worktree_path!
   try {
@@ -239,7 +239,7 @@ test('a daemon crash during a streaming hook leaves no stale running status: the
   expect(after.running_hook).toBeUndefined()
   // The tree is kept, visibly interrupted, and cleanup refuses it.
   expect(existsSync(tree)).toBe(true)
-  const plan = await profile.call('worktree.cleanup.plan', { repository_id: repositoryId })
+  const plan = await profile.call('worktree.cleanup.plan', { project_id: repositoryId })
   expect(plan.trees.find((candidate) => candidate.path === tree)).toMatchObject({
     phase: 'setup_interrupted',
     eligible: false,

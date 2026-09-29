@@ -233,7 +233,7 @@ impl Host {
         self.refresh_leases()?;
         let plan: WorktreeCleanupPlan = serde_json::from_value(
             self.sessions
-                .command(&json!({"op": "worktree.cleanup.plan", "repository_id": lifecycle_id}))?,
+                .command(&json!({"op": "worktree.cleanup.plan", "project_id": lifecycle_id}))?,
         )
         .context("The worktree lifecycle returned an invalid cleanup plan")?;
         match plan.trees.iter().find(|tree| canonical(&tree.path) == root) {
@@ -348,7 +348,7 @@ impl Host {
                 let Some(job) = self.lifecycle_job(&record)? else {
                     let mut create = json!({
                         "op": "worktree.create",
-                        "repository_id": record.lifecycle_id,
+                        "project_id": record.lifecycle_id,
                         "operation_id": record.operation_id,
                         "name": record.name,
                     });
@@ -448,7 +448,7 @@ impl Host {
                     failpoint("remove_tree")?;
                     let mut remove = json!({
                         "op": "worktree.remove",
-                        "repository_id": record.lifecycle_id,
+                        "project_id": record.lifecycle_id,
                         "operation_id": record.operation_id,
                         "path": path,
                     });

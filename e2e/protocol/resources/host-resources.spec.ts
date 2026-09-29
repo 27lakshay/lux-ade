@@ -59,7 +59,7 @@ test('a profile cannot remove a checkout another profile works in, by its path o
   const cli = await remover.cli(
     'request',
     'worktree.remove',
-    JSON.stringify({ repository_id: repositoryId, operation_id: 'remove-shared-cli', path: tree, confirm_path: tree }),
+    JSON.stringify({ project_id: repositoryId, operation_id: 'remove-shared-cli', path: tree, confirm_path: tree }),
   )
   expect(cli.code).not.toBe(0)
   expect(String(cli.json?.message)).toContain('conflicts with the active shared use claim')
@@ -137,7 +137,7 @@ test('two profiles reserving the same unborn path: one creates it and the other 
   const secondRepository = (await second.call('worktree.repository', { path: repo.path })).repository.id
   const target = join(ade.root, 'repos', 'contested')
   await first.call('worktree.switch', {
-    repository_id: firstRepository,
+    project_id: firstRepository,
     operation_id: 'create-first',
     target: 'first',
     create: true,
@@ -153,7 +153,7 @@ test('two profiles reserving the same unborn path: one creates it and the other 
     expect(reserved[0]).toMatchObject({ mode: 'exclusive', phase: 'dispatched', owner_profile: await profileId(first) })
 
     await second.call('worktree.switch', {
-      repository_id: secondRepository,
+      project_id: secondRepository,
       operation_id: 'create-second',
       target: 'second',
       create: true,

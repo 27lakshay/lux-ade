@@ -27,7 +27,7 @@ export async function createWorktree(
 ): Promise<LinkedWorktree> {
   const repository = await repositoryId(profile, repoPath)
   await profile.call('worktree.switch', {
-    repository_id: repository,
+    project_id: repository,
     operation_id: operationId,
     target: branch,
     create: true,
@@ -37,7 +37,7 @@ export async function createWorktree(
     .poll(
       async () => {
         const { operation } = await profile.call('worktree.operation', {
-          repository_id: repository,
+          project_id: repository,
           operation_id: operationId,
         })
         if (operation.status === 'succeeded' && operation.worktree_path) path = operation.worktree_path

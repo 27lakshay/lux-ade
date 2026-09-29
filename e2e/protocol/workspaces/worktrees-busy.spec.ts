@@ -69,7 +69,7 @@ test('while another worktree sets up, a creation and deletions wait; a tree dirt
 
   const started = join(ade.root, 'setup-started')
   const release = join(ade.root, 'setup-release')
-  await profile.call('worktree.configure', { repository_id: projectId, config: { setup: [hold(started, release)] } })
+  await profile.call('worktree.configure', { project_id: projectId, config: { setup: [hold(started, release)] } })
   const held = createOf(profile, projectId, 'Held')
   await held()
   await expect.poll(() => existsSync(started), { timeout: 20_000 }).toBe(true)
@@ -107,7 +107,7 @@ test('an operation ID the lifecycle already used for its own command is refused 
   const { project_id: projectId } = (await profile.call('workspace.open', { path: repo.path })).workspace
   expect(await register(profile, repo)).toBe(projectId)
   const id = operationId('shared')
-  await profile.call('worktree.refresh', { repository_id: projectId, operation_id: id })
+  await profile.call('worktree.refresh', { project_id: projectId, operation_id: id })
   await expect(
     profile.call('workspace.create_worktree', { operation_id: id, project_id: projectId, name: 'Shared' }),
   ).rejects.toMatchObject({ code: 'conflict' })

@@ -189,16 +189,16 @@ impl Effect {
             _ => bail!("Unknown worktree operation"),
         })
     }
-    fn repository_id(&self) -> &str {
+    fn project_id(&self) -> &str {
         match self {
-            Self::Switch(request) => &request.repository_id,
-            Self::Remove(request) => &request.repository_id,
-            Self::Refresh(request) => &request.repository_id,
-            Self::Create(request) => &request.repository_id,
-            Self::Setup(request) => &request.repository_id,
-            Self::Cleanup(request) => &request.repository_id,
-            Self::Carry(request) => &request.repository_id,
-            Self::Resources(request) => &request.repository_id,
+            Self::Switch(request) => &request.project_id,
+            Self::Remove(request) => &request.project_id,
+            Self::Refresh(request) => &request.project_id,
+            Self::Create(request) => &request.project_id,
+            Self::Setup(request) => &request.project_id,
+            Self::Cleanup(request) => &request.project_id,
+            Self::Carry(request) => &request.project_id,
+            Self::Resources(request) => &request.project_id,
         }
     }
     fn operation_id(&self) -> &str {
@@ -516,7 +516,7 @@ fn setup_state(
         });
     }
     let receipt: Option<String> = db.query_row(
-        "SELECT data FROM jobs WHERE json_extract(data,'$.repository_id')=?1 AND COALESCE(json_extract(data,'$.binding_generation'),0)=?2 AND json_extract(data,'$.request.op')='worktree.switch' AND (json_extract(data,'$.request.target')=?3 OR json_extract(data,'$.request.target')=?4 OR json_extract(data,'$.worktree_path')=?4) ORDER BY rowid DESC LIMIT 1",
+        "SELECT data FROM jobs WHERE json_extract(data,'$.project_id')=?1 AND COALESCE(json_extract(data,'$.binding_generation'),0)=?2 AND json_extract(data,'$.request.op')='worktree.switch' AND (json_extract(data,'$.request.target')=?3 OR json_extract(data,'$.request.target')=?4 OR json_extract(data,'$.worktree_path')=?4) ORDER BY rowid DESC LIMIT 1",
         params![repository, binding_generation, branch, path], |row| row.get(0),
     ).optional()?;
     Ok(match receipt {
@@ -1536,7 +1536,7 @@ impl Worktrees {
         let d = self.data.lock().unwrap();
         let r: Repository = read_json(&d.db, "repositories", id)?;
         let operations: Vec<Operation> = d.db
-            .prepare("SELECT data FROM jobs WHERE json_extract(data, '$.repository_id')=?1 ORDER BY rowid DESC LIMIT 100")?
+            .prepare("SELECT data FROM jobs WHERE json_extract(data, '$.project_id')=?1 ORDER BY rowid DESC LIMIT 100")?
             .query_map([id], |row| row.get::<_, String>(0))?
             .map(|row| {
                 let mut operation: Operation = serde_json::from_str(&row?)?;
@@ -1869,7 +1869,7 @@ impl Worktrees {
         if op == "worktree.rebind" {
             let rebind: WorktreeRebindRequest = decode(request)?;
             return self.rebind_repository(
-                valid("repository_id", &rebind.repository_id)?,
+                valid("project_id", &rebind.project_id)?,
                 valid("path", &rebind.path)?,
             );
         }
@@ -1883,12 +1883,12 @@ impl Worktrees {
             }
             "worktree.operation" => {
                 let lookup: WorktreeOperationRequest = decode(request)?;
-                let id = valid("repository_id", &lookup.repository_id)?;
+                let id = valid("project_id", &lookup.project_id)?;
                 let d = self.data.lock().unwrap();
                 let operation: Operation =
                     read_json(&d.db, LEDGER, valid("operation_id", &lookup.operation_id)?)?;
                 ensure!(
-                    operation.repository_id == id,
+                    operation.project_id == id,
                     "Operation belongs to another repository"
                 );
                 let running_hook = (operation.status == JobStatus::Running)
@@ -1902,12 +1902,12 @@ impl Worktrees {
             }
             "worktree.get" => {
                 let get: WorktreeGetRequest = decode(request)?;
-                self.snapshot(valid("repository_id", &get.repository_id)?)
+                self.snapshot(valid("project_id", &get.project_id)?)
             }
             "worktree.configure" => {
                 let configure: WorktreeConfigureRequest = decode(request)?;
                 self.configure(
-                    valid("repository_id", &configure.repository_id)?,
+                    valid("project_id", &configure.project_id)?,
                     configure.config.into(),
                 )
             }
@@ -1917,16 +1917,16 @@ impl Worktrees {
             }
             "worktree.cleanup.plan" => {
                 let plan: WorktreeCleanupPlanRequest = decode(request)?;
-                self.cleanup_plan(valid("repository_id", &plan.repository_id)?)
+                self.cleanup_plan(valid("project_id", &plan.project_id)?)
             }
             "worktree.archived" => {
                 let archived: WorktreeArchivedRequest = decode(request)?;
-                self.archived(valid("repository_id", &archived.repository_id)?)
+                self.archived(valid("project_id", &archived.project_id)?)
             }
             "worktree.adopt" => {
                 let adopt: WorktreeAdoptRequest = decode(request)?;
                 self.adopt(
-                    valid("repository_id", &adopt.repository_id)?,
+                    valid("project_id", &adopt.project_id)?,
                     valid("path", &adopt.path)?,
                     adopt.confirm_path.as_deref(),
                 )
@@ -2116,7 +2116,7 @@ impl Worktrees {
     /// reused with different parameters.
     fn start(self: &Arc<Self>, op: &str, request: &Value) -> Result<Value> {
         let effect = Effect::decode(op, request)?;
-        let id = valid("repository_id", effect.repository_id())?;
+        let id = valid("repository_id", effect.project_id())?;
         let operation_id = valid("operation_id", effect.operation_id())?;
         ensure!(operation_id.len() <= 256, "Operation ID too long");
         let payload = effect.payload()?;
@@ -2313,7 +2313,7 @@ impl Worktrees {
         }
         let job = Operation {
             id: operation_id.into(),
-            repository_id: id.into(),
+            project_id: id.into(),
             binding_generation: repo.binding_generation,
             request: request.clone(),
             worktree_path: remove_path
@@ -2489,7 +2489,7 @@ impl Worktrees {
                 && let Some(event) = crate::hooks::Event::worktree(
                     job.request["op"].as_str().unwrap_or(""),
                     &job.id,
-                    &job.repository_id,
+                    &job.project_id,
                     job.worktree_path.as_deref(),
                 )
             {
@@ -3018,7 +3018,7 @@ impl Worktrees {
             .collect::<Result<_>>()?;
         reply(&WorktreeArchive {
             tag: Default::default(),
-            repository_id: id.into(),
+            project_id: id.into(),
             entries,
         })
     }
@@ -3110,7 +3110,7 @@ impl Worktrees {
         }
         reply(&WorktreeCleanupPlan {
             tag: Default::default(),
-            repository_id: id.into(),
+            project_id: id.into(),
             trees,
         })
     }
@@ -3485,7 +3485,7 @@ mod safe_lifecycle_error_tests {
         let hub = Worktrees::open(&directory).unwrap();
         let request =
             json!({"op":"worktree.remove","path":"/do-not-run","operation_id":"running-operation"});
-        let job = json!({"id":"running-operation","repository_id":"repo","binding_generation":0,
+        let job = json!({"id":"running-operation","project_id":"repo","binding_generation":0,
             "request":request,"worktree_path":null,
             "status":"running","result":null,"error":null,"started_at":1,"finished_at":null});
         {

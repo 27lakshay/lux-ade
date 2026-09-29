@@ -72,7 +72,7 @@ export async function newWorktree(
   worktreeOperationId: string,
 ): Promise<{ workspace_id: string; repository_id: string; worktree_operation_id: string }> {
   await command(socketPath, 'worktree.switch', {
-    repository_id: repositoryId,
+    project_id: repositoryId,
     operation_id: worktreeOperationId,
     target: branch,
     create: true,
@@ -80,7 +80,7 @@ export async function newWorktree(
   const deadline = Date.now() + WORKTREE_TIMEOUT_MS
   for (;;) {
     const { operation } = await command(socketPath, 'worktree.operation', {
-      repository_id: repositoryId,
+      project_id: repositoryId,
       operation_id: worktreeOperationId,
     })
     if (operation.status === 'succeeded' && operation.worktree_path) {

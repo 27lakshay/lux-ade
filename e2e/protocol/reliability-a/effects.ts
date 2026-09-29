@@ -98,7 +98,7 @@ async function lifecycleOutcome(context: Context, state: Lifecycle, id: string) 
     .poll(
       async () => {
         const reply = await context.profile.call('worktree.operation', {
-          repository_id: state.repositoryId,
+          project_id: state.repositoryId,
           operation_id: id,
         })
         operation = reply.operation
@@ -215,7 +215,7 @@ export const effectCases: EffectCase[] = [
       repositoryId: (await context.profile.call('worktree.repository', { path: context.repo.path })).repository.id,
     }),
     request: (state: Lifecycle, id, altered) => ({
-      repository_id: state.repositoryId,
+      project_id: state.repositoryId,
       operation_id: id,
       branch: altered ? 'reliability-other' : 'reliability-tree',
     }),
@@ -229,7 +229,7 @@ export const effectCases: EffectCase[] = [
         .id
       const state: Lifecycle = { repositoryId }
       await context.profile.call('worktree.create', {
-        repository_id: repositoryId,
+        project_id: repositoryId,
         operation_id: 'setup-create',
         branch: 'reliability-removed',
       })
@@ -238,7 +238,7 @@ export const effectCases: EffectCase[] = [
       return { repositoryId, path: created.worktree_path as string }
     },
     request: (state: Lifecycle, id, altered) => ({
-      repository_id: state.repositoryId,
+      project_id: state.repositoryId,
       operation_id: id,
       path: state.path,
       ...(altered ? { delete_branch: 'merged' } : {}),
@@ -252,7 +252,7 @@ export const effectCases: EffectCase[] = [
       repositoryId: (await context.profile.call('worktree.repository', { path: context.repo.path })).repository.id,
     }),
     request: (state: Lifecycle, id, altered) => ({
-      repository_id: state.repositoryId,
+      project_id: state.repositoryId,
       operation_id: id,
       target: altered ? 'reliability-other' : 'reliability-switched',
       create: true,

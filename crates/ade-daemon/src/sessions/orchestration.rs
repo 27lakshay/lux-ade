@@ -541,7 +541,7 @@ impl Sessions {
         let reply: WorktreeOperationReply =
             serde_json::from_value(self.worktrees.command(&json!({
                 "op": "worktree.operation",
-                "repository_id": repository_id,
+                "project_id": repository_id,
                 "operation_id": operation_id,
             }))?)
             .context("Worktree ledger returned an invalid operation")?;

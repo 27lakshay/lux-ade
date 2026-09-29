@@ -27,7 +27,7 @@ test('create applies the branch prefix and default base, generates free names, r
   const repoName = basename(repo.path)
 
   await profile.call('worktree.configure', {
-    repository_id: repositoryId,
+    project_id: repositoryId,
     config: { branch_prefix: 'ade/', default_base: 'release' },
   })
 
@@ -91,20 +91,20 @@ test('create applies the branch prefix and default base, generates free names, r
 
   // A duplicate request replays; the same ID with other parameters conflicts.
   const id = operationId('create-dup')
-  await profile.call('worktree.create', { repository_id: repositoryId, operation_id: id, name: 'dup' })
+  await profile.call('worktree.create', { project_id: repositoryId, operation_id: id, name: 'dup' })
   const done = await settled(profile, repositoryId, id)
-  await profile.call('worktree.create', { repository_id: repositoryId, operation_id: id, name: 'dup' })
+  await profile.call('worktree.create', { project_id: repositoryId, operation_id: id, name: 'dup' })
   expect(await operation(profile, repositoryId, id)).toMatchObject({
     status: 'succeeded',
     finished_at: (done as any).finished_at,
   })
   expect(
-    (await profile.call('worktree.get', { repository_id: repositoryId })).worktrees.filter(
+    (await profile.call('worktree.get', { project_id: repositoryId })).worktrees.filter(
       (tree) => tree.branch === 'ade/dup',
     ),
   ).toHaveLength(1)
   await expect(
-    profile.call('worktree.create', { repository_id: repositoryId, operation_id: id, name: 'other' }),
+    profile.call('worktree.create', { project_id: repositoryId, operation_id: id, name: 'other' }),
   ).rejects.toThrow(/already used for different parameters/)
 })
 
@@ -118,7 +118,7 @@ test('setup hooks run in the tree with its context; a failed setup keeps the tre
   const marker = join(ade.root, 'setup-allowed')
   await mkdir(logs, { recursive: true })
   await profile.call('worktree.configure', {
-    repository_id: repositoryId,
+    project_id: repositoryId,
     config: {
       setup: [
         sh(
@@ -155,19 +155,19 @@ test('setup hooks run in the tree with its context; a failed setup keeps the tre
   expect(context.slice(0, 6)).toEqual(['setup', tree, 'hooked', repo.path, id, tree])
 
   // Cleanup refuses a tree whose setup did not finish.
-  const plan = await profile.call('worktree.cleanup.plan', { repository_id: repositoryId })
+  const plan = await profile.call('worktree.cleanup.plan', { project_id: repositoryId })
   expect(plan.trees.find((candidate) => candidate.path === tree)?.blockers).toContain('setup_incomplete')
 
   // Recovery: fix the cause and rerun setup; only full success makes it ready.
   await writeFile(marker, '')
   const retry = operationId('setup-retry')
-  await profile.call('worktree.setup', { repository_id: repositoryId, operation_id: retry, path: tree })
+  await profile.call('worktree.setup', { project_id: repositoryId, operation_id: retry, path: tree })
   expect(await settled(profile, repositoryId, retry)).toMatchObject({ status: 'succeeded' })
   expect(await item(profile, repositoryId, tree)).toMatchObject({ phase: 'ready', setup_state: 'ready' })
   // A ready tree does not rerun setup.
   const again = operationId('setup-again')
   await expect(
-    profile.call('worktree.setup', { repository_id: repositoryId, operation_id: again, path: tree }),
+    profile.call('worktree.setup', { project_id: repositoryId, operation_id: again, path: tree }),
   ).rejects.toThrow()
 })
 
@@ -179,29 +179,29 @@ test('a failed teardown keeps the tree; a timed-out teardown quarantines its cla
   const repositoryId = await register(profile, repo)
   const logs = join(ade.root, 'teardown.log')
   const configure = (teardown: Array<ReturnType<typeof sh>>) =>
-    profile.call('worktree.configure', { repository_id: repositoryId, config: { teardown } })
+    profile.call('worktree.configure', { project_id: repositoryId, config: { teardown } })
 
   const tree = await createReady(profile, repositoryId, { name: 'teardown' })
   await configure([sh('refuse', 'echo teardown refused >&2; exit 4')])
   const id = operationId('remove-failing')
-  await profile.call('worktree.remove', { repository_id: repositoryId, operation_id: id, path: tree })
+  await profile.call('worktree.remove', { project_id: repositoryId, operation_id: id, path: tree })
   const failed = await settled(profile, repositoryId, id)
   expect(failed, JSON.stringify(failed)).toMatchObject({ status: 'failed', code: 'teardown_hook_failed' })
   expect(existsSync(tree)).toBe(true)
   expect(await item(profile, repositoryId, tree)).toMatchObject({ phase: 'teardown_failed' })
-  const plan = await profile.call('worktree.cleanup.plan', { repository_id: repositoryId })
+  const plan = await profile.call('worktree.cleanup.plan', { project_id: repositoryId })
   expect(plan.trees.find((candidate) => candidate.path === tree)?.blockers).toContain('teardown_incomplete')
 
   // A teardown that fixes itself: explicit removal is the recovery path.
   await configure([sh('record', `printf '%s %s\\n' "$ADE_HOOK_PHASE" "$ADE_WORKTREE_PATH" >> '${logs}'`)])
   const retry = operationId('remove-retry')
-  await profile.call('worktree.remove', { repository_id: repositoryId, operation_id: retry, path: tree })
+  await profile.call('worktree.remove', { project_id: repositoryId, operation_id: retry, path: tree })
   expect(await settled(profile, repositoryId, retry)).toMatchObject({ status: 'succeeded' })
   expect(existsSync(tree)).toBe(false)
   expect(await readFile(logs, 'utf8')).toBe(`teardown ${tree}\n`)
   // The branch is kept by default and the archive records the removal.
   expect(await repo.git('branch', '--list', 'teardown')).toContain('teardown')
-  const archive = await profile.call('worktree.archived', { repository_id: repositoryId })
+  const archive = await profile.call('worktree.archived', { project_id: repositoryId })
   expect(archive.entries[0]).toMatchObject({
     path: tree,
     branch: 'teardown',
@@ -213,12 +213,12 @@ test('a failed teardown keeps the tree; a timed-out teardown quarantines its cla
   const slow = await createReady(profile, repositoryId, { name: 'slow-teardown' })
   await configure([sh('hang', `exec sleep 60`, 1)])
   const timed = operationId('remove-timeout')
-  await profile.call('worktree.remove', { repository_id: repositoryId, operation_id: timed, path: slow })
+  await profile.call('worktree.remove', { project_id: repositoryId, operation_id: timed, path: slow })
   const timedOut = await settled(profile, repositoryId, timed)
   expect(timedOut, JSON.stringify(timedOut)).toMatchObject({ status: 'failed' })
   expect(timedOut.result!.hooks[0]).toMatchObject({ name: 'hang', verdict: 'timed_out' })
   expect(existsSync(slow)).toBe(true)
-  const quarantined = await profile.call('worktree.cleanup.plan', { repository_id: repositoryId })
+  const quarantined = await profile.call('worktree.cleanup.plan', { project_id: repositoryId })
   expect(quarantined.trees.find((candidate) => candidate.path === slow)?.blockers).toEqual(
     expect.arrayContaining(['claim_uncertain', 'teardown_incomplete']),
   )
@@ -248,7 +248,7 @@ test('cleanup archives only eligible trees, skips dirty, locked, active and exte
   const { workspace } = await profile.call('workspace.open', { path: active })
   await profile.call('terminal.restart', { workspace_id: workspace.id })
 
-  const plan = await profile.call('worktree.cleanup.plan', { repository_id: repositoryId })
+  const plan = await profile.call('worktree.cleanup.plan', { project_id: repositoryId })
   const blockers = Object.fromEntries(plan.trees.map((tree) => [tree.path, tree.blockers]))
   expect(blockers[clean]).toEqual([])
   expect(blockers[unmerged]).toEqual([])
@@ -262,7 +262,7 @@ test('cleanup archives only eligible trees, skips dirty, locked, active and exte
   const id = operationId('cleanup')
   const paths = [clean, unmerged, dirty, locked, active, external]
   await profile.call('worktree.cleanup', {
-    repository_id: repositoryId,
+    project_id: repositoryId,
     operation_id: id,
     paths,
     delete_branch: 'merged',
@@ -283,7 +283,7 @@ test('cleanup archives only eligible trees, skips dirty, locked, active and exte
   // Branch deletion is its own outcome: the merged branch is gone, the unmerged one kept.
   expect(await repo.git('branch', '--list', 'clean')).toBe('')
   expect(await repo.git('rev-parse', 'refs/heads/unmerged')).toBe(unmergedHead)
-  const archive = await profile.call('worktree.archived', { repository_id: repositoryId })
+  const archive = await profile.call('worktree.archived', { project_id: repositoryId })
   expect(
     archive.entries
       .filter((entry) => entry.operation_id === id)
@@ -303,21 +303,21 @@ test('cleanup archives only eligible trees, skips dirty, locked, active and exte
   // Direct removal refuses the same trees, and never forces.
   for (const path of [external, active]) {
     await expect(
-      profile.call('worktree.remove', { repository_id: repositoryId, operation_id: operationId('remove'), path }),
+      profile.call('worktree.remove', { project_id: repositoryId, operation_id: operationId('remove'), path }),
       path,
     ).rejects.toThrow()
     expect(existsSync(path)).toBe(true)
   }
   await expect(
     profile.call('worktree.remove', {
-      repository_id: repositoryId,
+      project_id: repositoryId,
       operation_id: operationId('force'),
       path: dirty,
       force: true,
     }),
   ).rejects.toThrow(/Forced worktree removal is unavailable/)
   const dirtyRemoval = operationId('remove-dirty')
-  await profile.call('worktree.remove', { repository_id: repositoryId, operation_id: dirtyRemoval, path: dirty })
+  await profile.call('worktree.remove', { project_id: repositoryId, operation_id: dirtyRemoval, path: dirty })
   expect(await settled(profile, repositoryId, dirtyRemoval)).toMatchObject({ status: 'failed' })
   expect(await readFile(join(dirty, 'README.md'), 'utf8')).toBe('uncommitted\n')
 })
@@ -331,12 +331,12 @@ test('an interrupted setup survives a daemon crash as setup_interrupted and stay
   const started = join(ade.root, 'setup-started')
   const release = join(ade.root, 'setup-release')
   await profile.call('worktree.configure', {
-    repository_id: repositoryId,
+    project_id: repositoryId,
     config: { setup: [sh('wait', `: > '${started}'; while [ ! -f '${release}' ]; do sleep 0.05; done`, 60)] },
   })
 
   const id = operationId('create-interrupted')
-  await profile.call('worktree.create', { repository_id: repositoryId, operation_id: id, name: 'interrupted' })
+  await profile.call('worktree.create', { project_id: repositoryId, operation_id: id, name: 'interrupted' })
   await expect.poll(() => existsSync(started), { timeout: 20_000 }).toBe(true)
   const running = await operation(profile, repositoryId, id)
   const tree = running.worktree_path!
@@ -352,14 +352,14 @@ test('an interrupted setup survives a daemon crash as setup_interrupted and stay
   expect(after, JSON.stringify(after)).toMatchObject({ status: 'interrupted' })
   expect(existsSync(tree)).toBe(true)
   // The phase is durable across the crash: the tree reads as interrupted and cleanup refuses it.
-  const plan = await profile.call('worktree.cleanup.plan', { repository_id: repositoryId })
+  const plan = await profile.call('worktree.cleanup.plan', { project_id: repositoryId })
   expect(plan.trees.find((candidate) => candidate.path === tree)).toMatchObject({
     phase: 'setup_interrupted',
     eligible: false,
     blockers: expect.arrayContaining(['setup_incomplete']),
   })
   const refreshed = operationId('refresh')
-  await profile.call('worktree.refresh', { repository_id: repositoryId, operation_id: refreshed })
+  await profile.call('worktree.refresh', { project_id: repositoryId, operation_id: refreshed })
   await settled(profile, repositoryId, refreshed)
   expect(await item(profile, repositoryId, tree)).toMatchObject({
     phase: 'setup_interrupted',
@@ -370,7 +370,7 @@ test('an interrupted setup survives a daemon crash as setup_interrupted and stay
   // until someone reconciles it explicitly.
   const refused = operationId('setup-refused')
   await expect(
-    profile.call('worktree.setup', { repository_id: repositoryId, operation_id: refused, path: tree }),
+    profile.call('worktree.setup', { project_id: repositoryId, operation_id: refused, path: tree }),
   ).rejects.toThrow(/quarantined exclusive create claim/)
   const inspection = await profile.call('resources.inspect', { path: tree })
   const quarantined = inspection.claims.filter((claim) => claim.path === tree && claim.state === 'quarantined')
@@ -383,7 +383,7 @@ test('an interrupted setup survives a daemon crash as setup_interrupted and stay
 
   // Recovery reruns setup explicitly; the release file now lets the hook finish.
   const recover = operationId('setup-recover')
-  await profile.call('worktree.setup', { repository_id: repositoryId, operation_id: recover, path: tree })
+  await profile.call('worktree.setup', { project_id: repositoryId, operation_id: recover, path: tree })
   expect(await settled(profile, repositoryId, recover)).toMatchObject({ status: 'succeeded' })
   expect(await item(profile, repositoryId, tree)).toMatchObject({ phase: 'ready', setup_state: 'ready' })
 })
@@ -398,24 +398,24 @@ test('a tree being created is reserved host-wide until its setup finishes', asyn
   const started = join(ade.root, 'setup-started')
   const release = join(ade.root, 'setup-release')
   await creator.call('worktree.configure', {
-    repository_id: creatorRepository,
+    project_id: creatorRepository,
     config: { setup: [sh('wait', `: > '${started}'; while [ ! -f '${release}' ]; do sleep 0.05; done`, 60)] },
   })
 
   const id = operationId('create-reserved')
-  await creator.call('worktree.create', { repository_id: creatorRepository, operation_id: id, name: 'reserved' })
+  await creator.call('worktree.create', { project_id: creatorRepository, operation_id: id, name: 'reserved' })
   await expect.poll(() => existsSync(started), { timeout: 20_000 }).toBe(true)
   const tree = (await operation(creator, creatorRepository, id)).worktree_path!
   try {
     // Another profile can neither adopt nor clean up the tree while it is set up.
     const refused = await other
-      .call('worktree.adopt', { repository_id: otherRepository, path: tree, confirm_path: tree })
+      .call('worktree.adopt', { project_id: otherRepository, path: tree, confirm_path: tree })
       .then(
         () => null,
         (error: unknown) => String(error),
       )
     expect(refused).toMatch(/conflicts with the active exclusive create claim/)
-    const plan = await other.call('worktree.cleanup.plan', { repository_id: otherRepository })
+    const plan = await other.call('worktree.cleanup.plan', { project_id: otherRepository })
     expect(plan.trees.find((candidate) => candidate.path === tree)?.blockers).toEqual(
       expect.arrayContaining(['external', 'claim_held']),
     )
@@ -424,6 +424,6 @@ test('a tree being created is reserved host-wide until its setup finishes', asyn
   }
   expect(await settled(creator, creatorRepository, id)).toMatchObject({ status: 'succeeded' })
   // Once ready, the claim is gone: only the ownership difference remains.
-  const after = await other.call('worktree.cleanup.plan', { repository_id: otherRepository })
+  const after = await other.call('worktree.cleanup.plan', { project_id: otherRepository })
   expect(after.trees.find((candidate) => candidate.path === tree)?.blockers).toEqual(['external'])
 })

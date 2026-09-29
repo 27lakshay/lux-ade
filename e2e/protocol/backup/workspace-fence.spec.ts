@@ -149,11 +149,11 @@ test('restored lifecycle-only repository stays fenced after private workspace re
   await fenced.restartDaemon()
   for (const request of [
     { op: 'worktree.repository', path: repo.path },
-    { op: 'worktree.get', repository_id: lifecycle.id },
-    { op: 'worktree.refresh', repository_id: lifecycle.id, operation_id: 'must-not-refresh' },
+    { op: 'worktree.get', project_id: lifecycle.id },
+    { op: 'worktree.refresh', project_id: lifecycle.id, operation_id: 'must-not-refresh' },
     {
       op: 'worktree.switch',
-      repository_id: lifecycle.id,
+      project_id: lifecycle.id,
       operation_id: 'must-not-switch',
       target: 'new-branch',
       base: 'main',

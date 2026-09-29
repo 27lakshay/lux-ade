@@ -27,7 +27,7 @@ export async function register(profile: ScratchProfile, repo: ScratchRepo): Prom
 }
 
 export async function operation(profile: ScratchProfile, repositoryId: string, id: string): Promise<Operation> {
-  const reply = await profile.call('worktree.operation', { repository_id: repositoryId, operation_id: id })
+  const reply = await profile.call('worktree.operation', { project_id: repositoryId, operation_id: id })
   return reply.operation as unknown as Operation
 }
 
@@ -64,7 +64,7 @@ export async function create(
   } = {},
   id = operationId('create'),
 ): Promise<Operation> {
-  await profile.call('worktree.create', { repository_id: repositoryId, operation_id: id, ...request })
+  await profile.call('worktree.create', { project_id: repositoryId, operation_id: id, ...request })
   return settled(profile, repositoryId, id)
 }
 
@@ -82,6 +82,6 @@ export async function createReady(
 
 /** The listed tree at `path`, or undefined. */
 export async function item(profile: ScratchProfile, repositoryId: string, path: string) {
-  const state = await profile.call('worktree.get', { repository_id: repositoryId })
+  const state = await profile.call('worktree.get', { project_id: repositoryId })
   return state.worktrees.find((tree) => tree.path === path)
 }

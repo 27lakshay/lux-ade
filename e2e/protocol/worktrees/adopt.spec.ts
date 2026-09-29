@@ -21,23 +21,23 @@ test('an external tree is protected until a confirmed adoption, which grants rem
   // Opening an external tree takes no removal authority.
   await profile.call('workspace.open', { path: external })
   const refresh = operationId('refresh')
-  await profile.call('worktree.refresh', { repository_id: repositoryId, operation_id: refresh })
+  await profile.call('worktree.refresh', { project_id: repositoryId, operation_id: refresh })
   await settled(profile, repositoryId, refresh)
   expect(await item(profile, repositoryId, external)).toMatchObject({ ade_owned: false })
   await expect(
     profile.call('worktree.remove', {
-      repository_id: repositoryId,
+      project_id: repositoryId,
       operation_id: operationId('remove'),
       path: external,
     }),
   ).rejects.toThrow()
-  const plan = await profile.call('worktree.cleanup.plan', { repository_id: repositoryId })
+  const plan = await profile.call('worktree.cleanup.plan', { project_id: repositoryId })
   expect(plan.trees.find((tree) => tree.path === external)?.blockers).toEqual(['external'])
 
   // Adoption needs the exact confirmed path, a linked tree of this repository, and not the primary.
   const adopt = (path: string, confirm_path?: string) =>
     profile.call('worktree.adopt', {
-      repository_id: repositoryId,
+      project_id: repositoryId,
       path,
       ...(confirm_path ? { confirm_path } : {}),
     } as never)
@@ -53,7 +53,7 @@ test('an external tree is protected until a confirmed adoption, which grants rem
 
   // With authority, removal works like any owned tree; the branch is kept.
   const removal = operationId('remove-adopted')
-  await profile.call('worktree.remove', { repository_id: repositoryId, operation_id: removal, path: external })
+  await profile.call('worktree.remove', { project_id: repositoryId, operation_id: removal, path: external })
   expect(await settled(profile, repositoryId, removal)).toMatchObject({ status: 'succeeded' })
   expect(existsSync(external)).toBe(false)
   expect(await repo.git('branch', '--list', 'external')).toContain('external')
@@ -66,20 +66,20 @@ test('a tree replaced at the same path loses the authority granted to the old on
   const repositoryId = await register(profile, repo)
   const path = join(dirname(repo.path), 'replaced')
   await repo.git('worktree', 'add', '--quiet', '-b', 'first', path)
-  await profile.call('worktree.adopt', { repository_id: repositoryId, path, confirm_path: path })
+  await profile.call('worktree.adopt', { project_id: repositoryId, path, confirm_path: path })
 
   // Something outside ADE replaces the tree with another checkout at the same path.
   await repo.git('worktree', 'remove', path)
   await repo.git('worktree', 'add', '--quiet', '-b', 'second', path)
 
-  const plan = await profile.call('worktree.cleanup.plan', { repository_id: repositoryId })
+  const plan = await profile.call('worktree.cleanup.plan', { project_id: repositoryId })
   const blockers = plan.trees.find((tree) => tree.path === path)?.blockers ?? []
   expect(
     blockers.some((blocker) => blocker === 'authority_changed' || blocker === 'external'),
     JSON.stringify(blockers),
   ).toBe(true)
   await expect(
-    profile.call('worktree.remove', { repository_id: repositoryId, operation_id: operationId('remove'), path }),
+    profile.call('worktree.remove', { project_id: repositoryId, operation_id: operationId('remove'), path }),
   ).rejects.toThrow()
   expect(existsSync(path)).toBe(true)
   expect(await repo.git('-C', path, 'branch', '--show-current')).toBe('second')
@@ -98,7 +98,7 @@ test('adoption is refused while another profile holds a removal claim on the tre
   const started = join(ade.root, 'teardown-started')
   const release = join(ade.root, 'teardown-release')
   await owner.call('worktree.configure', {
-    repository_id: ownerRepository,
+    project_id: ownerRepository,
     config: {
       teardown: [
         {
@@ -110,17 +110,17 @@ test('adoption is refused while another profile holds a removal claim on the tre
     },
   })
   const removal = operationId('remove-claimed')
-  await owner.call('worktree.remove', { repository_id: ownerRepository, operation_id: removal, path: tree })
+  await owner.call('worktree.remove', { project_id: ownerRepository, operation_id: removal, path: tree })
   await expect.poll(() => existsSync(started), { timeout: 20_000 }).toBe(true)
   try {
     const refused = await other
-      .call('worktree.adopt', { repository_id: otherRepository, path: tree, confirm_path: tree })
+      .call('worktree.adopt', { project_id: otherRepository, path: tree, confirm_path: tree })
       .then(
         () => null,
         (error: unknown) => String(error),
       )
     expect(refused).toMatch(/conflicts with the active exclusive remove claim/)
-    const plan = await other.call('worktree.cleanup.plan', { repository_id: otherRepository })
+    const plan = await other.call('worktree.cleanup.plan', { project_id: otherRepository })
     expect(plan.trees.find((candidate) => candidate.path === tree)?.blockers).toEqual(
       expect.arrayContaining(['external', 'claim_held']),
     )
@@ -182,7 +182,7 @@ test('a pull-request head fetched from a configured remote becomes a new tree; u
   // A fetched source replaces base; both together are refused at admission.
   await expect(
     profile.call('worktree.create', {
-      repository_id: repositoryId,
+      project_id: repositoryId,
       operation_id: operationId('both'),
       base: 'main',
       fetch: { remote: 'origin', ref: 'refs/pull/7/head' },

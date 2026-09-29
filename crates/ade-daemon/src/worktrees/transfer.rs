@@ -228,7 +228,7 @@ impl Worktrees {
 
     /// `worktree.carry.preview`: the source's changes and blockers.
     pub(super) fn carry_preview(&self, request: &WorktreeCarryPreviewRequest) -> Result<Value> {
-        let id = valid("repository_id", &request.repository_id)?;
+        let id = valid("repository_id", &request.project_id)?;
         let repo: Repository = super::read_json(&self.data.lock().unwrap().db, "repositories", id)?;
         ensure!(
             repository_binding_matches(&repo),
@@ -253,7 +253,7 @@ impl Worktrees {
         let selection = carry::select(&status, request.paths.as_deref(), head.as_deref(), None);
         super::reply(&WorktreeCarryPreview {
             tag: Default::default(),
-            repository_id: id.into(),
+            project_id: id.into(),
             source: text(&source).into(),
             head,
             carriable: selection.blockers.is_empty(),

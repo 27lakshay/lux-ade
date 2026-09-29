@@ -99,14 +99,14 @@ pub struct WorktreeRepositoryRequest {
 /// `worktree.get`: read a registered repository's lifecycle state.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct WorktreeGetRequest {
-    pub repository_id: String,
+    pub project_id: String,
 }
 
 /// `worktree.switch`: check out `target` in a linked tree, creating the branch
 /// when `create` is true.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct WorktreeSwitchRequest {
-    pub repository_id: String,
+    pub project_id: String,
     /// Caller-owned operation ID.
     pub operation_id: String,
     /// A branch name, or the path of an existing linked tree.
@@ -128,7 +128,7 @@ pub struct WorktreeAdoptRequest {
     /// retry with the same ID and payload returns the recorded outcome, and
     /// the same ID with another payload is a conflict.
     pub operation_id: String,
-    pub repository_id: String,
+    pub project_id: String,
     pub path: String,
     /// Must equal the canonical form of `path`. Optional in Rust only so a
     /// missing value keeps the daemon's own error message.
@@ -149,7 +149,7 @@ pub enum BranchPolicy {
 /// `worktree.remove`: remove a clean ADE-owned linked tree.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct WorktreeRemoveRequest {
-    pub repository_id: String,
+    pub project_id: String,
     /// Caller-owned operation ID.
     pub operation_id: String,
     pub path: String,
@@ -168,7 +168,7 @@ pub struct WorktreeRemoveRequest {
 /// `worktree.refresh`: re-read the Git worktree listing under the repository lock.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct WorktreeRefreshRequest {
-    pub repository_id: String,
+    pub project_id: String,
     /// Caller-owned operation ID.
     pub operation_id: String,
 }
@@ -176,7 +176,7 @@ pub struct WorktreeRefreshRequest {
 /// `worktree.configure`: replace a repository's lifecycle configuration.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct WorktreeConfigureRequest {
-    pub repository_id: String,
+    pub project_id: String,
     pub config: WorktreeConfigInput,
 }
 
@@ -250,7 +250,7 @@ impl From<WorktreeConfigInput> for Config {
 /// `branch`, the daemon generates the first free `wt-N` name.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct WorktreeCreateRequest {
-    pub repository_id: String,
+    pub project_id: String,
     /// Caller-owned operation ID.
     pub operation_id: String,
     /// A workspace name; the branch is the configured prefix plus its slug.
@@ -289,7 +289,7 @@ pub struct WorktreeFetchSource {
 /// one whose setup failed or was interrupted. Only a full success makes it ready.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct WorktreeSetupRequest {
-    pub repository_id: String,
+    pub project_id: String,
     /// Caller-owned operation ID.
     pub operation_id: String,
     pub path: String,
@@ -299,7 +299,7 @@ pub struct WorktreeSetupRequest {
 /// changing anything.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct WorktreeCleanupPlanRequest {
-    pub repository_id: String,
+    pub project_id: String,
 }
 
 /// `worktree.cleanup`: run teardown hooks, remove and archive the named
@@ -307,7 +307,7 @@ pub struct WorktreeCleanupPlanRequest {
 /// a blocked tree is skipped, never forced.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct WorktreeCleanupRequest {
-    pub repository_id: String,
+    pub project_id: String,
     /// Caller-owned operation ID.
     pub operation_id: String,
     /// One to 32 tree paths, each from `worktree.cleanup.plan`.
@@ -320,13 +320,13 @@ pub struct WorktreeCleanupRequest {
 /// `worktree.archived`: list the archive records of removed trees.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct WorktreeArchivedRequest {
-    pub repository_id: String,
+    pub project_id: String,
 }
 
 /// `worktree.operation`: read one lifecycle operation receipt in full.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct WorktreeOperationRequest {
-    pub repository_id: String,
+    pub project_id: String,
     /// The operation's ID.
     pub operation_id: String,
 }
@@ -335,7 +335,7 @@ pub struct WorktreeOperationRequest {
 /// each can be carried. Changes nothing.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct WorktreeCarryPreviewRequest {
-    pub repository_id: String,
+    pub project_id: String,
     /// The tree whose changes would move: the primary checkout or a linked tree.
     pub source: String,
     /// Paths relative to the tree root to select; every change when absent.
@@ -352,7 +352,7 @@ pub struct WorktreeCarryPreviewRequest {
 /// A failure never discards anything.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct WorktreeCarryRequest {
-    pub repository_id: String,
+    pub project_id: String,
     /// Caller-owned operation ID.
     pub operation_id: String,
     pub source: String,
@@ -373,7 +373,7 @@ pub struct WorktreeCarryRequest {
 /// replaced.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct WorktreeResourcesApplyRequest {
-    pub repository_id: String,
+    pub project_id: String,
     /// Caller-owned operation ID.
     pub operation_id: String,
     pub path: String,
@@ -382,7 +382,7 @@ pub struct WorktreeResourcesApplyRequest {
 /// `worktree.rebind`: bind a restored lifecycle repository to a verified checkout.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct WorktreeRebindRequest {
-    pub repository_id: String,
+    pub project_id: String,
     pub path: String,
 }
 
@@ -584,7 +584,7 @@ pub struct WorktreeCleanupCandidate {
 pub struct WorktreeCleanupPlan {
     #[serde(rename = "type")]
     pub tag: WorktreeCleanupPlanTag,
-    pub repository_id: String,
+    pub project_id: String,
     pub trees: Vec<WorktreeCleanupCandidate>,
 }
 
@@ -637,7 +637,7 @@ pub struct WorktreeArchiveEntry {
 pub struct WorktreeArchive {
     #[serde(rename = "type")]
     pub tag: WorktreeArchiveTag,
-    pub repository_id: String,
+    pub project_id: String,
     pub entries: Vec<WorktreeArchiveEntry>,
 }
 
@@ -660,7 +660,7 @@ pub enum WorktreeOperationStatus {
 pub struct WorktreeOperation {
     /// The caller's operation ID.
     pub id: String,
-    pub repository_id: String,
+    pub project_id: String,
     pub binding_generation: i64,
     /// The request as the caller sent it, including `op`.
     #[schemars(with = "Value")]
@@ -770,7 +770,7 @@ pub struct WorktreeCarryEntry {
 pub struct WorktreeCarryPreview {
     #[serde(rename = "type")]
     pub tag: WorktreeCarryPreviewTag,
-    pub repository_id: String,
+    pub project_id: String,
     pub source: String,
     /// The source commit; pass it as `expect_head`. `null` when unborn.
     pub head: Option<String>,
@@ -958,8 +958,8 @@ mod tests {
     }
 
     fn operation() -> Value {
-        json!({"id": "op-1", "repository_id": "repository_1", "binding_generation": 0,
-            "request": {"op": "worktree.switch", "repository_id": "repository_1",
+        json!({"id": "op-1", "project_id": "repository_1", "binding_generation": 0,
+            "request": {"op": "worktree.switch", "project_id": "repository_1",
                 "target": "feature", "create": true, "operation_id": "op-1"},
             "worktree_path": "/tmp/repo-feature", "status": "failed",
             "result": {"exit_code": 1, "elapsed_ms": 3, "value": {"path": null, "git_exit_code": 1}},
@@ -981,7 +981,7 @@ mod tests {
                     "prunable": true, "ade_owned": true, "setup_state": "preparing"}],
             "busy": false,
             "operations": [operation(),
-                {"id": "op-2", "repository_id": "repository_1", "binding_generation": 1,
+                {"id": "op-2", "project_id": "repository_1", "binding_generation": 1,
                     "request": {"op": "worktree.refresh"}, "worktree_path": null,
                     "status": "running", "result": null, "error": null,
                     "started_at": 3, "finished_at": null}]})
@@ -991,30 +991,30 @@ mod tests {
     fn effect_requests_carry_operation_id() {
         let switch: WorktreeSwitchRequest = request(
             "worktree.switch",
-            json!({"op": "worktree.switch", "repository_id": "r", "operation_id": "k",
+            json!({"op": "worktree.switch", "project_id": "r", "operation_id": "k",
                 "target": "feature", "base": "main", "create": true}),
         );
         assert_eq!(switch.operation_id, "k");
         let switch: WorktreeSwitchRequest = request(
             "worktree.switch",
-            json!({"repository_id": "r", "operation_id": "k", "target": "feature",
+            json!({"project_id": "r", "operation_id": "k", "target": "feature",
                 "base": null, "path": null}),
         );
         assert!(switch.base.is_none() && switch.create.is_none());
         let remove: WorktreeRemoveRequest = request(
             "worktree.remove",
-            json!({"repository_id": "r", "operation_id": "k", "path": "/tmp/t",
+            json!({"project_id": "r", "operation_id": "k", "path": "/tmp/t",
                 "delete_branch": "merged"}),
         );
         assert_eq!(remove.delete_branch.as_deref(), Some("merged"));
         let refresh: WorktreeRefreshRequest = request(
             "worktree.refresh",
-            json!({"repository_id": "r", "operation_id": "k"}),
+            json!({"project_id": "r", "operation_id": "k"}),
         );
         assert_eq!(refresh.operation_id, "k");
         let lookup: WorktreeOperationRequest = request(
             "worktree.operation",
-            json!({"repository_id": "r", "operation_id": "k"}),
+            json!({"project_id": "r", "operation_id": "k"}),
         );
         assert_eq!(lookup.operation_id, "k");
     }
@@ -1022,21 +1022,21 @@ mod tests {
     #[test]
     fn remaining_requests_round_trip() {
         request::<WorktreeRepositoryRequest>("worktree.repository", json!({"path": "/tmp/repo"}));
-        request::<WorktreeGetRequest>("worktree.get", json!({"repository_id": "r"}));
+        request::<WorktreeGetRequest>("worktree.get", json!({"project_id": "r"}));
         let adopt: WorktreeAdoptRequest = request(
             "worktree.adopt",
-            json!({"operation_id": "o", "repository_id": "r", "path": "/tmp/t", "confirm_path": "/tmp/t"}),
+            json!({"operation_id": "o", "project_id": "r", "path": "/tmp/t", "confirm_path": "/tmp/t"}),
         );
         assert_eq!(adopt.confirm_path.as_deref(), Some("/tmp/t"));
         let configure: WorktreeConfigureRequest = request(
             "worktree.configure",
-            json!({"repository_id": "r", "config": {}}),
+            json!({"project_id": "r", "config": {}}),
         );
         let config = Config::from(configure.config);
         assert_eq!((config.directory, config.timeout_seconds), (None, 60));
         request::<WorktreeRebindRequest>(
             "worktree.rebind",
-            json!({"repository_id": "r", "path": "/tmp/repo"}),
+            json!({"project_id": "r", "path": "/tmp/repo"}),
         );
         request::<WorktreeRebindListRequest>("worktree.rebind.list", json!({}));
     }
@@ -1047,7 +1047,7 @@ mod tests {
         assert!(
             !errors(
                 &adopt,
-                &json!({"op": "worktree.adopt", "repository_id": "r", "path": "/p"})
+                &json!({"op": "worktree.adopt", "project_id": "r", "path": "/p"})
             )
             .is_empty()
         );
@@ -1055,7 +1055,7 @@ mod tests {
         assert!(
             !errors(
                 &remove,
-                &json!({"op": "worktree.remove", "repository_id": "r", "operation_id": "k",
+                &json!({"op": "worktree.remove", "project_id": "r", "operation_id": "k",
                     "path": "/p", "delete_branch": "always"})
             )
             .is_empty()
@@ -1064,14 +1064,14 @@ mod tests {
         assert!(
             !errors(
                 &configure,
-                &json!({"op": "worktree.configure", "repository_id": "r",
+                &json!({"op": "worktree.configure", "project_id": "r",
                     "config": {"path_template": "x"}})
             )
             .is_empty()
         );
         assert!(
             serde_json::from_value::<WorktreeConfigureRequest>(
-                json!({"repository_id": "r", "config": {"hooks": true}})
+                json!({"project_id": "r", "config": {"hooks": true}})
             )
             .is_err()
         );
@@ -1116,30 +1116,27 @@ mod tests {
     fn lifecycle_requests_round_trip() {
         let create: WorktreeCreateRequest = request(
             "worktree.create",
-            json!({"repository_id": "r", "operation_id": "k", "name": "Login page",
+            json!({"project_id": "r", "operation_id": "k", "name": "Login page",
                 "base": "main"}),
         );
         assert_eq!(create.operation_id, "k");
         assert!(create.branch.is_none() && create.path.is_none());
         let setup: WorktreeSetupRequest = request(
             "worktree.setup",
-            json!({"repository_id": "r", "operation_id": "k", "path": "/tmp/t"}),
+            json!({"project_id": "r", "operation_id": "k", "path": "/tmp/t"}),
         );
         assert_eq!(setup.path, "/tmp/t");
         let cleanup: WorktreeCleanupRequest = request(
             "worktree.cleanup",
-            json!({"repository_id": "r", "operation_id": "k", "paths": ["/tmp/a", "/tmp/b"],
+            json!({"project_id": "r", "operation_id": "k", "paths": ["/tmp/a", "/tmp/b"],
                 "delete_branch": "merged"}),
         );
         assert_eq!(cleanup.delete_branch, Some(BranchPolicy::Merged));
-        request::<WorktreeCleanupPlanRequest>(
-            "worktree.cleanup.plan",
-            json!({"repository_id": "r"}),
-        );
-        request::<WorktreeArchivedRequest>("worktree.archived", json!({"repository_id": "r"}));
+        request::<WorktreeCleanupPlanRequest>("worktree.cleanup.plan", json!({"project_id": "r"}));
+        request::<WorktreeArchivedRequest>("worktree.archived", json!({"project_id": "r"}));
         let configure: WorktreeConfigureRequest = request(
             "worktree.configure",
-            json!({"repository_id": "r", "config": {"branch_prefix": "ade/",
+            json!({"project_id": "r", "config": {"branch_prefix": "ade/",
                 "default_base": "main",
                 "setup": [{"name": "install", "command": ["pnpm", "install"]}],
                 "teardown": [{"name": "stop", "command": ["sh", "-c", "exit 0"],
@@ -1149,7 +1146,7 @@ mod tests {
         assert_eq!(config.setup[0].timeout_seconds, 300);
         assert_eq!(config.teardown[0].timeout_seconds, 30);
         assert!(
-            serde_json::from_value::<WorktreeConfigureRequest>(json!({"repository_id": "r",
+            serde_json::from_value::<WorktreeConfigureRequest>(json!({"project_id": "r",
                 "config": {"setup": [{"name": "x", "command": ["y"], "shell": true}]}}))
             .is_err()
         );
@@ -1164,14 +1161,14 @@ mod tests {
         reply::<WorktreeState>("worktree.create", with_phase);
         reply::<WorktreeCleanupPlan>(
             "worktree.cleanup.plan",
-            json!({"type": "worktree_cleanup_plan", "repository_id": "r", "trees": [
+            json!({"type": "worktree_cleanup_plan", "project_id": "r", "trees": [
                 {"path": "/tmp/a", "branch": "ade/wt-1", "phase": "ready", "eligible": true,
                     "blockers": []},
                 {"path": "/tmp/b", "eligible": false, "blockers": ["dirty", "claim_uncertain"]}]}),
         );
         reply::<WorktreeArchive>(
             "worktree.archived",
-            json!({"type": "worktree_archive", "repository_id": "r", "entries": [
+            json!({"type": "worktree_archive", "project_id": "r", "entries": [
                 {"path": "/tmp/a", "branch": "ade/wt-1", "head": "abc", "branch_deleted": false,
                     "operation_id": "k", "archived_at": 5}]}),
         );
@@ -1187,28 +1184,28 @@ mod tests {
     fn carry_and_resource_requests_round_trip() {
         let carry: WorktreeCarryRequest = request(
             "worktree.carry",
-            json!({"repository_id": "r", "operation_id": "k", "source": "/tmp/a",
+            json!({"project_id": "r", "operation_id": "k", "source": "/tmp/a",
                 "target": "/tmp/b", "paths": ["src"], "clean_source": true}),
         );
         assert_eq!(carry.operation_id, "k");
         assert_eq!(carry.clean_source, Some(true));
         request::<WorktreeCarryPreviewRequest>(
             "worktree.carry.preview",
-            json!({"repository_id": "r", "source": "/tmp/a"}),
+            json!({"project_id": "r", "source": "/tmp/a"}),
         );
         request::<WorktreeResourcesApplyRequest>(
             "worktree.resources.apply",
-            json!({"repository_id": "r", "operation_id": "k", "path": "/tmp/b"}),
+            json!({"project_id": "r", "operation_id": "k", "path": "/tmp/b"}),
         );
         let create: WorktreeCreateRequest = request(
             "worktree.create",
-            json!({"repository_id": "r", "operation_id": "k", "name": "pr",
+            json!({"project_id": "r", "operation_id": "k", "name": "pr",
                 "fetch": {"remote": "origin", "ref": "refs/pull/12/head"}}),
         );
         assert_eq!(create.fetch.unwrap().reference, "refs/pull/12/head");
         let configure: WorktreeConfigureRequest = request(
             "worktree.configure",
-            json!({"repository_id": "r", "config": {"resources": [
+            json!({"project_id": "r", "config": {"resources": [
                 {"path": ".env", "mode": "copy"}, {"path": "node_modules", "mode": "link"}]}}),
         );
         assert_eq!(
@@ -1219,7 +1216,7 @@ mod tests {
         assert!(
             !errors(
                 &configure,
-                &json!({"op": "worktree.configure", "repository_id": "r",
+                &json!({"op": "worktree.configure", "project_id": "r",
                     "config": {"resources": [{"path": ".env", "mode": "share"}]}})
             )
             .is_empty()
@@ -1230,7 +1227,7 @@ mod tests {
     fn carry_preview_and_results_round_trip() {
         reply::<WorktreeCarryPreview>(
             "worktree.carry.preview",
-            json!({"type": "worktree_carry_preview", "repository_id": "r", "source": "/tmp/a",
+            json!({"type": "worktree_carry_preview", "project_id": "r", "source": "/tmp/a",
                 "head": "abc", "entries": [
                     {"path": "f", "change": "modified", "staged": false, "unstaged": true,
                         "selected": true},

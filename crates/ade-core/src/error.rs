@@ -227,7 +227,7 @@ pub struct TerminalsStillStopping;
 )]
 pub struct ReviewPromptTooLong(pub usize);
 
-/// No project has this ID, and no worktree lifecycle alias names one.
+/// No project has this ID.
 #[derive(Debug, thiserror::Error)]
 #[error("Project {0} does not exist; reload the catalog")]
 pub struct ProjectNotFound(pub String);

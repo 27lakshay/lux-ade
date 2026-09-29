@@ -513,10 +513,10 @@ export const envelopeCases: EnvelopeCase[] = [
       await ctx.repo.git('worktree', 'add', '--quiet', '-b', 'external-other', other)
       // The lifecycle lists linked trees it has observed.
       const refresh = stepId('refresh')
-      await ctx.profile.call('worktree.refresh', { repository_id: repositoryId, operation_id: refresh })
+      await ctx.profile.call('worktree.refresh', { project_id: repositoryId, operation_id: refresh })
       await settled(ctx.profile, repositoryId, refresh)
       expect(
-        (await ctx.profile.call('worktree.get', { repository_id: repositoryId })).worktrees.find(
+        (await ctx.profile.call('worktree.get', { project_id: repositoryId })).worktrees.find(
           (tree) => tree.path === path,
         ),
       ).toMatchObject({ ade_owned: false })
@@ -524,10 +524,10 @@ export const envelopeCases: EnvelopeCase[] = [
     },
     request: (state: { repositoryId: string; path: string; other: string }, altered) => {
       const path = altered ? state.other : state.path
-      return { repository_id: state.repositoryId, path, confirm_path: path }
+      return { project_id: state.repositoryId, path, confirm_path: path }
     },
     observe: async (ctx, state: { repositoryId: string; path: string }) =>
-      (await ctx.profile.call('worktree.get', { repository_id: state.repositoryId })).worktrees.find(
+      (await ctx.profile.call('worktree.get', { project_id: state.repositoryId })).worktrees.find(
         (tree) => tree.path === state.path,
       )?.ade_owned ?? null,
   },

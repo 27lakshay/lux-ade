@@ -133,12 +133,12 @@ test('restored repository and shared workspaces rebind explicitly without source
   })
   // The saved source checkout and a missing folder are refused; a clone is accepted.
   for (const path of [sourceCheckout, join(outside, 'missing')]) {
-    expect(await rawReply(restored, { op: 'worktree.rebind', repository_id: lifecycle.id, path })).toMatchObject({
+    expect(await rawReply(restored, { op: 'worktree.rebind', project_id: lifecycle.id, path })).toMatchObject({
       type: 'error',
     })
   }
   expect(
-    (await restored.call('worktree.rebind', { repository_id: lifecycle.id, path: targetCheckout })).repository,
+    (await restored.call('worktree.rebind', { project_id: lifecycle.id, path: targetCheckout })).repository,
   ).toMatchObject({ id: lifecycle.id, needs_rebind: false, root: await realpath(targetCheckout) })
 
   // A process restart between the two SQLite bindings must preserve the
@@ -194,7 +194,7 @@ test('restored repository and shared workspaces rebind explicitly without source
     ]),
   )
   expect(catalog.workspaces.filter((workspace) => workspace.needs_rebind)).toEqual([])
-  expect((await restored.call('worktree.get', { repository_id: lifecycle.id })).repository).toMatchObject({
+  expect((await restored.call('worktree.get', { project_id: lifecycle.id })).repository).toMatchObject({
     id: lifecycle.id,
     needs_rebind: false,
   })
@@ -214,7 +214,7 @@ test('restored repository and shared workspaces rebind explicitly without source
   await rename(targetCheckout, join(outside, 'target-moved'))
   await mkdir(targetCheckout)
   expect(await createTerminal(restored, first.id)).toMatchObject(fenced)
-  expect(await rawReply(restored, { op: 'worktree.get', repository_id: lifecycle.id })).toMatchObject(fenced)
+  expect(await rawReply(restored, { op: 'worktree.get', project_id: lifecycle.id })).toMatchObject(fenced)
   expect((await restored.call('workspace.open', { path: targetCheckout })).workspace).toMatchObject({
     id: first.id,
     needs_rebind: true,
@@ -257,14 +257,14 @@ test('renamed source directories retain their saved physical identity and cannot
   expect(
     await rawReply(restored, {
       op: 'worktree.rebind',
-      repository_id: lifecycle.id,
+      project_id: lifecycle.id,
       path: join(outside, 'lifecycle-renamed'),
     }),
   ).toMatchObject(refused('different physical repository from the saved checkout'))
   expect((await restored.call('worktree.rebind.list', {})).repositories).toEqual(
     expect.arrayContaining([expect.objectContaining({ id: lifecycle.id, needs_rebind: true })]),
   )
-  await restored.call('worktree.rebind', { repository_id: lifecycle.id, path: lifecycleTarget })
+  await restored.call('worktree.rebind', { project_id: lifecycle.id, path: lifecycleTarget })
   expect(
     await rawReply(restored, {
       op: 'repository.rebind',
@@ -312,7 +312,7 @@ test('second rebind and another workspace cannot recover authority over saved so
   const privateSource = await privateWorkspace(source)
 
   const restored = await restoreSharingRoot(ade, source)
-  await restored.call('worktree.rebind', { repository_id: lifecycle.id, path: targetLife })
+  await restored.call('worktree.rebind', { project_id: lifecycle.id, path: targetLife })
   await restored.call('repository.rebind', { repository_id: gitWorkspace.project_id, path: targetGit })
   await restored.call('workspace.rebind', { workspace_id: gitWorkspace.id, path: targetGit })
   await restored.call('workspace.rebind', { workspace_id: plainWorkspace.id, path: targetPlain })
@@ -348,9 +348,9 @@ test('second rebind and another workspace cannot recover authority over saved so
   ).toMatchObject(refused('saved source workspace'))
   await rename(targetLife, join(outside, 'target-life-moved'))
   await git(ade, 'init', '-q', '-b', 'main', targetLife)
-  expect(
-    await rawReply(restored, { op: 'worktree.rebind', repository_id: lifecycle.id, path: sourceLife }),
-  ).toMatchObject(refused('different physical repository from the saved checkout'))
+  expect(await rawReply(restored, { op: 'worktree.rebind', project_id: lifecycle.id, path: sourceLife })).toMatchObject(
+    refused('different physical repository from the saved checkout'),
+  )
   expect(await createTerminal(restored, gitWorkspace.id)).toMatchObject(fenced)
   expect(await createTerminal(restored, plainWorkspace.id)).toMatchObject(fenced)
 })
@@ -367,11 +367,11 @@ test('core rebind follows the same lifecycle repository after a second lifecycle
   const workspace = (await source.call('workspace.open', { path: sourceGit })).workspace
   const lifecycle = (await source.call('worktree.repository', { path: sourceGit })).repository
   const restored = await restoreSharingRoot(ade, source)
-  await restored.call('worktree.rebind', { repository_id: lifecycle.id, path: cloneA })
+  await restored.call('worktree.rebind', { project_id: lifecycle.id, path: cloneA })
   await restored.call('repository.rebind', { repository_id: workspace.project_id, path: cloneA })
   await rename(cloneA, join(outside, 'clone-a-moved'))
   await git(ade, 'init', '-q', '-b', 'main', cloneA)
-  await restored.call('worktree.rebind', { repository_id: lifecycle.id, path: cloneB })
+  await restored.call('worktree.rebind', { project_id: lifecycle.id, path: cloneB })
   expect(
     await rawReply(restored, { op: 'repository.rebind', repository_id: workspace.project_id, path: cloneC }),
   ).toMatchObject(refused('differs from the lifecycle binding'))
@@ -392,16 +392,16 @@ test('core and lifecycle rebinds reject each other’s unrelated source checkout
   const workspace = (await source.call('workspace.open', { path: sourceCore })).workspace
   const lifecycle = (await source.call('worktree.repository', { path: sourceLife })).repository
   const restored = await restoreSharingRoot(ade, source)
-  await restored.call('worktree.rebind', { repository_id: lifecycle.id, path: targetLife })
+  await restored.call('worktree.rebind', { project_id: lifecycle.id, path: targetLife })
   expect(
     await rawReply(restored, { op: 'repository.rebind', repository_id: workspace.project_id, path: sourceLife }),
   ).toMatchObject(refused('saved source Git lifecycle repository'))
   await restored.call('repository.rebind', { repository_id: workspace.project_id, path: targetCore })
   await rename(targetLife, join(outside, 'target-life-moved'))
   await git(ade, 'init', '-q', '-b', 'main', targetLife)
-  expect(
-    await rawReply(restored, { op: 'worktree.rebind', repository_id: lifecycle.id, path: sourceCore }),
-  ).toMatchObject(refused('saved source workspace or repository'))
+  expect(await rawReply(restored, { op: 'worktree.rebind', project_id: lifecycle.id, path: sourceCore })).toMatchObject(
+    refused('saved source workspace or repository'),
+  )
 })
 
 for (const failpoint of ['before_workspace_commit', 'after_workspace_commit'] as const) {

@@ -14153,8 +14153,7 @@ export interface WorkspaceCreateWorktreeRequest {
    */
   operation_id: string
   /**
-   * A repository project; a pre-unification lifecycle repository ID is
-   * accepted as an alias.
+   * A repository project.
    */
   project_id: string
 }
@@ -14333,14 +14332,14 @@ export interface WorktreeAdoptRequest {
    */
   operation_id: string
   path: string
-  repository_id: string
+  project_id: string
 }
 /**
  * The `worktree.archived` reply, newest first, at most 200 records.
  */
 export interface WorktreeArchive {
   entries: WorktreeArchiveEntry[]
-  repository_id: string
+  project_id: string
   /**
    * The `worktree_archive` type tag.
    */
@@ -14371,7 +14370,7 @@ export interface WorktreeArchiveEntry {
  */
 export interface WorktreeArchivedRequest {
   op: 'worktree.archived'
-  repository_id: string
+  project_id: string
 }
 /**
  * One changed path in the source.
@@ -14406,7 +14405,7 @@ export interface WorktreeCarryPreview {
    * The source commit; pass it as `expect_head`. `null` when unborn.
    */
   head: string | null
-  repository_id: string
+  project_id: string
   source: string
   /**
    * The `worktree_carry_preview` type tag.
@@ -14425,7 +14424,7 @@ export interface WorktreeCarryPreviewRequest {
    * A directory selects the changes beneath it.
    */
   paths?: string[] | null
-  repository_id: string
+  project_id: string
   /**
    * The tree whose changes would move: the primary checkout or a linked tree.
    */
@@ -14457,7 +14456,7 @@ export interface WorktreeCarryRequest {
    * As in `worktree.carry.preview`; every change when absent.
    */
   paths?: string[] | null
-  repository_id: string
+  project_id: string
   source: string
   target: string
 }
@@ -14479,7 +14478,7 @@ export interface WorktreeCleanupCandidate {
  * The `worktree.cleanup.plan` reply: every linked tree, primary excluded.
  */
 export interface WorktreeCleanupPlan {
-  repository_id: string
+  project_id: string
   trees: WorktreeCleanupCandidate[]
   /**
    * The `worktree_cleanup_plan` type tag.
@@ -14493,7 +14492,7 @@ export interface WorktreeCleanupPlan {
  */
 export interface WorktreeCleanupPlanRequest {
   op: 'worktree.cleanup.plan'
-  repository_id: string
+  project_id: string
 }
 /**
  * `worktree.cleanup`: run teardown hooks, remove and archive the named
@@ -14514,7 +14513,7 @@ export interface WorktreeCleanupRequest {
    * One to 32 tree paths, each from `worktree.cleanup.plan`.
    */
   paths: string[]
-  repository_id: string
+  project_id: string
 }
 /**
  * The configuration a caller sends. Absent fields take their defaults; the
@@ -14558,7 +14557,7 @@ export interface WorktreeConfigInput {
 export interface WorktreeConfigureRequest {
   config: WorktreeConfigInput
   op: 'worktree.configure'
-  repository_id: string
+  project_id: string
 }
 /**
  * `worktree.create`: create a branch and a linked tree from the repository's
@@ -14593,7 +14592,7 @@ export interface WorktreeCreateRequest {
    * Absolute path for the tree, directly inside the configured directory.
    */
   path?: string | null
-  repository_id: string
+  project_id: string
 }
 /**
  * A ref to fetch from a configured remote into `refs/ade/fetched/…`. The
@@ -14615,7 +14614,7 @@ export interface WorktreeFetchSource {
  */
 export interface WorktreeGetRequest {
   op: 'worktree.get'
-  repository_id: string
+  project_id: string
 }
 /**
  * A hook that is still running: which one, how far the operation has got,
@@ -14706,8 +14705,8 @@ export interface WorktreeOperation {
    * The caller's operation ID.
    */
   id: string
+  project_id: string
   recovery?: string | null
-  repository_id: string
   /**
    * The request as the caller sent it, including `op`.
    */
@@ -14748,7 +14747,7 @@ export interface WorktreeOperationRequest {
    * The operation's ID.
    */
   operation_id: string
-  repository_id: string
+  project_id: string
 }
 /**
  * One lifecycle repository in the rebind catalog.
@@ -14788,7 +14787,7 @@ export interface WorktreeRebindListRequest {
 export interface WorktreeRebindRequest {
   op: 'worktree.rebind'
   path: string
-  repository_id: string
+  project_id: string
 }
 /**
  * `worktree.refresh`: re-read the Git worktree listing under the repository lock.
@@ -14799,7 +14798,7 @@ export interface WorktreeRefreshRequest {
    * Caller-owned operation ID.
    */
   operation_id: string
-  repository_id: string
+  project_id: string
 }
 /**
  * `worktree.remove`: remove a clean ADE-owned linked tree.
@@ -14821,7 +14820,7 @@ export interface WorktreeRemoveRequest {
    */
   operation_id: string
   path: string
-  repository_id: string
+  project_id: string
 }
 /**
  * A registered lifecycle repository. Device and inode identities are decimal strings.
@@ -14871,7 +14870,7 @@ export interface WorktreeResourcesApplyRequest {
    */
   operation_id: string
   path: string
-  repository_id: string
+  project_id: string
 }
 /**
  * `worktree.setup`: run the setup hooks again in an ADE-owned tree, such as
@@ -14884,7 +14883,7 @@ export interface WorktreeSetupRequest {
    */
   operation_id: string
   path: string
-  repository_id: string
+  project_id: string
 }
 /**
  * A repository's lifecycle state: the reply to every command except
@@ -14929,7 +14928,7 @@ export interface WorktreeSwitchRequest {
    * Absolute path for a new tree, directly inside the configured directory.
    */
   path?: string | null
-  repository_id: string
+  project_id: string
   /**
    * A branch name, or the path of an existing linked tree.
    */

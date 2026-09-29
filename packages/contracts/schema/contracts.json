@@ -29490,7 +29490,7 @@
           "type": "string"
         },
         "project_id": {
-          "description": "A repository project; a pre-unification lifecycle repository ID is\naccepted as an alias.",
+          "description": "A repository project.",
           "type": "string"
         }
       },
@@ -29889,14 +29889,14 @@
         "path": {
           "type": "string"
         },
-        "repository_id": {
+        "project_id": {
           "type": "string"
         }
       },
       "required": [
         "op",
         "operation_id",
-        "repository_id",
+        "project_id",
         "path",
         "confirm_path"
       ],
@@ -29911,7 +29911,7 @@
           },
           "type": "array"
         },
-        "repository_id": {
+        "project_id": {
           "type": "string"
         },
         "type": {
@@ -29924,7 +29924,7 @@
       },
       "required": [
         "type",
-        "repository_id",
+        "project_id",
         "entries"
       ],
       "type": "object"
@@ -29978,13 +29978,13 @@
         "op": {
           "const": "worktree.archived"
         },
-        "repository_id": {
+        "project_id": {
           "type": "string"
         }
       },
       "required": [
         "op",
-        "repository_id"
+        "project_id"
       ],
       "type": "object"
     },
@@ -30054,7 +30054,7 @@
             "null"
           ]
         },
-        "repository_id": {
+        "project_id": {
           "type": "string"
         },
         "source": {
@@ -30070,7 +30070,7 @@
       },
       "required": [
         "type",
-        "repository_id",
+        "project_id",
         "source",
         "head",
         "entries",
@@ -30096,7 +30096,7 @@
             "null"
           ]
         },
-        "repository_id": {
+        "project_id": {
           "type": "string"
         },
         "source": {
@@ -30106,7 +30106,7 @@
       },
       "required": [
         "op",
-        "repository_id",
+        "project_id",
         "source"
       ],
       "type": "object"
@@ -30146,7 +30146,7 @@
             "null"
           ]
         },
-        "repository_id": {
+        "project_id": {
           "type": "string"
         },
         "source": {
@@ -30158,7 +30158,7 @@
       },
       "required": [
         "op",
-        "repository_id",
+        "project_id",
         "operation_id",
         "source",
         "target"
@@ -30208,7 +30208,7 @@
     "WorktreeCleanupPlan": {
       "description": "The `worktree.cleanup.plan` reply: every linked tree, primary excluded.",
       "properties": {
-        "repository_id": {
+        "project_id": {
           "type": "string"
         },
         "trees": {
@@ -30227,7 +30227,7 @@
       },
       "required": [
         "type",
-        "repository_id",
+        "project_id",
         "trees"
       ],
       "type": "object"
@@ -30239,13 +30239,13 @@
         "op": {
           "const": "worktree.cleanup.plan"
         },
-        "repository_id": {
+        "project_id": {
           "type": "string"
         }
       },
       "required": [
         "op",
-        "repository_id"
+        "project_id"
       ],
       "type": "object"
     },
@@ -30278,13 +30278,13 @@
           },
           "type": "array"
         },
-        "repository_id": {
+        "project_id": {
           "type": "string"
         }
       },
       "required": [
         "op",
-        "repository_id",
+        "project_id",
         "operation_id",
         "paths"
       ],
@@ -30357,13 +30357,13 @@
         "op": {
           "const": "worktree.configure"
         },
-        "repository_id": {
+        "project_id": {
           "type": "string"
         }
       },
       "required": [
         "op",
-        "repository_id",
+        "project_id",
         "config"
       ],
       "type": "object"
@@ -30418,13 +30418,13 @@
             "null"
           ]
         },
-        "repository_id": {
+        "project_id": {
           "type": "string"
         }
       },
       "required": [
         "op",
-        "repository_id",
+        "project_id",
         "operation_id"
       ],
       "type": "object"
@@ -30455,13 +30455,13 @@
         "op": {
           "const": "worktree.get"
         },
-        "repository_id": {
+        "project_id": {
           "type": "string"
         }
       },
       "required": [
         "op",
-        "repository_id"
+        "project_id"
       ],
       "type": "object"
     },
@@ -30677,14 +30677,14 @@
           "description": "The caller's operation ID.",
           "type": "string"
         },
+        "project_id": {
+          "type": "string"
+        },
         "recovery": {
           "type": [
             "string",
             "null"
           ]
-        },
-        "repository_id": {
-          "type": "string"
         },
         "request": {
           "description": "The request as the caller sent it, including `op`."
@@ -30709,7 +30709,7 @@
       },
       "required": [
         "id",
-        "repository_id",
+        "project_id",
         "binding_generation",
         "request",
         "worktree_path",
@@ -30763,13 +30763,13 @@
           "description": "The operation's ID.",
           "type": "string"
         },
-        "repository_id": {
+        "project_id": {
           "type": "string"
         }
       },
       "required": [
         "op",
-        "repository_id",
+        "project_id",
         "operation_id"
       ],
       "type": "object"
@@ -30924,13 +30924,13 @@
         "path": {
           "type": "string"
         },
-        "repository_id": {
+        "project_id": {
           "type": "string"
         }
       },
       "required": [
         "op",
-        "repository_id",
+        "project_id",
         "path"
       ],
       "type": "object"
@@ -30946,13 +30946,13 @@
           "description": "Caller-owned operation ID.",
           "type": "string"
         },
-        "repository_id": {
+        "project_id": {
           "type": "string"
         }
       },
       "required": [
         "op",
-        "repository_id",
+        "project_id",
         "operation_id"
       ],
       "type": "object"
@@ -30995,13 +30995,13 @@
         "path": {
           "type": "string"
         },
-        "repository_id": {
+        "project_id": {
           "type": "string"
         }
       },
       "required": [
         "op",
-        "repository_id",
+        "project_id",
         "operation_id",
         "path"
       ],
@@ -31146,13 +31146,13 @@
         "path": {
           "type": "string"
         },
-        "repository_id": {
+        "project_id": {
           "type": "string"
         }
       },
       "required": [
         "op",
-        "repository_id",
+        "project_id",
         "operation_id",
         "path"
       ],
@@ -31172,13 +31172,13 @@
         "path": {
           "type": "string"
         },
-        "repository_id": {
+        "project_id": {
           "type": "string"
         }
       },
       "required": [
         "op",
-        "repository_id",
+        "project_id",
         "operation_id",
         "path"
       ],
@@ -31256,7 +31256,7 @@
             "null"
           ]
         },
-        "repository_id": {
+        "project_id": {
           "type": "string"
         },
         "target": {
@@ -31266,7 +31266,7 @@
       },
       "required": [
         "op",
-        "repository_id",
+        "project_id",
         "operation_id",
         "target"
       ],
