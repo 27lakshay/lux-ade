@@ -15,6 +15,8 @@ const MAX_ANCHORS: usize = 16;
 /// One anchor keeps the desktop's 64 KiB note; a batch 4 KiB per note.
 const MAX_NOTE: usize = 64 * 1024;
 const MAX_BATCH_NOTE: usize = 4096;
+/// The longest prompt the queue holds (`Store::enqueue_content`).
+const MAX_PROMPT: usize = 64 * 1024;
 
 fn note_fits(note: &str, limit: usize) -> Result<()> {
     ensure!(
@@ -121,6 +123,11 @@ impl Sessions {
             )
         };
         let (anchors, feedback, text) = prepared(&send, &workspace.id)?;
+        // The queue holds prompts up to 64 KiB; say so in review terms.
+        ensure!(
+            text.len() <= MAX_PROMPT,
+            ade_core::error::ReviewPromptTooLong(text.len())
+        );
         // A prompt already queued under this ID was checked when it was; a
         // retry after a lost receipt only records it.
         if !queued {

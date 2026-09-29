@@ -193,3 +193,18 @@ test('a stale anchor, a filled draft and a conversation in another workspace are
   const { queued } = await profile.call('conversation.get', { conversation_id: conversationId })
   expect(queued).toEqual([])
 })
+
+test('feedback whose prompt would pass the queue limit is refused by name', async ({ profile, repo }) => {
+  const { workspaceId, conversationId } = await changed(profile, repo)
+  const anchor = await anchorAt(profile, workspaceId, 'tracked.txt', 2)
+  const note = 'n'.repeat(4000)
+  const feedback = {
+    format: 'ade-review-feedback-v1',
+    workspace_id: workspaceId,
+    notes: Array.from({ length: 16 }, () => ({ anchor, note })),
+  }
+  const long = await refusal(
+    profile.call('review.feedback.send', { conversation_id: conversationId, feedback: feedback as never }),
+  )
+  expect(long.code).toBe('review_prompt_too_long')
+})
