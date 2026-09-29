@@ -4,7 +4,6 @@ import { randomUUID } from 'node:crypto'
 import { isAbsolute } from 'node:path'
 import {
   dailyUseCommand,
-  requestDaemon,
   sameReviewAnchor,
   sameReviewFeedback,
   type DailyUseRequest,
@@ -193,86 +192,14 @@ export function registerConversationIpc(): void {
       op === 'account.verify' ||
       op === 'account.disable'
     ) {
-      let pending: Promise<
+      // Forwarded as they are: the SDK checks each request against its contract, and the daemon
+      // checks the provider, the name, the generation and that the identity is the inspected one.
+      const pending = dailyUseCommand(endpoint, {
+        ...(args as Record<string, unknown>),
+        op,
+      } as unknown as DailyUseRequest<typeof op>) as Promise<
         DailyUseResponse<'account.list' | 'account.create' | 'account.inspect' | 'account.verify' | 'account.disable'>
       >
-      if (op === 'account.list') {
-        pending = dailyUseCommand(endpoint, { op })
-      } else if (op === 'account.create') {
-        if (
-          typeof args.provider !== 'string' ||
-          !['claude', 'codex', 'omp'].includes(args.provider) ||
-          typeof args.name !== 'string' ||
-          !args.name.trim() ||
-          args.name.length > 80
-        ) {
-          throw new Error('Invalid managed account')
-        }
-        pending = dailyUseCommand(endpoint, { op, provider: args.provider, name: args.name.trim() })
-      } else {
-        if (!validId(args.account_id)) throw new Error('Invalid account')
-        const account_id = args.account_id
-        if (op === 'account.verify') {
-          if (!Number.isSafeInteger(args.expected_generation) || (args.expected_generation as number) < 0) {
-            throw new Error('Invalid account generation')
-          }
-          const identity = args.expected_identity
-          const expected = identity as Record<string, unknown> | null
-          const claudeIdentity =
-            expected &&
-            Object.keys(expected).sort().join(',') === 'api_provider,auth_method,email,org_id' &&
-            expected.auth_method === 'claude.ai' &&
-            expected.api_provider === 'firstParty' &&
-            typeof expected.email === 'string' &&
-            expected.email.length > 0 &&
-            expected.email.length <= 320 &&
-            typeof expected.org_id === 'string' &&
-            expected.org_id.length > 0 &&
-            expected.org_id.length <= 256
-          const codexIdentity =
-            expected &&
-            Object.keys(expected).sort().join(',') === 'chatgpt_account_id,email' &&
-            typeof expected.email === 'string' &&
-            expected.email.length > 0 &&
-            expected.email.length <= 320 &&
-            typeof expected.chatgpt_account_id === 'string' &&
-            expected.chatgpt_account_id.length > 0 &&
-            expected.chatgpt_account_id.length <= 256
-          const ompIdentity =
-            expected &&
-            Object.keys(expected).sort().join(',') ===
-              'account_id,credential_id,credential_type,email,identity_key,org_id,provider' &&
-            typeof expected.provider === 'string' &&
-            /^[a-z0-9][a-z0-9-]{0,79}$/.test(expected.provider) &&
-            Number.isSafeInteger(expected.credential_id) &&
-            (expected.credential_id as number) > 0 &&
-            expected.credential_type === 'oauth' &&
-            typeof expected.identity_key === 'string' &&
-            expected.identity_key.length > 0 &&
-            expected.identity_key.length <= 512 &&
-            (expected.email === null || (typeof expected.email === 'string' && expected.email.length <= 320)) &&
-            (expected.account_id === null ||
-              (typeof expected.account_id === 'string' && expected.account_id.length <= 320)) &&
-            (expected.org_id === null || (typeof expected.org_id === 'string' && expected.org_id.length <= 320)) &&
-            (Boolean(expected.email) || Boolean(expected.account_id))
-          if (
-            !identity ||
-            typeof identity !== 'object' ||
-            Array.isArray(identity) ||
-            (!claudeIdentity && !codexIdentity && !ompIdentity)
-          ) {
-            throw new Error('Invalid inspected account identity')
-          }
-          pending = dailyUseCommand(endpoint, {
-            op,
-            account_id,
-            expected_generation: args.expected_generation as number,
-            expected_identity: identity,
-          })
-        } else {
-          pending = dailyUseCommand(endpoint, { op, account_id })
-        }
-      }
       const result = await pending
       if (getClientGeneration() !== generation || getSocket() !== endpoint) {
         throw new Error('Profile changed during account request; inspect the original profile before retrying')
@@ -280,23 +207,13 @@ export function registerConversationIpc(): void {
       return result
     }
     if (op === 'conversation.create') {
-      const providers = await requestDaemon(endpoint, 'provider.list')
-      const available = Array.isArray(providers.providers) ? providers.providers : []
-      if (
-        !validId(args.workspace_id) ||
-        !catalog?.workspaces.some((item) => item.id === args.workspace_id) ||
-        !available.some((item) => item && typeof item === 'object' && 'id' in item && item.id === args.provider) ||
-        typeof args.title !== 'string' ||
-        args.title.length > 256 ||
-        (args.account_id !== undefined && !validId(args.account_id))
-      )
-        throw new Error('Invalid conversation creation')
+      // The daemon refuses an unknown workspace, provider or account, and a title over 256 bytes.
       const result = await daemon(endpoint, op, {
         operation_id: randomUUID(),
-        workspace_id: args.workspace_id,
+        workspace_id: args.workspace_id as string,
         provider: args.provider as string,
-        title: args.title,
-        ...(args.account_id === undefined ? {} : { account_id: args.account_id }),
+        title: args.title as string,
+        ...(args.account_id === undefined ? {} : { account_id: args.account_id as string }),
       })
       if (getClientGeneration() !== generation || getSocket() !== endpoint)
         throw new Error('Profile changed during conversation creation')

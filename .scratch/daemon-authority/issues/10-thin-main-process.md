@@ -51,3 +51,14 @@ daemon's own redacted report with this app's logs), the folder pickers, and the 
 - Changing a keybinding with `ade settings set` changes the menu and the palette without a restart.
 
 ## Comments
+- 2026-09-29 — Steps 1 and 2 done. Main no longer re-checks script, service, file, account or
+  conversation-creation requests: it keeps the window boundary (allowed operation, request is an
+  object, no change lands during a profile switch, the window's selected workspace for file and
+  review requests) and forwards; the SDK checks each request against its contract. Checked in the
+  dev app through the real IPC channel: a bad script name, an oversized output limit, a `../..`
+  path, an empty search, a page limit of 5000, a 200-character service name and an unknown provider
+  each came back with the daemon's own refusal; listing and previewing files still work. Not done:
+  the daemon refuses an unknown provider with an untyped message ("Unknown provider: …"), not a
+  typed code; step 3 (review feedback through `review.feedback.send`) waits for the legacy E2E port,
+  which is moving the specs that drive that path; steps 4 and 5 wait for ticket 07's window records
+  and a keybindings setting.
