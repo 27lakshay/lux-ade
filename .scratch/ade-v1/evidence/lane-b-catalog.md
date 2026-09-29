@@ -1,8 +1,36 @@
 # Lane B: catalog and workspace operations (daemon-authority ticket 03)
 
-Status: built. Branch `claude/agent-a322b89d84c966f98`, rebased on `main` at `bc3fcd4`.
+Status: built, review fixes applied (2026-09-29). Branch `claude/agent-a322b89d84c966f98`.
 
-## Results
+## Review fixes (2026-09-29)
+
+| Finding | Fix | Evidence |
+|---|---|---|
+| 1. A busy repository failed create and delete, and a delete had already removed the workspace | Busy refusals are typed `lifecycle_busy`; a step waits on them. A delete also waits before removing the workspace while the repository is busy | E2E "two deletes sent back to back…", "while another worktree sets up, a creation and deletions wait…" |
+| 2. One erroring operation stalled the tick; a reused ID errored forever | The tick logs per operation. A step error fails its operation and restores a removed workspace; `restored()` cannot fail the step. A lifecycle-used ID is refused at admission | E2E rename failpoint, reused-ID conflict, restore-refused failpoint |
+| 3. Tree blockers checked only at admission | Checked again inside the Workspace step, under `worktree_steps`, before `remove_from_ade` | E2E: a tree dirtied while the delete waited is refused, workspace and file kept |
+| 4. Restored workspace comes back empty | The failed state's `error` says so (or that the restore failed); contract docs say it | E2E remove_tree failpoint |
+| 5. Unread parsed every message | `conversation_news.news_sequence` kept by every message writer, recounted on rewind, backfilled by the migration | Unit test; load numbers below |
+| 6. Stuck terminal retried every tick for 10 s each | `TerminalsStillStopping` retried with backoff from 1 s, four attempts, then the operation fails and restores | Not covered by E2E: no fixture keeps a shell from stopping |
+| 7. `worktree.repository` inserted catalog rows | Lookup only; a workspace opening later takes the lifecycle's ID | Unit test; E2E "registering a repository with the lifecycle adds nothing…" |
+| 8. Overlong review prompt got the queue's generic error | `review_prompt_too_long` | E2E 16 notes of 4000 bytes |
+
+Load spec p95 admission (sustained / idle / after recovery):
+
+| Run | Before fixes | After fixes |
+|---|---|---|
+| Alone | 143.7 / 72.2 ms | 108.3 / 48.7 / 49.7 ms |
+| Two load runs at once (`--repeat-each 2`, 2 workers) | not measured; the full suite with 2 workers failed at 264 and 307 ms | both pass; one run 163.1 / 76.8 / 53.5 ms |
+
+E2E after the fixes: `workspaces/` (including the 6 new busy-spec tests), `review/feedback`
+(4), and a wide area run (workspaces, conversations, conversations2, review, worktrees,
+context, accounts-rewind, catalogs, orchestration, profiles, backup): 884 passed, 1 failed,
+14 skipped. The failure, `conversations2/draft-history` "a discard and a send are recorded
+in history once…", fails about one run in six alone: it SIGKILLs the daemon right after a
+turn's send, and the turn is sometimes still running, so it ends `interrupted`. It does not
+touch this lane's code; it was not run on `main` to compare.
+
+## Results (first build)
 
 | Check | Result |
 |---|---|
