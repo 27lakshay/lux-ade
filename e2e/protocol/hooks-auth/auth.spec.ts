@@ -55,7 +55,13 @@ test('the daemon refuses a peer that is not the profile user before any terminal
   const shellId = await primaryShell(profile, workspace.id)
   const target = [workspace.id, shellId] as const
   const before = (await terminalMetrics(profile, ...target))!
-  const listed = (await profile.cli('terminal', 'list')).json
+  // Which terminals exist; their titles, status and busy state are live and may
+  // still change while the primary shell starts under load.
+  const terminalSet = async () =>
+    (
+      (await profile.cli('terminal', 'list')).json!.terminals as { id: string; kind: string; workspace_id: string }[]
+    ).map(({ id, kind, workspace_id }) => ({ id, kind, workspace_id }))
+  const listed = await terminalSet()
 
   await daemonForeign(true)
   try {
@@ -96,7 +102,7 @@ test('the daemon refuses a peer that is not the profile user before any terminal
     const receipt = await profile.cli('terminal', 'operation', workspace.id, id)
     expect(receipt.code, id).not.toBe(0)
   }
-  expect((await profile.cli('terminal', 'list')).json).toEqual(listed)
+  expect(await terminalSet()).toEqual(listed)
   const after = (await terminalMetrics(profile, ...target))!
   expect(after).toMatchObject({ shell_running: true, shell_pid: before.shell_pid, run_id: before.run_id })
   const owner = TerminalStream.open(profile, ...target)
