@@ -137,15 +137,21 @@ const noLayoutDouble = {
     docs: { description: 'The app never applies a layout itself; the layout double is for tests and the bench.' },
   },
   create(context) {
+    // Every way a module can reach another: import, dynamic import(), and re-exports.
+    const check = (node, source) => {
+      if (source?.type !== 'Literal' || typeof source.value !== 'string') return
+      if (!/(^|\/)layout-double(\/|$)/.test(source.value)) return
+      context.report({
+        node,
+        message:
+          'The daemon applies every layout change (daemon authority decision 1): send it with layout.apply through model/layout-store.ts. dev/layout-double is a test and ?bench double only.',
+      })
+    }
     return {
-      ImportDeclaration(node) {
-        if (!/(^|\/)layout-double(\/|$)/.test(node.source.value)) return
-        context.report({
-          node,
-          message:
-            'The daemon applies every layout change (daemon authority decision 1): send it with layout.apply through model/layout-store.ts. dev/layout-double is a test and ?bench double only.',
-        })
-      },
+      ImportDeclaration: (node) => check(node, node.source),
+      ImportExpression: (node) => check(node, node.source),
+      ExportAllDeclaration: (node) => check(node, node.source),
+      ExportNamedDeclaration: (node) => check(node, node.source),
     }
   },
 }

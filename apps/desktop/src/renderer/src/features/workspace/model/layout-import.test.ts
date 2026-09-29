@@ -69,7 +69,7 @@ test('a saved layout converts to the daemon shape, keeping only tabs with a targ
   expect(convertSavedLayout({ nonsense: true }, known)).toBeNull()
 })
 
-test('the import stores each saved layout the daemon lacks, never one it has, then deletes the keys', async () => {
+test('the import stores each saved layout the daemon lacks, never one it has, and keeps other profiles’ layouts', async () => {
   const fake = daemonLayouts()
   // The window has changed its layout for the shown workspace; w2 and w3 have none in the daemon.
   expect(fake.revision(WORKSPACE)).toBeGreaterThan(0)
@@ -93,5 +93,9 @@ test('the import stores each saved layout the daemon lacks, never one it has, th
   // The window showed nothing else yet: it shows what the app showed last.
   expect(fake.window().workspace_id).toBe('w2')
   expect(fake.window().view.collapsed_projects).toEqual(['r1'])
-  expect(hasSavedLayouts()).toBe(false)
+  // A workspace this profile does not have may be another profile's: its layout stays for that
+  // profile's first start. The pre-catalog `default` placeholder goes.
+  expect(JSON.parse(localStorage.getItem('ade.layouts:main')!).state.layouts).toEqual({ gone: saved() })
+  expect(localStorage.getItem('ade.layouts')).toBeNull()
+  expect(localStorage.getItem('ade.navigator.collapsed:main')).toBeNull()
 })

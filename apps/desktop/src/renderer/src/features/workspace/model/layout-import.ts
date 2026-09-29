@@ -159,8 +159,10 @@ export const hasSavedLayouts = (): boolean =>
   })
 
 /**
- * Imports the saved layouts into this window, then deletes them. Keys stay when the daemon could
- * not be reached, so the next start tries again.
+ * Imports the saved layouts into this window, then deletes what it used. The old store held every
+ * profile's workspaces in one key, so layouts of workspaces this profile does not have are written
+ * back for that profile's first start. Keys stay when the daemon could not be reached, so the next
+ * start tries again.
  */
 export async function importSavedLayouts(
   bridge: LayoutsBridge,
@@ -199,7 +201,16 @@ export async function importSavedLayouts(
     collapsed.every((id) => typeof id === 'string' && /^[a-zA-Z0-9_-]{1,128}$/.test(id))
   )
     await bridge.setCollapsedProjects(collapsed as string[])
-  for (const key of [...LAYOUT_KEYS, COLLAPSED_KEY]) localStorage.removeItem(key)
+  for (const key of LAYOUT_KEYS) {
+    const saved = read(key) as { state?: { layouts?: Record<string, unknown> } } | undefined
+    // `default` was the pre-catalog placeholder, never a workspace of any profile.
+    const others = Object.entries(saved?.state?.layouts ?? {}).filter(
+      ([workspaceId]) => !workspaces.has(workspaceId) && workspaceId !== 'default',
+    )
+    if (others.length === 0) localStorage.removeItem(key)
+    else localStorage.setItem(key, JSON.stringify({ state: { layouts: Object.fromEntries(others) }, version: 1 }))
+  }
+  localStorage.removeItem(COLLAPSED_KEY)
 }
 
 /**
@@ -220,9 +231,14 @@ export function startLayoutImport(daemon: DaemonStore, bridge: () => LayoutsBrid
       conversations: new Set(state.conversationIds),
       terminals: new Set(Object.keys(state.terminals)),
     }
-    importSavedLayouts(target, window, new Set(state.workspaceIds), known).catch((error: unknown) =>
-      console.warn('Could not import the saved layouts; they stay for the next start', error),
-    )
+    // One window imports at a time, across the app's windows; the next finds what is left.
+    void navigator.locks
+      .request('ade.layout-import', () =>
+        hasSavedLayouts() ? importSavedLayouts(target, window, new Set(state.workspaceIds), known) : undefined,
+      )
+      .catch((error: unknown) =>
+        console.warn('Could not import the saved layouts; they stay for the next start', error),
+      )
   }
   const stops = [daemon.subscribe(attempt), layoutStore.subscribe(attempt)]
   const stop = (): void => stops.forEach((unsubscribe) => unsubscribe())

@@ -43,7 +43,7 @@ import { registerTerminalIpc } from './terminals'
 import { registerWorkspaceActionIpc } from './workspace-actions'
 import { registerWorkspaceIpc } from './workspaces'
 import { registerLayoutIpc } from './layouts'
-import { onClientState, reopenWindow, startWindows, trackWindow } from './windows'
+import { markQuitting, onClientState, quitCancelled, reopenWindow, startWindows, trackWindow } from './windows'
 import { installAppMenu } from './app-menu'
 import { registerAppScheme, serveAppScheme, windowUrl } from './app-protocol'
 import { lockDownAppSession, lockDownAppWindow, refuseWebviews } from './app-security'
@@ -175,6 +175,7 @@ function openAppWindow(record: Window | null): BrowserWindow {
       await Promise.allSettled(owned.filter((entry) => entry.send).map(reconcileAcceptedSend))
       if (await unsafePending(owned)) {
         await warnPendingSends(window)
+        quitCancelled()
         return
       }
       const pending = owned.filter(
@@ -190,10 +191,12 @@ function openAppWindow(record: Window | null): BrowserWindow {
             message: 'This window is staying open because a draft could not be saved.',
             detail: 'Restore the profile daemon and try closing the window again.',
           })
+        quitCancelled()
         return
       }
       if (await unsafePending(owned)) {
         await warnPendingSends(window)
+        quitCancelled()
         return
       }
       readyForClose = true
@@ -289,7 +292,8 @@ app
 let quitRequested = false
 app.on('before-quit', (event) => {
   quitRequested = true
-  holdQuit(event)
+  // Windows closing from here on keep their records, unless a guard holds the quit.
+  if (!holdQuit(event)) markQuitting()
 })
 app.on('will-quit', finishQuit)
 

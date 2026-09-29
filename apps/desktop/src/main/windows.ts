@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { app, BrowserWindow } from 'electron'
+import { BrowserWindow } from 'electron'
 import type { ClientState, Window } from '@ade/client'
 import { emit } from './ipc'
 import {
@@ -23,11 +23,15 @@ const records = new Map<number, string | null>()
 const epochs = new Map<string, { workspaceId: string; epoch: number }>()
 let open: ((record: Window | null) => BrowserWindow) | null = null
 let reconciled = -1
-let reconciling = false
+/** The open records the last match saw, so a window opened or closed elsewhere is followed. */
+let seenOpen = ''
+let inflight: Promise<void> | null = null
+/**
+ * A quit is under way: windows closing now keep their records, so they come back next launch.
+ * Records of windows that close during a quit that is then cancelled are closed after all.
+ */
 let quitting = false
-app.on('before-quit', () => {
-  quitting = true
-})
+const closedDuringQuit = new Set<string>()
 
 /** How long startup waits for the daemon before it opens a window without a record. */
 const STARTUP_WAIT_MS = 4_000
@@ -67,14 +71,42 @@ export function selectedWorkspace(
   }
 }
 
-/** Follows each client state: counts workspace switches, and binds windows once connected. */
+/** The quit is going ahead: every guard let it through. */
+export function markQuitting(): void {
+  quitting = true
+}
+
+/** The quit was cancelled (a guard or a window kept it): close the records of windows already gone. */
+export function quitCancelled(): void {
+  if (!quitting) return
+  quitting = false
+  for (const record of closedDuringQuit)
+    void daemonCall('window.close', { window_id: record }).catch((error: unknown) =>
+      console.warn('Could not close the window record', error),
+    )
+  closedDuringQuit.clear()
+}
+
+const openRecords = (state: ClientState): string =>
+  (state.catalog?.windows ?? [])
+    .filter((window) => window.state === 'open')
+    .map((window) => window.id)
+    .sort()
+    .join(',')
+
+/**
+ * Follows each client state: counts workspace switches, and matches windows to records once
+ * connected, after a profile switch, and whenever a window is opened or closed elsewhere (the CLI).
+ */
 export function onClientState(state: ClientState): void {
   for (const window of state.catalog?.windows ?? []) {
     const seen = epochs.get(window.id)
     if (seen?.workspaceId !== window.workspace_id)
       epochs.set(window.id, { workspaceId: window.workspace_id, epoch: (seen?.epoch ?? 0) + 1 })
   }
-  if (connected(state) && reconciled !== getClientGeneration() && open) void reconcile()
+  // Not before startup has chosen the profile: records must land in the profile the app shows.
+  if (!open || !connected(state) || isSwitching() || getStartupProfileSelection()) return
+  if (reconciled !== getClientGeneration() || openRecords(state) !== seenOpen) void reconcile()
 }
 
 /** Tracks a native window: its record, bounds reports and closing. */
@@ -100,7 +132,8 @@ export function trackWindow(window: BrowserWindow, record: string | null): void 
     const current = records.get(id)
     records.delete(id)
     // Quitting keeps every window open for the next launch; closing one by hand closes its record.
-    if (current && !quitting && connected())
+    if (current && quitting) closedDuringQuit.add(current)
+    else if (current && connected())
       void daemonCall('window.close', { window_id: current }).catch((error: unknown) =>
         console.warn('Could not close the window record', error),
       )
@@ -130,36 +163,55 @@ async function freeRecord(claimed: Set<string>, windows: Window[]): Promise<Wind
   return (await daemonCall('window.create', { window_id: `window-${randomUUID()}`, workspace_id: first.id })).window
 }
 
-/** Gives every native window an open record and opens a native window for every other open record. */
-async function reconcile(): Promise<void> {
-  if (reconciling || !open) return
-  reconciling = true
+/** One match of native windows and records; see `reconcile`. */
+async function reconcileOnce(): Promise<void> {
+  if (!open) return
   const generation = getClientGeneration()
-  try {
-    const { windows } = await daemonCall('window.list', {})
-    if (generation !== getClientGeneration()) return
-    const claimed = new Set<string>()
-    const unbound: BrowserWindow[] = []
-    for (const window of appWindows()) {
-      const record = records.get(window.webContents.id)
-      const listed = windows.find((item) => item.id === record && item.state === 'open')
-      if (listed && !claimed.has(listed.id)) claimed.add(listed.id)
-      else unbound.push(window)
-    }
-    const waiting = windows.filter((window) => window.state === 'open' && !claimed.has(window.id))
-    for (const window of unbound) {
-      const record = waiting.shift() ?? (await freeRecord(claimed, windows))
-      claimed.add(record.id)
-      setRecord(window, record.id)
-    }
-    for (const record of waiting) open(record)
-    if (appWindows().length === 0) open(await freeRecord(claimed, windows))
-    reconciled = generation
-  } catch (error) {
-    console.error('Could not open the daemon windows', error)
-  } finally {
-    reconciling = false
+  const { windows } = await daemonCall('window.list', {})
+  if (generation !== getClientGeneration()) return
+  const claimed = new Set<string>()
+  const unbound: BrowserWindow[] = []
+  for (const window of appWindows()) {
+    const record = records.get(window.webContents.id)
+    const listed = windows.find((item) => item.id === record)
+    // Closed elsewhere (the CLI): the native window goes too, and its record stays closed.
+    if (listed?.state === 'closed') {
+      records.set(window.webContents.id, null)
+      window.close()
+    } else if (listed && !claimed.has(listed.id)) claimed.add(listed.id)
+    else unbound.push(window)
   }
+  const waiting = windows.filter((window) => window.state === 'open' && !claimed.has(window.id))
+  for (const window of unbound) {
+    const record = waiting.shift() ?? (await freeRecord(claimed, windows))
+    claimed.add(record.id)
+    setRecord(window, record.id)
+  }
+  for (const record of waiting) open(record)
+  reconciled = generation
+  seenOpen = openRecords(getClient().getState())
+}
+
+/**
+ * Gives every native window an open record, opens a native window for every other open record, and
+ * closes the native window of a record closed elsewhere. Callers share one run in flight; it runs
+ * again while a window still has no record (one opened meanwhile), at most three times.
+ */
+function reconcile(): Promise<void> {
+  inflight ??= (async () => {
+    try {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        await reconcileOnce()
+        const unbound = appWindows().some((window) => !records.get(window.webContents.id))
+        if (!unbound || !connected()) break
+      }
+    } catch (error) {
+      console.error('Could not open the daemon windows', error)
+    } finally {
+      inflight = null
+    }
+  })()
+  return inflight
 }
 
 /**
@@ -171,19 +223,27 @@ export async function startWindows(opener: (record: Window | null) => BrowserWin
   const deadline = Date.now() + STARTUP_WAIT_MS
   while (Date.now() < deadline && (!connected() || isSwitching() || getStartupProfileSelection()))
     await new Promise((done) => setTimeout(done, 25))
-  if (connected()) await reconcile()
+  if (connected() && !isSwitching() && !getStartupProfileSelection()) {
+    await reconcile()
+    if (appWindows().length === 0) opener(await freeRecord(new Set(), (await daemonCall('window.list', {})).windows))
+  }
   if (appWindows().length === 0) opener(null)
 }
 
-/** The Dock icon was clicked with no window open: bring one back. */
+/** The Dock icon was clicked with no window open: bring one back, reopening its record. */
 export function reopenWindow(): void {
   if (!open || appWindows().length > 0) return
-  if (connected()) void reconcile().then(() => appWindows().length === 0 && open?.(null))
-  else open(null)
-}
-
-/** Forces a fresh match of windows and records, as after a profile switch. */
-export function rebindWindows(): void {
-  reconciled = -1
-  if (connected()) void reconcile()
+  if (!connected()) {
+    open(null)
+    return
+  }
+  void (async () => {
+    await reconcile()
+    if (appWindows().length > 0 || !open) return
+    try {
+      open(await freeRecord(new Set(), (await daemonCall('window.list', {})).windows))
+    } catch {
+      open(null)
+    }
+  })()
 }

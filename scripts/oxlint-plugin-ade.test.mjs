@@ -142,7 +142,26 @@ invalid(
   "import { applyLayout } from '../../dev/layout-double/reducer'",
   /daemon applies every layout change/,
 )
+invalid(
+  'no-layout-double',
+  'reports a dynamic import of the layout double',
+  "const reducer = import('../../dev/layout-double/reducer')",
+  /daemon applies every layout change/,
+)
+invalid(
+  'no-layout-double',
+  'reports a re-export of the layout double',
+  "export * from '../../dev/layout-double/reducer'",
+  /daemon applies every layout change/,
+)
+invalid(
+  'no-layout-double',
+  'reports a named re-export of the layout double',
+  "export { applyLayout } from '../../dev/layout-double/reducer'",
+  /daemon applies every layout change/,
+)
 valid('no-layout-double', 'allows the layout store', "import { dispatch } from './model/layout-store'")
+valid('no-layout-double', 'allows a local named export', 'const a = 1\nexport { a }')
 
 invalid('icons-from-table', 'reports a lucide-react import', "import { X } from 'lucide-react'", /icon table|Icon name/)
 invalid(
