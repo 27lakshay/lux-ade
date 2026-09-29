@@ -136,6 +136,14 @@ invalid(
 )
 invalid('no-native-title', 'reports title on an SVG element', '<svg title="Logo" />', /native title/, 'fixture.tsx')
 
+invalid(
+  'no-layout-double',
+  'reports an import of the layout double',
+  "import { applyLayout } from '../../dev/layout-double/reducer'",
+  /daemon applies every layout change/,
+)
+valid('no-layout-double', 'allows the layout store', "import { dispatch } from './model/layout-store'")
+
 invalid('icons-from-table', 'reports a lucide-react import', "import { X } from 'lucide-react'", /icon table|Icon name/)
 invalid(
   'icons-from-table',

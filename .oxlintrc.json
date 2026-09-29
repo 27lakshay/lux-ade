@@ -137,6 +137,7 @@
         "shadcn/no-restyle": ["error", { "allow": ["layout"] }],
         "shadcn/no-raw-colors": "error",
         "ade/no-native-title": "error",
+        "ade/no-layout-double": "error",
         "ade/icons-from-table": "error",
         "ade/icon-size-class": "error",
         "ade/icon-button-label": "error",
@@ -172,6 +173,17 @@
       "rules": {
         "ade/type-scale": "off",
         "ade/text-elements": "off"
+      }
+    },
+    {
+      // Tests and the bench serve layouts from the layout double, a fake daemon.
+      "files": [
+        "apps/desktop/src/renderer/src/**/*.test.*",
+        "apps/desktop/src/renderer/src/dev/**",
+        "apps/desktop/src/renderer/src/features/workspace/testing.tsx"
+      ],
+      "rules": {
+        "ade/no-layout-double": "off"
       }
     },
     {

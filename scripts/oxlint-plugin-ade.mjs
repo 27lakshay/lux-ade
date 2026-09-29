@@ -131,6 +131,25 @@ const noLooseRecord = {
   },
 }
 
+const noLayoutDouble = {
+  meta: {
+    type: 'problem',
+    docs: { description: 'The app never applies a layout itself; the layout double is for tests and the bench.' },
+  },
+  create(context) {
+    return {
+      ImportDeclaration(node) {
+        if (!/(^|\/)layout-double(\/|$)/.test(node.source.value)) return
+        context.report({
+          node,
+          message:
+            'The daemon applies every layout change (daemon authority decision 1): send it with layout.apply through model/layout-store.ts. dev/layout-double is a test and ?bench double only.',
+        })
+      },
+    }
+  },
+}
+
 const noNativeTitle = {
   meta: {
     type: 'problem',
@@ -393,6 +412,7 @@ export default {
     'require-store-selector': requireStoreSelector,
     'no-loose-record': noLooseRecord,
     'no-native-title': noNativeTitle,
+    'no-layout-double': noLayoutDouble,
     'icons-from-table': iconsFromTable,
     'icon-size-class': iconSizeClass,
     'icon-button-label': iconButtonLabel,
