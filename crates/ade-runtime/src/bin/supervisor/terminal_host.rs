@@ -89,7 +89,7 @@ impl Outbox {
 #[derive(Clone, Copy)]
 enum SnapshotKind {
     XtermReplay,
-    Binary { base64: bool },
+    Binary,
     Plain { terminal: bool },
 }
 
@@ -179,23 +179,18 @@ impl State {
     fn snapshot(&self) -> Value {
         self.snapshot_for(true, true)
     }
-    fn binary_snapshot(&self, compact: bool) -> Result<Value, String> {
+    /// The Ghostty state, base64 encoded.
+    fn binary_snapshot(&self) -> Result<Value, String> {
+        use base64::Engine as _;
         let bytes = self.screen.binary_snapshot()?;
         protocol::check_snapshot_size(bytes.len())?;
-        let mut event = json!({"type":"snapshot", "conversation":self.conversation,
+        let event = json!({"type":"snapshot", "conversation":self.conversation,
             "streaming":self.streaming,"metrics":self.metrics(),
             "response_owner":"daemon-v1",
             "terminal_snapshot_format":"ghostty-snapshot-v1-herdr-9c96f7d",
             "terminal_recovery":{"scope":"both-screens-history-continuation",
-                "history_limit_bytes":4*1024*1024,"continuation_limit_bytes":1024*1024}});
-        if compact {
-            use base64::Engine as _;
-            event["terminal_snapshot_base64"] =
-                json!(base64::engine::general_purpose::STANDARD.encode(&bytes));
-        } else {
-            // Older viewers did not negotiate a compact byte representation.
-            event["terminal_snapshot_bytes"] = json!(bytes);
-        }
+                "history_limit_bytes":4*1024*1024,"continuation_limit_bytes":1024*1024},
+            "terminal_snapshot_base64":base64::engine::general_purpose::STANDARD.encode(&bytes)});
         Ok(event)
     }
     fn xterm_snapshot(&self) -> Value {
@@ -269,7 +264,7 @@ impl State {
     fn attachment_snapshot(&self, kind: SnapshotKind, id: u64) -> Result<Value, String> {
         let mut snapshot = match kind {
             SnapshotKind::XtermReplay => self.xterm_snapshot(),
-            SnapshotKind::Binary { base64 } => self.binary_snapshot(base64)?,
+            SnapshotKind::Binary => self.binary_snapshot()?,
             SnapshotKind::Plain { terminal } => self.snapshot_for(terminal, false),
         };
         snapshot["run_id"] = json!(self.run_id);
@@ -568,11 +563,7 @@ fn handle_client(
             }
             let result: Result<Option<Value>, String> = match request["op"].as_str().unwrap_or("") {
                 "snapshot" | "status" => Ok(Some(state.lock().unwrap().snapshot())),
-                "snapshot_binary" => state
-                    .lock()
-                    .unwrap()
-                    .binary_snapshot(request["snapshot_encoding"] == "base64")
-                    .map(Some),
+                "snapshot_binary" => state.lock().unwrap().binary_snapshot().map(Some),
                 "hello" => Ok(Some(
                     json!({"type":"hello", "session_protocol":"ade-sessions-v1","worktree_protocol":"ade-worktrees-v1","review_protocol":"ade-review-v1", "response_owner":"daemon-v1", "terminal_snapshot_format":"ghostty-snapshot-v1-herdr-9c96f7d", "terminal_snapshot_formats":["ghostty-snapshot-v1-herdr-9c96f7d","xterm-replay-v1"]}),
                 )),
@@ -593,9 +584,7 @@ fn handle_client(
                         let kind = if terminal && request["snapshot_format"] == "xterm-replay-v1" {
                             SnapshotKind::XtermReplay
                         } else if terminal && request["snapshot_format"] == "binary" {
-                            SnapshotKind::Binary {
-                                base64: request["snapshot_encoding"] == "base64",
-                            }
+                            SnapshotKind::Binary
                         } else {
                             SnapshotKind::Plain { terminal }
                         };

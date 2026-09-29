@@ -80,7 +80,7 @@ async function openTerminal(profile: ScratchProfile) {
 }
 
 /** A subscribe asking for the runtime's Ghostty state, as the desktop adapter does. */
-const ghosttySubscribe = { op: 'subscribe', snapshot_format: 'binary', snapshot_encoding: 'base64' }
+const ghosttySubscribe = { op: 'subscribe', snapshot_format: 'binary' }
 
 /** Starts a flood and closes the stream that typed it, so every resync counted belongs to the viewer under test. */
 function startFlood(stream: TerminalStream, runId: string, command: string): void {

@@ -161,7 +161,7 @@ test('attachments opened during a flood each get their snapshot, then live outpu
   // then small incomplete ones once the replay bound is passed.
   const formats: Array<Record<string, unknown>> = [
     { op: 'subscribe', snapshot_format: 'xterm-replay-v1' },
-    { op: 'subscribe', snapshot_format: 'binary', snapshot_encoding: 'base64' },
+    { op: 'subscribe', snapshot_format: 'binary' },
   ]
   for (let round = 0; round < 8; round++) {
     const viewer = TerminalStream.open(profile, ...target, formats[round % formats.length])

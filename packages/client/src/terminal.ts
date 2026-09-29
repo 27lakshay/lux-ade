@@ -105,7 +105,7 @@ export function openTerminalConnection(
   socket.on('connect', () =>
     send(
       options.snapshotFormat === 'ghostty'
-        ? { op: 'subscribe', snapshot_format: 'binary', snapshot_encoding: 'base64' }
+        ? { op: 'subscribe', snapshot_format: 'binary' }
         : { op: 'subscribe', snapshot_format: 'xterm-replay-v1' },
     ),
   )

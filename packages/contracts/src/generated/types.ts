@@ -13802,13 +13802,10 @@ export interface TerminalSnapshotFrame {
   terminal_screen_bytes?: number[] | null
   terminal_screen_error?: string | null
   /**
-   * The Ghostty snapshot, when the attachment asked for base64.
+   * The Ghostty snapshot, base64 encoded, when the attachment asked for
+   * `snapshot_format: binary`.
    */
   terminal_snapshot_base64?: string | null
-  /**
-   * The Ghostty snapshot as bytes, when the attachment did not ask for base64.
-   */
-  terminal_snapshot_bytes?: number[] | null
   /**
    * `ghostty-snapshot-v1-herdr-<pin>` or `xterm-replay-v1`.
    */

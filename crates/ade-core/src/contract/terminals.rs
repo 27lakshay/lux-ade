@@ -167,12 +167,10 @@ pub struct TerminalSnapshotFrame {
     /// `ghostty-snapshot-v1-herdr-<pin>` or `xterm-replay-v1`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terminal_snapshot_format: Option<String>,
-    /// The Ghostty snapshot, when the attachment asked for base64.
+    /// The Ghostty snapshot, base64 encoded, when the attachment asked for
+    /// `snapshot_format: binary`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terminal_snapshot_base64: Option<String>,
-    /// The Ghostty snapshot as bytes, when the attachment did not ask for base64.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub terminal_snapshot_bytes: Option<Vec<u8>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terminal_recovery: Option<TerminalRecovery>,
     /// The active screen, in a plain snapshot.

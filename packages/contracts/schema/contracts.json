@@ -28177,21 +28177,9 @@
           ]
         },
         "terminal_snapshot_base64": {
-          "description": "The Ghostty snapshot, when the attachment asked for base64.",
+          "description": "The Ghostty snapshot, base64 encoded, when the attachment asked for\n`snapshot_format: binary`.",
           "type": [
             "string",
-            "null"
-          ]
-        },
-        "terminal_snapshot_bytes": {
-          "description": "The Ghostty snapshot as bytes, when the attachment did not ask for base64.",
-          "items": {
-            "maximum": 255,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "type": [
-            "array",
             "null"
           ]
         },

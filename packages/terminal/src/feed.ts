@@ -53,11 +53,8 @@ function readSnapshot(frame: TerminalSnapshotFrame): { bytes: Uint8Array; offset
     throw new Error('This daemon runs a different Ghostty; its terminal state cannot be restored here.')
   }
   const offset = frame.metrics.terminal_bytes
-  if (typeof frame.terminal_snapshot_base64 === 'string') {
-    return { bytes: decodeBase64(frame.terminal_snapshot_base64), offset }
-  }
-  if (frame.terminal_snapshot_bytes) return { bytes: Uint8Array.from(frame.terminal_snapshot_bytes), offset }
-  throw new Error('Terminal snapshot has no state.')
+  if (typeof frame.terminal_snapshot_base64 !== 'string') throw new Error('Terminal snapshot has no state.')
+  return { bytes: decodeBase64(frame.terminal_snapshot_base64), offset }
 }
 
 /**
