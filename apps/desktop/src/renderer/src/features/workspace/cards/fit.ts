@@ -1,7 +1,7 @@
 import { announce } from '@atlaskit/pragmatic-drag-and-drop-live-region'
 import { create } from 'zustand'
 import { GUTTER, SIDEBAR_WIDTH, type Side, type SidebarId } from '../model/layout'
-import { dispatch, layoutStore } from '../model/layout-store'
+import { layoutNow, toggleSide } from '../model/layout-store'
 
 // When the window is too narrow for the open sidebars beside the panes at their minimum, sidebars
 // close for the moment, the one opened longest ago first, and open again when there is room. This
@@ -45,9 +45,7 @@ const LABEL: Record<SidebarId, string> = { navigator: 'navigator', inspector: 'i
  * room of the other; one that cannot fit even alone stays closed, and says so.
  */
 export function toggleSidebar(side: Side): void {
-  const { layouts, active } = layoutStore.getState()
-  const layout = layouts[active]
-  if (!layout) return
+  const layout = layoutNow()
   const id = layout.sidebars[side === 'left' ? 0 : 1]
   const squeezed = useSidebarFit.getState().squeezed.includes(id)
   if (layout.collapsed[id] || squeezed) {
@@ -57,8 +55,8 @@ export function toggleSidebar(side: Side): void {
       return
     }
     promote(id)
-    if (layout.collapsed[id]) dispatch({ type: 'toggleSide', side })
+    if (layout.collapsed[id]) void toggleSide(side)
     return
   }
-  dispatch({ type: 'toggleSide', side })
+  void toggleSide(side)
 }

@@ -2,16 +2,16 @@ import { userEvent } from 'vitest/browser'
 import { beforeEach, expect, test } from 'vitest'
 import { commandService } from '../../../app/commands'
 import { setSizeLabel, noteResizing, useSizeLabels } from '../content/size-label'
-import { SIDEBAR_WIDTH, type Tab } from '../model/layout'
+import { SIDEBAR_WIDTH } from '../model/layout'
 import { registerLayoutCommands } from '../model/layout-commands'
-import { dispatch, layoutStore, openTab } from '../model/layout-store'
+import { dispatch, layoutNow, swapSidebars, toggleMaximize } from '../model/layout-store'
 import { panes } from '../model/layout-tree'
-import { renderWorkspace, resetLayout, section, startDrag } from '../testing'
+import { openTitled, renderWorkspace, resetLayout, section, shown, startDrag, titleOf } from '../testing'
 import { hitTab } from './TabStrip'
 
 beforeEach(resetLayout)
 
-const layout = () => layoutStore.getState().layouts.default!
+const layout = () => layoutNow()
 const tabEl = (title: string) =>
   [...document.querySelectorAll<HTMLElement>('[role=tab]')].find((tab) => tab.textContent?.trim() === title)!
 const pointIn = (element: Element, fx: number) => {
@@ -28,13 +28,13 @@ async function panesWith(...titles: string[][]) {
   const screen = await renderWorkspace()
   for (const [index, group] of titles.entries()) {
     if (index > 0)
-      dispatch({
-        type: 'splitPane',
-        paneId: panes(layout().root).at(-1)!.id,
+      await dispatch({
+        type: 'split_pane',
+        pane_id: panes(layout().root).at(-1)!.id,
         direction: 'row',
-        newPaneId: `p${index + 1}`,
+        new_pane_id: `p${index + 1}`,
       })
-    for (const title of group) openTab({ kind: 'terminal', title } satisfies Omit<Tab, 'id'>, `p${index + 1}`)
+    for (const title of group) await openTitled('terminal', title, `p${index + 1}`)
   }
   await expect.poll(() => document.querySelectorAll('[role=tab][data-tab-id]').length).toBe(titles.flat().length)
   return screen
@@ -65,7 +65,7 @@ test('dragging over a tab’s edge opens a slot and slides the tabs; over its mi
   await expect.poll(() => tabEl('B').querySelector('[data-spring-fill]')).not.toBeNull()
   await drag.drop()
   // Dropped on B's middle: it lands just after B.
-  expect(panes(layout().root)[0]!.tabs.map((id) => layout().tabs[id]!.title)).toEqual(['A', 'B', 'D', 'C'])
+  expect(panes(layout().root)[0]!.tabs.map((id) => titleOf(id))).toEqual(['A', 'B', 'D', 'C'])
 })
 
 test('a drop settles an outline onto the pane it made and announces it', async () => {
@@ -95,9 +95,9 @@ test('double-clicking a grip maximizes the pane; Restore pane brings the others 
 test('double-clicking a gutter evens out that split', async () => {
   await panesWith(['A'], ['B'])
   // Room for an uneven split of two 320px-minimum panes.
-  dispatch({ type: 'setCollapsed', sidebar: 'navigator', collapsed: true })
-  dispatch({ type: 'setCollapsed', sidebar: 'inspector', collapsed: true })
-  dispatch({ type: 'setSplitSizes', splitId: layout().root.id, sizes: [70, 30] })
+  await dispatch({ type: 'set_collapsed', sidebar: 'navigator', collapsed: true })
+  await dispatch({ type: 'set_collapsed', sidebar: 'inspector', collapsed: true })
+  await dispatch({ type: 'set_split_sizes', split_id: layout().root.id, sizes: [70, 30] })
   await remountSplits()
   await expect.poll(() => paneWidths()[0]! > paneWidths()[1]! + 100).toBe(true)
   await userEvent.dblClick(paneSplitHandle())
@@ -105,7 +105,7 @@ test('double-clicking a gutter evens out that split', async () => {
 })
 
 test('double-clicking a sidebar’s gutter resets its width', async () => {
-  dispatch({ type: 'setWidth', sidebar: 'navigator', width: 420 })
+  await dispatch({ type: 'set_width', sidebar: 'navigator', width: 420 })
   await renderWorkspace()
   const navigator = () =>
     Math.round(document.querySelector('section[aria-label="Navigator"]')!.getBoundingClientRect().width)
@@ -117,9 +117,9 @@ test('double-clicking a sidebar’s gutter resets its width', async () => {
 
 // Sizes set through the store apply when the groups next mount: remount them by maximizing and back.
 async function remountSplits(): Promise<void> {
-  dispatch({ type: 'toggleMaximize', paneId: 'p1' })
+  await toggleMaximize('p1')
   await expect.poll(() => document.querySelectorAll('section[aria-label="Pane"]').length).toBe(1)
-  dispatch({ type: 'toggleMaximize', paneId: 'p1' })
+  await toggleMaximize('p1')
   await expect.poll(() => document.querySelectorAll('section[aria-label="Pane"]').length).toBe(2)
 }
 
@@ -157,7 +157,7 @@ test('a tab’s size label shows on its pane only while a gutter is dragged', as
 })
 
 test('the window opens at its saved sizes without animating, collapsed sidebars included', async () => {
-  dispatch({ type: 'toggleSide', side: 'left' })
+  await dispatch({ type: 'set_side_collapsed', side: 'left', collapsed: true })
   await renderWorkspace()
   await expect.poll(() => document.getElementById('cards')).not.toBeNull()
   expect(document.getElementById('cards')!.dataset.layoutAnimating).toBeUndefined()
@@ -166,38 +166,39 @@ test('the window opens at its saved sizes without animating, collapsed sidebars 
 test('palette commands: equalize, reset and maximize with its shortcut', async () => {
   registerLayoutCommands()
   await panesWith(['A'], ['B'])
-  dispatch({ type: 'setSplitSizes', splitId: layout().root.id, sizes: [70, 30] })
+  await dispatch({ type: 'set_split_sizes', split_id: layout().root.id, sizes: [70, 30] })
   commandService.execute('layout.equalizePanes')
-  const root = layout().root
+  const root = (await shown()).root
   expect(root.type === 'split' && root.sizes).toEqual([50, 50])
-  dispatch({ type: 'setWidth', sidebar: 'inspector', width: 440 })
+  await dispatch({ type: 'set_width', sidebar: 'inspector', width: 440 })
   const inspector = () =>
     Math.round(document.querySelector('section[aria-label="Inspector"]')!.getBoundingClientRect().width)
   await expect.poll(inspector).toBe(440)
   commandService.execute('layout.resetLayout')
   await expect.poll(inspector).toBe(SIDEBAR_WIDTH.inspector)
   // With the sidebars swapped too, both move back.
-  dispatch({ type: 'setWidth', sidebar: 'inspector', width: 440 })
-  dispatch({ type: 'swapSidebars' })
+  await dispatch({ type: 'set_width', sidebar: 'inspector', width: 440 })
+  await swapSidebars()
   await expect.poll(inspector).toBe(440)
   commandService.execute('layout.resetLayout')
-  expect(layout().sidebars).toEqual(['navigator', 'inspector'])
+  expect((await shown()).sidebars).toEqual(['navigator', 'inspector'])
   await expect.poll(inspector).toBe(SIDEBAR_WIDTH.inspector)
   await expect
     .poll(() => section('Navigator')!.getBoundingClientRect().left < section('Inspector')!.getBoundingClientRect().left)
     .toBe(true)
   expect(commandService.keybindingFor('layout.toggleMaximize')).toBe('$mod+Shift+Enter')
   commandService.execute('layout.toggleMaximize')
-  expect(layout().maximized).toBe(layout().focusedPane)
+  expect((await shown()).maximized).toBe(layout().focused_pane)
 })
 
 test('a window saved with sidebars collapsed opens with its panes at full size, and a sidebar opens at its saved width', async () => {
-  dispatch({ type: 'setCollapsed', sidebar: 'navigator', collapsed: true })
-  dispatch({ type: 'setCollapsed', sidebar: 'inspector', collapsed: true })
-  dispatch({ type: 'setWidth', sidebar: 'navigator', width: 300 })
+  await dispatch({ type: 'set_collapsed', sidebar: 'navigator', collapsed: true })
+  await dispatch({ type: 'set_collapsed', sidebar: 'inspector', collapsed: true })
+  await dispatch({ type: 'set_width', sidebar: 'navigator', width: 300 })
   for (const [index, title] of ['A', 'B', 'C'].entries()) {
-    if (index > 0) dispatch({ type: 'splitPane', paneId: `p${index}`, direction: 'row', newPaneId: `p${index + 1}` })
-    openTab({ kind: 'terminal', title }, `p${index + 1}`)
+    if (index > 0)
+      await dispatch({ type: 'split_pane', pane_id: `p${index}`, direction: 'row', new_pane_id: `p${index + 1}` })
+    await openTitled('terminal', title, `p${index + 1}`)
   }
   const screen = await renderWorkspace()
   await expect.poll(() => document.querySelectorAll('[data-pane-drop]').length).toBe(3)
@@ -227,12 +228,13 @@ test('selecting a tab moves no tab: each is as wide as when selected', async () 
 test('only the focused pane fills its active tab, and a change of focus re-renders no tab content', async () => {
   const renders: Record<string, number> = {}
   await renderWorkspace((tab) => {
-    renders[tab.title] = (renders[tab.title] ?? 0) + 1
+    const title = titleOf(tab.id) ?? tab.id
+    renders[title] = (renders[title] ?? 0) + 1
     return null
   })
-  openTab({ kind: 'terminal', title: 'Left' })
-  dispatch({ type: 'splitPane', paneId: 'p1', direction: 'row', newPaneId: 'p2' })
-  openTab({ kind: 'terminal', title: 'Right' }, 'p2')
+  await openTitled('terminal', 'Left')
+  await dispatch({ type: 'split_pane', pane_id: 'p1', direction: 'row', new_pane_id: 'p2' })
+  await openTitled('terminal', 'Right', 'p2')
   await expect.poll(() => document.querySelectorAll('[role=tab][data-tab-id]').length).toBe(2)
   const fill = (title: string) => getComputedStyle(tabEl(title)).backgroundColor
   const clear = (colour: string) => colour.endsWith('/ 0)') || colour.endsWith(', 0)')
@@ -240,20 +242,20 @@ test('only the focused pane fills its active tab, and a change of focus re-rende
   await expect.poll(() => clear(fill('Right'))).toBe(false)
   await expect.poll(() => clear(fill('Left'))).toBe(true)
   const before = { ...renders }
-  dispatch({ type: 'focusPane', paneId: 'p1' })
+  await dispatch({ type: 'focus_pane', pane_id: 'p1' })
   await expect.poll(() => clear(fill('Left'))).toBe(false)
   await expect.poll(() => clear(fill('Right'))).toBe(true)
   // Opening a tab renders only its own content.
-  openTab({ kind: 'terminal', title: 'Third' }, 'p1')
+  await openTitled('terminal', 'Third', 'p1')
   await expect.poll(() => renders.Third).toBeGreaterThan(0)
   expect({ Left: renders.Left, Right: renders.Right }).toEqual({ Left: before.Left, Right: before.Right })
 })
 
 test('every element id in the workspace is unique, nested splits included', async () => {
   await renderWorkspace()
-  openTab({ kind: 'terminal', title: 'A' })
-  dispatch({ type: 'splitPane', paneId: 'p1', direction: 'row', newPaneId: 'p2' })
-  dispatch({ type: 'splitPane', paneId: 'p2', direction: 'column', newPaneId: 'p3' })
+  await openTitled('terminal', 'A')
+  await dispatch({ type: 'split_pane', pane_id: 'p1', direction: 'row', new_pane_id: 'p2' })
+  await dispatch({ type: 'split_pane', pane_id: 'p2', direction: 'column', new_pane_id: 'p3' })
   await expect.poll(() => document.querySelectorAll('section[aria-label="Pane"]').length).toBe(3)
   const ids = [...document.querySelectorAll('[id]')].map((element) => element.id)
   expect(ids.filter((id, index) => ids.indexOf(id) !== index)).toEqual([])

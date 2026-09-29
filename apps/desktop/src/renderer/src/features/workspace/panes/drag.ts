@@ -5,7 +5,7 @@ import { useEffect, type ReactNode } from 'react'
 import { flushSync } from 'react-dom'
 import { createRoot } from 'react-dom/client'
 import type { DropZone, Edge, SidebarId } from '../model/layout'
-import { dispatch, dockTab, dropTab, layoutStore } from '../model/layout-store'
+import { dispatch, dockTab, dropTab, layoutNow, swapSidebars } from '../model/layout-store'
 import { findPane, panes } from '../model/layout-tree'
 import { afterDrop, describePane, describeTab } from './drop-feedback'
 import { hasRoomFor } from './room'
@@ -13,7 +13,7 @@ import { hasRoomFor } from './room'
 // Dragging: tabs (reorder within a strip, move to another strip, join or split a pane, dock on the
 // centre's edges), whole panes (by their grip: beside another pane, swapped with it, or docked), and
 // sidebars (by their grip, onto the other sidebar, to swap sides). Drag sources and targets attach
-// plain data; one monitor turns a drop into one reducer action, then announces it
+// plain data; one monitor turns a drop into one daemon layout action, then announces what it did
 // (drop-feedback.ts).
 
 export type DragData =
@@ -31,20 +31,18 @@ export type TargetData =
 export const isDragData = (data: Record<string | symbol, unknown>): data is DragData & Record<string, unknown> =>
   data.kind === 'tab' || data.kind === 'pane' || data.kind === 'sidebar'
 
-export const activeLayout = () => layoutStore.getState().layouts[layoutStore.getState().active]
-
 /** Whether docking `source` on an outer edge would change anything and still fit (panes/room.ts). */
 export function canDock(source: DragData, edge: Edge): boolean {
-  const layout = activeLayout()
-  if (!layout || source.kind === 'sidebar') return false
+  const layout = layoutNow()
+  if (source.kind === 'sidebar') return false
   const count = panes(layout.root).length
   const changes =
     source.kind === 'pane' ? count > 1 : count > 1 || (findPane(layout.root, source.paneId)?.tabs.length ?? 0) > 1
   if (!changes) return false
   return hasRoomFor(
     source.kind === 'pane'
-      ? { type: 'dockPane', paneId: source.paneId, edge }
-      : { type: 'dockTab', tabId: source.tabId, edge, newPaneId: 'room-check' },
+      ? { type: 'dock_pane', pane_id: source.paneId, edge }
+      : { type: 'dock_tab', tab_id: source.tabId, edge, new_pane_id: 'room-check' },
   )
 }
 
@@ -87,8 +85,8 @@ export function dropChanges(source: DragData, paneId: string, zone: DropZone): b
   if (source.kind === 'pane') return source.paneId !== paneId
   if (source.paneId !== paneId) return true
   // Onto its own pane: joining is a no-op, and a pane's only tab cannot split off from itself.
-  const layout = activeLayout()
-  const tabs = layout ? (findPane(layout.root, paneId)?.tabs.length ?? 0) : 0
+  const layout = layoutNow()
+  const tabs = findPane(layout.root, paneId)?.tabs.length ?? 0
   return zone !== 'centre' && tabs > 1
 }
 
@@ -97,8 +95,8 @@ export function dropFits(source: DragData, paneId: string, zone: DropZone): bool
   if (source.kind === 'sidebar') return false
   return hasRoomFor(
     source.kind === 'pane'
-      ? { type: 'movePane', paneId: source.paneId, targetId: paneId, zone }
-      : { type: 'dropTab', tabId: source.tabId, paneId, zone, newPaneId: 'room-check' },
+      ? { type: 'move_pane', pane_id: source.paneId, target_id: paneId, zone }
+      : { type: 'drop_tab', tab_id: source.tabId, pane_id: paneId, zone, new_pane_id: 'room-check' },
   )
 }
 
@@ -110,13 +108,13 @@ function onDrop(source: DragData, target: Record<string | symbol, unknown>): voi
   if (data.kind === 'dock-target') {
     if (!canDock(source, data.edge)) return
     if (source.kind === 'tab')
-      afterDrop(
+      void afterDrop(
         () => dockTab(source.tabId, data.edge),
         (layout) => `${describeTab(layout, source.tabId, 'Docked')}, along the ${data.edge} edge`,
       )
     else if (source.kind === 'pane')
-      afterDrop(
-        () => dispatch({ type: 'dockPane', paneId: source.paneId, edge: data.edge }),
+      void afterDrop(
+        () => dispatch({ type: 'dock_pane', pane_id: source.paneId, edge: data.edge }),
         (layout) => `${describePane(layout, source.paneId, 'Docked')} along the ${data.edge} edge`,
       )
     return
@@ -124,8 +122,8 @@ function onDrop(source: DragData, target: Record<string | symbol, unknown>): voi
   // Sidebars only ever trade places with each other.
   if (source.kind === 'sidebar') {
     if (data.kind === 'sidebar-target' && data.sidebar !== source.sidebar)
-      afterDrop(
-        () => dispatch({ type: 'swapSidebars' }),
+      void afterDrop(
+        () => swapSidebars(),
         () => 'Swapped sidebars',
         false,
       )
@@ -133,13 +131,13 @@ function onDrop(source: DragData, target: Record<string | symbol, unknown>): voi
   }
   if (source.kind === 'tab') {
     if (data.kind === 'strip-target' && data.index >= 0) {
-      afterDrop(
-        () => dispatch({ type: 'moveTab', tabId: source.tabId, paneId: data.paneId, index: data.index }),
+      void afterDrop(
+        () => dispatch({ type: 'move_tab', tab_id: source.tabId, pane_id: data.paneId, index: data.index }),
         (layout) => describeTab(layout, source.tabId),
         false,
       )
     } else if (data.kind === 'body-target' && canDropOnZone(source, data.paneId, data.zone)) {
-      afterDrop(
+      void afterDrop(
         () => dropTab(source.tabId, data.paneId, data.zone),
         (layout) =>
           data.zone === 'centre' ? describeTab(layout, source.tabId) : describeTab(layout, source.tabId, 'Split off'),
@@ -148,8 +146,8 @@ function onDrop(source: DragData, target: Record<string | symbol, unknown>): voi
     return
   }
   if (data.kind === 'body-target' && canDropOnZone(source, data.paneId, data.zone))
-    afterDrop(
-      () => dispatch({ type: 'movePane', paneId: source.paneId, targetId: data.paneId, zone: data.zone }),
+    void afterDrop(
+      () => dispatch({ type: 'move_pane', pane_id: source.paneId, target_id: data.paneId, zone: data.zone }),
       (layout) => describePane(layout, source.paneId, data.zone === 'centre' ? 'Swapped, now' : 'Moved, now'),
     )
 }

@@ -8,7 +8,9 @@ import { Caption } from '@/components/Typography'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { commandService } from '../app/commands'
 import type { RenderContent } from '../features/workspace/content/ContentHosts'
-import { layoutStore, setActiveWorkspace } from '../features/workspace/model/layout-store'
+import { defaultLayout, type Layout, type Tab } from '../features/workspace/model/layout'
+import { selectWorkspace, startLayoutSync } from '../features/workspace/model/layout-sync'
+import { createFakeLayouts } from './layout-double/fake-layouts'
 
 // Benchmark content, development only (open the app with ?bench): real terminals fed by a fake
 // connection with a long scrollback and streaming output, and long conversations rendered the way
@@ -23,21 +25,68 @@ const MESSAGES = number('messages', 800)
 
 const bridge = benchTerminalBridge({ scrollback: SCROLLBACK, linesPerSecond: LINES_PER_SECOND })
 
-// Workspaces: a benchmark layout may hold several (w1, w2, …). Until the navigator lists them,
-// Ctrl+1 to Ctrl+9 switch between them, and the first opens first.
-const benchWorkspaces = Object.keys(layoutStore.getState().layouts)
-  .filter((id) => /^w\d$/.test(id))
-  .sort()
-benchWorkspaces.forEach((id, index) => {
-  commandService.registerCommand({
-    id: `bench.${id}`,
-    title: `Bench: open workspace ${index + 1}`,
-    category: 'Bench',
-    run: () => setActiveWorkspace(id),
+const WORKSPACES = number('workspaces', 4)
+
+/**
+ * A benchmark workspace: conversations in one pane, terminals stacked in two beside it. Its tab
+ * targets are synthetic (the real daemon would refuse them), so the bench serves its layouts from
+ * the layout double (dev/layout-double) instead of the daemon.
+ */
+function benchLayout(workspace: string): Layout {
+  const tab = (kind: 'conversation' | 'terminal', n: number): Tab => ({
+    id: `${workspace}-${kind}-${n}`,
+    target: { kind, id: `${workspace}-${kind}-${n}` },
   })
-  commandService.registerKeybinding({ key: `Control+${index + 1}`, command: `bench.${id}` })
-})
-if (benchWorkspaces[0]) setActiveWorkspace(benchWorkspaces[0])
+  const conversations = [1, 2, 3, 4].map((n) => tab('conversation', n))
+  const terminals = [1, 2, 3, 4, 5, 6].map((n) => tab('terminal', n))
+  const pane = (id: string, tabs: Tab[]) => ({
+    type: 'pane' as const,
+    id: `${workspace}-${id}`,
+    tabs: tabs.map((item) => item.id),
+    active: tabs[0]!.id,
+  })
+  return {
+    ...defaultLayout(),
+    tabs: Object.fromEntries([...conversations, ...terminals].map((item) => [item.id, item])),
+    root: {
+      type: 'split',
+      id: `${workspace}-row`,
+      direction: 'row',
+      sizes: [50, 50],
+      children: [
+        pane('chat', conversations),
+        {
+          type: 'split',
+          id: `${workspace}-column`,
+          direction: 'column',
+          sizes: [50, 50],
+          children: [pane('top', terminals.slice(0, 3)), pane('bottom', terminals.slice(3))],
+        },
+      ],
+    },
+    focused_pane: `${workspace}-chat`,
+  }
+}
+
+/** Serves the bench workspaces w1, w2, … from a fake daemon; Ctrl+1 to Ctrl+9 switch between them. */
+export function startBenchLayouts(): void {
+  const workspaces = Array.from({ length: WORKSPACES }, (_, index) => `w${index + 1}`)
+  const fake = createFakeLayouts({
+    workspaceId: workspaces[0]!,
+    windowId: 'bench',
+    layouts: Object.fromEntries(workspaces.map((id) => [id, benchLayout(id)])),
+  })
+  startLayoutSync(fake.connection)
+  workspaces.slice(0, 9).forEach((id, index) => {
+    commandService.registerCommand({
+      id: `bench.${id}`,
+      title: `Bench: open workspace ${index + 1}`,
+      category: 'Bench',
+      run: () => selectWorkspace(id),
+    })
+    commandService.registerKeybinding({ key: `Control+${index + 1}`, command: `bench.${id}` })
+  })
+}
 
 /** How much benchmark content is mounted now, for the measuring script. */
 const mounted = { terminals: 0, conversations: 0 }
@@ -124,4 +173,4 @@ function BenchConversation({ id }: { id: string }) {
 }
 
 export const benchContent: RenderContent = (tab) =>
-  tab.kind === 'terminal' ? <BenchTerminal id={tab.id} /> : <BenchConversation id={tab.id} />
+  tab.target.kind === 'terminal' ? <BenchTerminal id={tab.id} /> : <BenchConversation id={tab.id} />

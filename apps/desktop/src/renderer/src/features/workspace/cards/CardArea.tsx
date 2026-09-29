@@ -149,7 +149,8 @@ export function CardArea() {
   useEffect(keepFocusOffHandles, [])
   const [left, right] = sidebars
   // Double-clicking a sidebar's gutter puts it back to its default width.
-  const resetWidth = (id: SidebarId): void => dispatch({ type: 'setWidth', sidebar: id, width: SIDEBAR_WIDTH[id] })
+  const resetWidth = (id: SidebarId): void =>
+    void dispatch({ type: 'set_width', sidebar: id, width: SIDEBAR_WIDTH[id] })
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1">
       <Group

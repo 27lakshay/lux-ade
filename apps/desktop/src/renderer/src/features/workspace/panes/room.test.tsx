@@ -1,20 +1,20 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { sidebarsThatFit, useSidebarFit } from '../cards/fit'
 import { GUTTER, PANE_MIN, SIDEBAR_WIDTH } from '../model/layout'
-import { dispatch, layoutStore, openTab } from '../model/layout-store'
+import { dispatch, layoutNow } from '../model/layout-store'
 import { panes } from '../model/layout-tree'
-import { renderWorkspace, resetLayout, section, startDrag } from '../testing'
+import { openTitled, renderWorkspace, resetLayout, section, startDrag } from '../testing'
 
 // The limits that keep a layout tidy: panes never go below their minimum, sidebars give way on a
 // narrow window and come back, and the window never gets smaller than the panes need.
 
-beforeEach(() => {
-  resetLayout()
+beforeEach(async () => {
+  await resetLayout()
   useSidebarFit.setState({ priority: ['navigator', 'inspector'], squeezed: [], room: null })
 })
 afterEach(() => vi.restoreAllMocks())
 
-const layout = () => layoutStore.getState().layouts.default!
+const layout = layoutNow
 /** Resizes the element the workspace is rendered in, as a window resize would. */
 const setWindowWidth = (width: number) => {
   document.querySelector<HTMLElement>('[data-window-frame]')!.style.width = `${width}px`
@@ -35,10 +35,11 @@ test('sidebars fit in priority order beside the centre’s minimum', () => {
 
 test('a split that would squeeze a pane below its minimum is refused, and says why', async () => {
   const screen = await renderWorkspace()
-  openTab({ kind: 'conversation', title: 'Talk' })
+  await openTitled('conversation', 'Talk')
   // 2 conversations need 728px: the centre (about 750px beside both sidebars) has that, 3 do not.
   await screen.getByRole('button', { name: 'Split right' }).click()
-  openTab({ kind: 'conversation', title: 'Two' })
+  await expect.poll(() => panes(layout().root).length).toBe(2)
+  await openTitled('conversation', 'Two')
   await expect.poll(() => panes(layout().root).length).toBe(2)
   const before = JSON.stringify(layout().root)
   await screen.getByRole('button', { name: 'Split right' }).nth(1).click()
@@ -48,12 +49,15 @@ test('a split that would squeeze a pane below its minimum is refused, and says w
 
 test('a drop that would not fit shows “No room” and changes nothing', async () => {
   await renderWorkspace()
-  openTab({ kind: 'conversation', title: 'One' })
-  dispatch({ type: 'splitPane', paneId: 'p1', direction: 'row', newPaneId: 'p2' })
-  openTab({ kind: 'conversation', title: 'Two' }, 'p2')
-  openTab({ kind: 'conversation', title: 'Three' }, 'p2')
+  await openTitled('conversation', 'One')
+  await dispatch({ type: 'split_pane', pane_id: 'p1', direction: 'row', new_pane_id: 'p2' })
+  await openTitled('conversation', 'Two', 'p2')
+  await openTitled('conversation', 'Three', 'p2')
   await expect.poll(() => document.querySelectorAll('[role=tab][data-tab-id]').length).toBe(3)
   const before = JSON.stringify(layout().root)
+  await expect
+    .poll(() => [...document.querySelectorAll('[role=tab]')].some((tab) => tab.textContent === 'Three'))
+    .toBe(true)
   const three = [...document.querySelectorAll('[role=tab]')].find((tab) => tab.textContent === 'Three')!
   const body = document.querySelectorAll('[data-pane-drop]')[0]!
   const drag = await startDrag(three)
@@ -65,7 +69,7 @@ test('a drop that would not fit shows “No room” and changes nothing', async 
 
 test('a narrowing window closes the sidebar opened longest ago, then reopens it; the layout keeps both open', async () => {
   await renderWorkspace()
-  openTab({ kind: 'conversation', title: 'Talk' })
+  await openTitled('conversation', 'Talk')
   await expect.poll(() => shown('Inspector')).toBe(true)
   // Beside a 360px conversation, both sidebars need 360 + 2 × 208 = 776px of the group; at a
   // 780px window the group has about 710.
@@ -79,7 +83,7 @@ test('a narrowing window closes the sidebar opened longest ago, then reopens it;
 
 test('opening a sidebar closed for room makes room by closing the other', async () => {
   const screen = await renderWorkspace()
-  openTab({ kind: 'conversation', title: 'Talk' })
+  await openTitled('conversation', 'Talk')
   setWindowWidth(780)
   await expect.poll(() => shown('Inspector')).toBe(false)
   await screen.getByRole('button', { name: 'Toggle right sidebar' }).click()
@@ -92,7 +96,7 @@ test('the window may not shrink below what the panes need', async () => {
   const setMinimum = vi.fn()
   window.adeHost = { setWindowMinimumSize: setMinimum } as unknown as typeof window.adeHost
   await renderWorkspace()
-  dispatch({ type: 'splitPane', paneId: 'p1', direction: 'row', newPaneId: 'p2' })
+  await dispatch({ type: 'split_pane', pane_id: 'p1', direction: 'row', new_pane_id: 'p2' })
   await expect.poll(() => setMinimum.mock.calls.length).toBeGreaterThan(0)
   const [width] = setMinimum.mock.calls.at(-1)!
   // Two empty panes and their gutter, plus everything around the centre but the sidebars.

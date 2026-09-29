@@ -2,6 +2,7 @@ import { contextBridge } from 'electron'
 import { browser } from './browser'
 import { conversations } from './conversations'
 import { files } from './files'
+import { layouts } from './layouts'
 import { profiles } from './profiles'
 import { review } from './review'
 import { services } from './services'
@@ -46,6 +47,7 @@ const adeHost: AdeHost = {
   profiles,
   conversations,
   workspaces,
+  layouts,
   services,
   review,
   files,

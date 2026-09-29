@@ -7,8 +7,8 @@ import { dispatch, useLayout } from '../model/layout-store'
 import { minSize } from '../model/layout-tree'
 import { Pane } from './Pane'
 
-// The centre: the pane tree, rendered as nested resizable groups. Splits save their sizes when a
-// resize ends. The resize library tracks panels by the order they mounted, so a split whose children
+// The centre: the pane tree, rendered as nested resizable groups. Splits send their sizes to the
+// daemon when a resize ends; until the reply, the panels keep what the hand left. The resize library tracks panels by the order they mounted, so a split whose children
 // change (a swap, a move, a split) mounts a fresh group; pane content survives, since it lives in
 // stable hosts (content/hosts.ts) that panes only attach.
 //
@@ -71,11 +71,15 @@ function Split({ node }: { node: SplitNode }) {
       className="h-full"
       onLayoutChange={noteResizing}
       onLayoutChanged={(layout, meta) => {
-        if (meta.isUserInteraction)
-          dispatch({
-            type: 'setSplitSizes',
-            splitId: node.id,
-            sizes: node.children.map((child) => layout[slotId(child.id)] ?? 0),
+        if (!meta.isUserInteraction) return
+        const sizes = node.children.map((child) => layout[slotId(child.id)] ?? 0)
+        // The daemon takes sizes summing to 100; the library's may be off in the last digits.
+        const total = sizes.reduce((sum, size) => sum + size, 0)
+        if (sizes.every((size) => size > 0) && total > 0)
+          void dispatch({
+            type: 'set_split_sizes',
+            split_id: node.id,
+            sizes: sizes.map((size) => (size * 100) / total),
           })
       }}
     >
@@ -85,7 +89,7 @@ function Split({ node }: { node: SplitNode }) {
             <ResizeHandle
               orientation={orientation}
               label={node.direction === 'row' ? 'Resize panes side by side' : 'Resize stacked panes'}
-              onDoubleClick={() => dispatch({ type: 'equalizeSplits', splitId: node.id })}
+              onDoubleClick={() => void dispatch({ type: 'equalize_splits', split_id: node.id })}
             />
           )}
           <Child node={child} split={node} index={index} />

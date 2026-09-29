@@ -1,13 +1,11 @@
 import type { CatalogProject, Conversation, Workspace } from '@ade/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { userEvent } from 'vitest/browser'
-import { DEFAULT_WORKSPACE, layoutStore, openTab, setActiveWorkspace } from '../model/layout-store'
-import { renderWorkspace, resetLayout, setCatalog } from '../testing'
+import { activeWorkspace, layoutStore } from '../model/layout-store'
+import { daemonLayouts, renderWorkspace, resetLayout, setCatalog } from '../testing'
 
-beforeEach(() => {
-  resetLayout()
-  localStorage.removeItem('ade.navigator.collapsed:main')
-})
+beforeEach(resetLayout)
+const shownWorkspace = () => activeWorkspace(layoutStore.getState())
 afterEach(() => {
   window.adeHost = undefined as unknown as typeof window.adeHost
 })
@@ -56,7 +54,6 @@ const workspaceRow = (name: string) => () =>
 /** A host whose workspace actions are spies; each resolves as given. */
 const hostSpy = (overrides: Partial<Window['adeHost']['workspaces']> = {}) => {
   const workspaces = {
-    select: vi.fn(async () => true),
     choose: vi.fn(),
     rename: vi.fn(async () => {}),
     remove: vi.fn(async () => ({ removed: true as const })),
@@ -67,7 +64,6 @@ const hostSpy = (overrides: Partial<Window['adeHost']['workspaces']> = {}) => {
   window.adeHost = { workspaces, setWindowMinimumSize: vi.fn() } as unknown as typeof window.adeHost
   return workspaces
 }
-const selectSpy = () => hostSpy().select
 
 test('lists projects, their workspaces and conversations from the catalog', async () => {
   const screen = await renderWorkspace()
@@ -81,54 +77,38 @@ test('lists projects, their workspaces and conversations from the catalog', asyn
   await expect.element(screen.getByText('Projects')).toBeVisible()
 })
 
-test('choosing a workspace shows its layout and tells main', async () => {
-  const select = selectSpy()
+test('choosing a workspace shows it at once and moves the window record to it', async () => {
+  hostSpy()
   await renderWorkspace()
   catalog(two)
   const notes = workspaceRow('notes')
   await expect.poll(notes).toBeTruthy()
   notes()!.click()
-  await expect.poll(() => layoutStore.getState().active).toBe('w3')
-  expect(select).toHaveBeenCalledWith('w3', null)
+  expect(shownWorkspace()).toBe('w3')
+  await expect.poll(() => daemonLayouts().window().workspace_id).toBe('w3')
   await expect.poll(() => workspaceRow('notes')()?.getAttribute('aria-current')).toBe('true')
 })
 
-test('the layout from before the catalog arrived carries over to the first workspace', async () => {
-  selectSpy()
-  await renderWorkspace()
-  openTab({ kind: 'terminal', title: 'Kept' })
-  expect(layoutStore.getState().active).toBe(DEFAULT_WORKSPACE)
-  catalog(two)
-  await expect.poll(() => layoutStore.getState().active).toBe('w1')
-  const layout = layoutStore.getState().layouts.w1!
-  expect(Object.values(layout.tabs).map((tab) => tab.title)).toEqual(['Kept'])
-  expect(layoutStore.getState().layouts[DEFAULT_WORKSPACE]).toBeUndefined()
-})
-
-test('a window whose workspace is removed moves to one that is left; a non-daemon layout is left alone', async () => {
-  selectSpy()
+test('the window follows its record when another client shows another workspace in it', async () => {
+  hostSpy()
   await renderWorkspace()
   catalog(two)
-  await expect.poll(workspaceRow('notes')).toBeTruthy()
-  workspaceRow('notes')()!.click()
-  await expect.poll(() => layoutStore.getState().active).toBe('w3')
-  catalog(two.slice(0, 2))
-  await expect.poll(() => layoutStore.getState().active).toBe('w1')
-  // A layout that never was a daemon workspace, as the benchmark's, stays on screen.
-  setActiveWorkspace('bench-1')
-  catalog(two.slice(0, 1))
-  await new Promise((resolve) => setTimeout(resolve, 50))
-  expect(layoutStore.getState().active).toBe('bench-1')
+  await expect.poll(workspaceRow('main')).toBeTruthy()
+  // As `ade window show` would, or the daemon moving a window off a removed workspace.
+  await daemonLayouts().connection.bridge.showWorkspace('w1')
+  await expect.poll(() => workspaceRow('main')()?.getAttribute('aria-current')).toBe('true')
 })
 
-test('a project collapses and stays collapsed across a restart of the window', async () => {
-  const screen = await renderWorkspace()
+test('a project collapses, kept in the window record', async () => {
+  await renderWorkspace()
   catalog(two)
   await expect.poll(workspaceRow('main')).toBeTruthy()
   document.querySelector<HTMLElement>('[aria-label="Projects"] > li:last-child > div > button')!.click()
   await expect.poll(workspaceRow('main')).toBeFalsy()
-  void screen
-  expect(JSON.parse(localStorage.getItem('ade.navigator.collapsed:main')!)).toEqual(['r1'])
+  expect(daemonLayouts().window().view.collapsed_projects).toEqual(['r1'])
+  document.querySelector<HTMLElement>('[aria-label="Projects"] > li:last-child > div > button')!.click()
+  await expect.poll(workspaceRow('main')).toBeTruthy()
+  expect(daemonLayouts().window().view.collapsed_projects).toEqual([])
 })
 
 test('with no projects, the navigator says so', async () => {
@@ -236,6 +216,6 @@ test('a new workspace is a worktree of the project, shown once it is made', asyn
   await dialog.getByRole('textbox', { name: 'Name' }).fill('  Checkout flow ')
   await userEvent.keyboard('{Enter}')
   expect(host.createWorktree).toHaveBeenCalledWith('r1', 'Checkout flow')
-  await expect.poll(() => layoutStore.getState().active).toBe('w9')
-  expect(host.select).toHaveBeenCalledWith('w9', null)
+  await expect.poll(shownWorkspace).toBe('w9')
+  await expect.poll(() => daemonLayouts().window().workspace_id).toBe('w9')
 })

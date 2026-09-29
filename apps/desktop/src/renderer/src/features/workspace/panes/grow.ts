@@ -1,6 +1,6 @@
 import { announce } from '@atlaskit/pragmatic-drag-and-drop-live-region'
 import { GUTTER, type Edge } from '../model/layout'
-import { dispatch, layoutStore } from '../model/layout-store'
+import { dispatch, layoutNow } from '../model/layout-store'
 import { boundaryToward, minSize, panes } from '../model/layout-tree'
 
 // Resizing from the keyboard without reaching for a gutter: the focused pane grows toward an edge,
@@ -11,10 +11,8 @@ const STEP = 32
 
 /** Grows the focused pane toward `edge` by a step (32px), or a tenth of its split when `big`. */
 export function growFocusedPane(edge: Edge, big: boolean): void {
-  const { layouts, active } = layoutStore.getState()
-  const layout = layouts[active]
-  if (!layout) return
-  const found = boundaryToward(layout.root, layout.focusedPane, edge)
+  const layout = layoutNow()
+  const found = boundaryToward(layout.root, layout.focused_pane, edge)
   const element = found && document.getElementById(found.split.id)
   if (!found || !element) {
     announce('This pane already reaches that edge')
@@ -33,8 +31,8 @@ export function growFocusedPane(edge: Edge, big: boolean): void {
     return
   }
   const sizes = split.sizes.map((size, i) => (i === index ? size + delta : i === beyond ? size - delta : size))
-  dispatch({ type: 'setSplitSizes', splitId: split.id, sizes })
-  const number = panes(layout.root).findIndex((pane) => pane.id === layout.focusedPane) + 1
+  void dispatch({ type: 'set_split_sizes', split_id: split.id, sizes })
+  const number = panes(layout.root).findIndex((pane) => pane.id === layout.focused_pane) + 1
   const pixels = Math.round(((split.sizes[index]! + delta) / 100) * space)
   announce(`Pane ${number} is ${pixels} pixels ${row ? 'wide' : 'tall'}`)
 }

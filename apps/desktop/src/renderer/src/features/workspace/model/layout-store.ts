@@ -1,28 +1,37 @@
 import { nanoid } from 'nanoid'
 import { createStore, useStore } from 'zustand'
-import { createJSONStorage, persist } from 'zustand/middleware'
+import type { Window } from '@ade/contracts'
+import { toast } from '@/components/ui/toast'
+import { hostErrorMessage } from '@/lib/host-error'
+import type { LayoutOutcome, LayoutsBridge } from '../../../../../shared/bridge/layouts'
+import { URL_WINDOW_ID } from '../../../app/window-id'
 import {
   defaultLayout,
   type DropZone,
   type Edge,
   type Layout,
+  type LayoutAction,
+  type LayoutRecord,
   type Side,
   type SplitDirection,
-  type Tab,
+  type TabTarget,
 } from './layout'
-import { layoutReducer, type LayoutAction } from './layout.logic'
-import { parseLayout } from './layout-schema'
-import { WINDOW_NAME } from '../../../app/window-name'
 
-// Layouts, one per workspace in each window, saved across launches under the window's name
-// (WINDOW_NAME): two windows on one workspace keep their own arrangements. `recent` lists the workspaces whose pane
-// content stays mounted (hidden) after switching away, most recent first; `keepMounted` sets how
-// many (3 by default).
+// This window's layouts, as the daemon serves them: one per workspace the window has shown, each
+// with its revision. The daemon applies every change (`layout.apply`); this store only holds what
+// it last said (layout-sync.ts keeps it current) and sends gestures as actions once they end.
+// `keepMounted` and `keepTerminals` are this viewer's performance settings, not daemon state.
 
-interface LayoutState {
-  active: string
-  layouts: Record<string, Layout>
-  recent: string[]
+export interface LayoutState {
+  /** This window's daemon record; null until main has one. */
+  windowId: string | null
+  /** The record, from the daemon's catalog: the workspace it shows, its view state. */
+  window: Window | null
+  /** This window's layouts, by workspace. */
+  records: Record<string, LayoutRecord>
+  /** A workspace just chosen here, shown at once while the daemon records the switch. */
+  pending: string | null
+  /** How many recently shown workspaces keep their pane content mounted (hidden). */
   keepMounted: number
   /**
    * Of those, how many keep their terminals mounted (1: only the workspace on screen). A terminal
@@ -32,157 +41,150 @@ interface LayoutState {
   keepTerminals: number
 }
 
-export const STORAGE_KEY = `ade.layouts:${WINDOW_NAME}`
-/** Where layouts were saved before each window had its own; the main window takes them over. */
-const LEGACY_KEY = 'ade.layouts'
-/** Until workspace selection is wired, every window shows this one. */
-export const DEFAULT_WORKSPACE = 'default'
+export const layoutStore = createStore<LayoutState>()(() => ({
+  windowId: URL_WINDOW_ID,
+  window: null,
+  records: {},
+  pending: null,
+  keepMounted: 3,
+  keepTerminals: 1,
+}))
 
-const newPaneId = (): string => `pane-${nanoid(8)}`
+/** What a window shows before the daemon has sent its layout. */
+const PLACEHOLDER = defaultLayout()
 
-const SAVE_DELAY_MS = 200
-let pending: { name: string; value: string } | null = null
-let saveTimer: ReturnType<typeof setTimeout> | undefined
+/** The workspace on screen, or null before the daemon has named one. */
+export const activeWorkspace = (state: LayoutState): string | null =>
+  state.pending ?? state.window?.workspace_id ?? null
 
-/** Writes any layout change still waiting to be saved. Runs as the window closes or reloads. */
-export function flushLayouts(): void {
-  clearTimeout(saveTimer)
-  if (!pending) return
-  localStorage.setItem(pending.name, pending.value)
-  pending = null
-}
-window.addEventListener('pagehide', flushLayouts)
-window.addEventListener('beforeunload', flushLayouts)
+const layoutOf = (state: LayoutState, workspaceId: string | null): Layout =>
+  (workspaceId && state.records[workspaceId]?.layout) || PLACEHOLDER
 
-export const layoutStore = createStore<LayoutState>()(
-  persist(
-    (): LayoutState => ({
-      active: DEFAULT_WORKSPACE,
-      layouts: { [DEFAULT_WORKSPACE]: defaultLayout(newPaneId()) },
-      recent: [DEFAULT_WORKSPACE],
-      keepMounted: 3,
-      keepTerminals: 1,
-    }),
-    {
-      name: STORAGE_KEY,
-      version: 1,
-      storage: createJSONStorage(() => ({
-        getItem: (name) =>
-          (pending?.name === name ? pending.value : null) ??
-          localStorage.getItem(name) ??
-          (WINDOW_NAME === 'main' ? localStorage.getItem(LEGACY_KEY) : null),
-        setItem: (name, value) => {
-          // Batched: a burst of changes (a drag, a run of keys) is one write.
-          pending = { name, value }
-          clearTimeout(saveTimer)
-          saveTimer = setTimeout(flushLayouts, SAVE_DELAY_MS)
-        },
-        removeItem: (name) => {
-          if (pending?.name === name) pending = null
-          localStorage.removeItem(name)
-        },
-      })),
-      partialize: (state) => ({
-        active: state.active,
-        layouts: state.layouts,
-        keepMounted: state.keepMounted,
-        keepTerminals: state.keepTerminals,
-      }),
-      // Keep only layouts that still parse; anything else starts from the default.
-      merge: (saved, current) => {
-        const persisted = (saved ?? {}) as Partial<LayoutState>
-        const layouts: Record<string, Layout> = { ...current.layouts }
-        for (const [id, value] of Object.entries(persisted.layouts ?? {})) {
-          const layout = parseLayout(value)
-          if (layout) layouts[id] = layout
-        }
-        const keepMounted =
-          typeof persisted.keepMounted === 'number' && persisted.keepMounted >= 1
-            ? persisted.keepMounted
-            : current.keepMounted
-        const keepTerminals =
-          typeof persisted.keepTerminals === 'number' && persisted.keepTerminals >= 1
-            ? persisted.keepTerminals
-            : current.keepTerminals
-        // The workspace this window showed last, if its layout is still here.
-        const active =
-          typeof persisted.active === 'string' && layouts[persisted.active] ? persisted.active : current.active
-        return { ...current, active, layouts, keepMounted, keepTerminals, recent: [active] }
-      },
-    },
-  ),
-)
+export const activeLayout = (state: LayoutState): Layout => layoutOf(state, activeWorkspace(state))
 
-const activeLayout = (state: LayoutState): Layout => state.layouts[state.active] ?? defaultLayout(newPaneId())
+/** The layout on screen now. */
+export const layoutNow = (): Layout => activeLayout(layoutStore.getState())
 
-/** Applies an action to the active workspace's layout. */
-export function dispatch(action: LayoutAction): void {
-  dispatchTo(layoutStore.getState().active, action)
+/** The workspaces whose content stays mounted: the one on screen first, then the most recent. */
+export function keptWorkspaces(state: LayoutState): string[] {
+  const active = activeWorkspace(state)
+  const recent = state.window?.view.recent_workspaces ?? []
+  return [...new Set(active ? [active, ...recent] : recent)].slice(0, state.keepMounted)
 }
 
-/**
- * Applies an action to one workspace's layout, shown or not: for work that finishes after the
- * window may have switched workspaces, such as a terminal the daemon has just started.
- */
-function dispatchTo(workspaceId: string, action: LayoutAction): void {
-  layoutStore.setState((state) => ({
-    layouts: {
-      ...state.layouts,
-      [workspaceId]: layoutReducer(state.layouts[workspaceId] ?? defaultLayout(newPaneId()), action),
-    },
-  }))
+/** Reads the layout on screen through a selector. */
+export const useLayout = <T>(selector: (layout: Layout) => T): T =>
+  useStore(layoutStore, (state) => selector(activeLayout(state)))
+
+let bridge: LayoutsBridge | null = null
+
+/** Where layout commands go: main's bridge in the app, a fake daemon in tests and `?bench`. */
+export function setLayoutBridge(next: LayoutsBridge | null): void {
+  bridge = next
 }
 
-/** Shows another workspace's layout, creating a default one the first time. */
-export function setActiveWorkspace(id: string): void {
-  layoutStore.setState((state) => ({
-    active: id,
-    layouts: state.layouts[id] ? state.layouts : { ...state.layouts, [id]: defaultLayout(newPaneId()) },
-    recent: [id, ...state.recent.filter((other) => other !== id)].slice(0, state.keepMounted),
-  }))
+export function layoutBridge(): LayoutsBridge | null {
+  return bridge
 }
 
-/**
- * Gives the layout kept under `from` to workspace `to`, when `to` has none yet: the window's layout
- * from before it knew the daemon's workspaces carries over to the first one it shows.
- */
-export function adoptLayout(from: string, to: string): void {
+/** Keeps a layout the daemon sent, unless one of a later revision is already here. */
+export function acceptLayout(record: LayoutRecord): void {
   layoutStore.setState((state) => {
-    const layout = state.layouts[from]
-    if (!layout || state.layouts[to]) return state
-    const { [from]: _moved, ...rest } = state.layouts
-    return {
-      layouts: { ...rest, [to]: layout },
-      active: state.active === from ? to : state.active,
-      recent: state.recent.map((id) => (id === from ? to : id)),
-    }
+    const held = state.records[record.workspace_id]
+    if (record.window_id !== state.windowId || (held && held.revision >= record.revision)) return state
+    return { records: { ...state.records, [record.workspace_id]: record } }
   })
 }
 
+function notConnected(): void {
+  toast.add({ type: 'error', title: 'Not connected to ADE yet', description: 'Try again in a moment.' })
+}
+
+/** Shows why the daemon refused a change the person made, and reads the layout again if it moved on. */
+export function refused(workspaceId: string, outcome: Exclude<LayoutOutcome, { ok: true }>): void {
+  if (outcome.code === 'layout_conflict') {
+    void refetchLayout(workspaceId)
+    toast.add({ title: 'The layout changed', description: 'It was changed elsewhere; try again.' })
+    return
+  }
+  toast.add({ type: 'error', title: 'Could not change the layout', description: outcome.message })
+}
+
+/** Reads one layout again (layout-sync.ts sets how). */
+let refetchLayout: (workspaceId: string) => Promise<void> = async () => {}
+export function setRefetch(refetch: (workspaceId: string) => Promise<void>): void {
+  refetchLayout = refetch
+}
+
+/** Actions that move a pane relative to where it is: the daemon wants the revision they were made on. */
+const RELATIVE = new Set<LayoutAction['type']>(['move_pane', 'swap_panes', 'dock_pane'])
+
+/**
+ * Sends one action for a workspace's layout and keeps the result; null when it was refused or
+ * could not be sent (the person is told why).
+ */
+async function applyTo(workspaceId: string, action: LayoutAction): Promise<LayoutRecord | null> {
+  if (!bridge) {
+    notConnected()
+    return null
+  }
+  const held = layoutStore.getState().records[workspaceId]
+  try {
+    const outcome = await bridge.apply(
+      workspaceId,
+      action,
+      RELATIVE.has(action.type) ? (held?.revision ?? 0) : undefined,
+    )
+    if (!outcome.ok) {
+      refused(workspaceId, outcome)
+      return null
+    }
+    acceptLayout(outcome.layout)
+    return outcome.layout
+  } catch (error) {
+    toast.add({ type: 'error', title: 'Could not change the layout', description: hostErrorMessage(error) })
+    return null
+  }
+}
+
+/** Sends an action for the layout on screen. */
+export function dispatch(action: LayoutAction): Promise<LayoutRecord | null> {
+  const workspaceId = activeWorkspace(layoutStore.getState())
+  if (!workspaceId) {
+    notConnected()
+    return Promise.resolve(null)
+  }
+  return applyTo(workspaceId, action)
+}
+
 export function setKeepMounted(count: number): void {
-  layoutStore.setState((state) => ({
-    keepMounted: Math.max(1, Math.round(count)),
-    recent: state.recent.slice(0, Math.max(1, Math.round(count))),
-  }))
+  layoutStore.setState({ keepMounted: Math.max(1, Math.round(count)) })
 }
 
 export function setKeepTerminals(count: number): void {
   layoutStore.setState({ keepTerminals: Math.max(1, Math.round(count)) })
 }
 
-/** Reads the active layout through a selector. */
-export const useLayout = <T>(selector: (layout: Layout) => T): T =>
-  useStore(layoutStore, (state) => selector(activeLayout(state)))
+const newPaneId = (): string => `pane-${nanoid(8)}`
 
-// Actions that need new ids.
-export const openTab = (tab: Omit<Tab, 'id'>, paneId?: string): void =>
-  openTabIn(layoutStore.getState().active, tab, paneId)
-export const openTabIn = (workspaceId: string, tab: Omit<Tab, 'id'>, paneId?: string): void =>
-  dispatchTo(workspaceId, { type: 'openTab', tab: { ...tab, id: `tab-${nanoid(8)}` }, paneId })
-export const splitPane = (paneId: string, direction: SplitDirection): void =>
-  dispatch({ type: 'splitPane', paneId, direction, newPaneId: newPaneId() })
-export const dropTab = (tabId: string, paneId: string, zone: DropZone): void =>
-  dispatch({ type: 'dropTab', tabId, paneId, zone, newPaneId: newPaneId() })
-export const dockTab = (tabId: string, edge: Edge): void =>
-  dispatch({ type: 'dockTab', tabId, edge, newPaneId: newPaneId() })
-export const toggleSide = (side: Side): void => dispatch({ type: 'toggleSide', side })
+/** A tab's ID: a record's tab is named after it, so opening it again brings the same tab forward. */
+const tabIdFor = (target: TabTarget): string =>
+  'id' in target && typeof target.id === 'string' ? `tab-${target.id}` : `tab-${nanoid(8)}`
+
+// Actions that need new IDs, or name the state a toggle reaches.
+export const openTab = (target: TabTarget, paneId?: string) =>
+  dispatch({ type: 'open_tab', tab: { id: tabIdFor(target), target }, pane_id: paneId ?? null })
+export const splitPane = (paneId: string, direction: SplitDirection) =>
+  dispatch({ type: 'split_pane', pane_id: paneId, direction, new_pane_id: newPaneId() })
+export const dropTab = (tabId: string, paneId: string, zone: DropZone) =>
+  dispatch({ type: 'drop_tab', tab_id: tabId, pane_id: paneId, zone, new_pane_id: newPaneId() })
+export const dockTab = (tabId: string, edge: Edge) =>
+  dispatch({ type: 'dock_tab', tab_id: tabId, edge, new_pane_id: newPaneId() })
+export const toggleSide = (side: Side) => {
+  const layout = layoutNow()
+  const sidebar = layout.sidebars[side === 'left' ? 0 : 1]
+  return dispatch({ type: 'set_side_collapsed', side, collapsed: !layout.collapsed[sidebar] })
+}
+export const swapSidebars = () => dispatch({ type: 'set_sidebar_sides', left: layoutNow().sidebars[1] })
+export const toggleMaximize = (paneId: string) =>
+  dispatch({ type: 'set_maximized', pane_id: layoutNow().maximized === paneId ? null : paneId })

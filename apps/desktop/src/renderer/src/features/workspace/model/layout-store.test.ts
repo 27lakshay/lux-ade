@@ -1,81 +1,68 @@
 import { beforeEach, expect, test } from 'vitest'
+import { daemonLayouts, resetLayout, settle, shown, startWith, WORKSPACE } from '../testing'
 import { defaultLayout } from './layout'
-import {
-  DEFAULT_WORKSPACE,
-  dispatch,
-  flushLayouts,
-  layoutStore,
-  setActiveWorkspace,
-  setKeepMounted,
-  STORAGE_KEY,
-} from './layout-store'
+import { activeWorkspace, dispatch, keptWorkspaces, layoutStore, setKeepMounted, swapSidebars } from './layout-store'
+import { selectWorkspace } from './layout-sync'
 
-beforeEach(() => {
-  layoutStore.setState({
-    active: DEFAULT_WORKSPACE,
-    layouts: { [DEFAULT_WORKSPACE]: defaultLayout('p1') },
-    recent: [DEFAULT_WORKSPACE],
-    keepMounted: 3,
-  })
-  // Write the reset out before clearing, so no batched save is left waiting.
-  flushLayouts()
-  localStorage.removeItem(STORAGE_KEY)
-  localStorage.removeItem('ade.layouts')
+beforeEach(resetLayout)
+
+test('each workspace keeps its own layout, in the daemon', async () => {
+  await swapSidebars()
+  selectWorkspace('w2')
+  expect(activeWorkspace(layoutStore.getState())).toBe('w2')
+  expect((await shown()).sidebars).toEqual(['navigator', 'inspector'])
+  expect(daemonLayouts().window().workspace_id).toBe('w2')
+  selectWorkspace(WORKSPACE)
+  expect((await shown()).sidebars).toEqual(['inspector', 'navigator'])
+  expect(daemonLayouts().layout(WORKSPACE).sidebars).toEqual(['inspector', 'navigator'])
 })
 
-test('each workspace keeps its own layout', () => {
-  dispatch({ type: 'swapSidebars' })
-  setActiveWorkspace('w2')
-  expect(layoutStore.getState().layouts.w2?.sidebars).toEqual(['navigator', 'inspector'])
-  setActiveWorkspace(DEFAULT_WORKSPACE)
-  expect(layoutStore.getState().layouts[DEFAULT_WORKSPACE]?.sidebars).toEqual(['inspector', 'navigator'])
-})
-
-test('the recent list keeps the last `keepMounted` workspaces, most recent first', () => {
-  for (const id of ['w2', 'w3', 'w4']) setActiveWorkspace(id)
-  expect(layoutStore.getState().recent).toEqual(['w4', 'w3', 'w2'])
-  setActiveWorkspace('w2')
-  expect(layoutStore.getState().recent).toEqual(['w2', 'w4', 'w3'])
+test('the kept workspaces are the window record recent ones, up to `keepMounted`', async () => {
+  for (const id of ['w2', 'w3', 'w4']) {
+    selectWorkspace(id)
+    await settle()
+  }
+  expect(keptWorkspaces(layoutStore.getState())).toEqual(['w4', 'w3', 'w2'])
+  selectWorkspace('w2')
+  await settle()
+  expect(keptWorkspaces(layoutStore.getState())).toEqual(['w2', 'w4', 'w3'])
   setKeepMounted(1)
-  expect(layoutStore.getState().recent).toEqual(['w2'])
+  expect(keptWorkspaces(layoutStore.getState())).toEqual(['w2'])
 })
 
-test('layouts survive a reload; damaged ones fall back to the default', async () => {
-  // The saved file holds a collapsed inspector and one damaged layout; the window currently shows
-  // neither.
-  const collapsed = { ...defaultLayout('p1'), collapsed: { navigator: false, inspector: true } }
-  const damaged = { version: 1, sidebars: ['navigator', 'navigator'] }
-  localStorage.setItem(
-    STORAGE_KEY,
-    JSON.stringify({
-      state: { layouts: { [DEFAULT_WORKSPACE]: collapsed, broken: damaged }, keepMounted: 3 },
-      version: 1,
-    }),
-  )
-  await layoutStore.persist.rehydrate()
-  const { layouts } = layoutStore.getState()
-  expect(layouts[DEFAULT_WORKSPACE]?.collapsed.inspector).toBe(true)
-  expect(layouts.broken).toBeUndefined()
+test('a layout another client changes shows here from its frame', async () => {
+  daemonLayouts().applyElsewhere({ type: 'set_side_collapsed', side: 'right', collapsed: true })
+  expect(layoutStore.getState().records[WORKSPACE]?.layout.collapsed.inspector).toBe(true)
 })
 
-test('each window saves under its own name; the main window takes over layouts saved before', async () => {
-  // Tests run as the main window (no ?window= in the URL).
-  expect(STORAGE_KEY).toBe('ade.layouts:main')
-  const swapped = { ...defaultLayout('p1'), sidebars: ['inspector', 'navigator'] }
-  localStorage.setItem(
-    'ade.layouts',
-    JSON.stringify({ state: { layouts: { [DEFAULT_WORKSPACE]: swapped } }, version: 1 }),
-  )
-  // Only when this window has nothing of its own yet.
-  localStorage.removeItem(STORAGE_KEY)
-  await layoutStore.persist.rehydrate()
-  expect(layoutStore.getState().layouts[DEFAULT_WORKSPACE]?.sidebars).toEqual(['inspector', 'navigator'])
-  dispatch({ type: 'swapSidebars' })
-  // Saves are batched; closing the window writes what is waiting.
-  expect(localStorage.getItem(STORAGE_KEY)).toBeNull()
-  flushLayouts()
-  expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!).state.layouts[DEFAULT_WORKSPACE].sidebars).toEqual([
-    'navigator',
-    'inspector',
-  ])
+test('a layout whose frame was missed is read again from the revision the catalog names', async () => {
+  daemonLayouts().applyElsewhere({ type: 'set_side_collapsed', side: 'left', collapsed: true }, { missed: 'frame' })
+  expect((await shown()).collapsed.navigator).toBe(true)
+  expect(daemonLayouts().calls.filter((call) => call === 'layout.get').length).toBeGreaterThan(1)
+})
+
+test('a pane move made on a stale revision is refused, and the layout read again', async () => {
+  await startWith({
+    [WORKSPACE]: {
+      ...defaultLayout('a'),
+      root: {
+        type: 'split',
+        id: 's',
+        direction: 'row',
+        sizes: [50, 50],
+        children: [
+          { type: 'pane', id: 'a', tabs: [], active: null },
+          { type: 'pane', id: 'b', tabs: [], active: null },
+        ],
+      },
+    },
+  })
+  // The daemon moved on without this window hearing of it.
+  daemonLayouts().applyElsewhere({ type: 'set_width', sidebar: 'navigator', width: 300 }, { missed: 'all' })
+  const result = await dispatch({ type: 'swap_panes', pane_id: 'a', target_id: 'b' })
+  expect(result).toBeNull()
+  expect((await shown()).widths.navigator).toBe(300)
+  // With the current revision, it goes through.
+  await dispatch({ type: 'swap_panes', pane_id: 'a', target_id: 'b' })
+  expect(daemonLayouts().layout().root).toMatchObject({ children: [{ id: 'b' }, { id: 'a' }] })
 })

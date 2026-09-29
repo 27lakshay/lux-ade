@@ -4,7 +4,7 @@ import { useStore } from 'zustand'
 import { toast } from '@/components/ui/toast'
 import { hostErrorMessage } from '@/lib/host-error'
 import { TerminalStatus } from '../../../provisional/TerminalStatus'
-import { layoutStore } from '../model/layout-store'
+import { activeLayout, layoutStore } from '../model/layout-store'
 import { findPane } from '../model/layout-tree'
 
 // A terminal tab's content: the daemon's terminal drawn by Ghostty (packages/terminal). Output goes
@@ -20,8 +20,8 @@ const RETRIES = 3
 /** Whether the tab is the one shown in the focused pane of the workspace on screen. */
 const useFocusedTab = (tabId: string): boolean =>
   useStore(layoutStore, (state) => {
-    const layout = state.layouts[state.active]
-    return Boolean(layout && findPane(layout.root, layout.focusedPane)?.active === tabId)
+    const layout = activeLayout(state)
+    return findPane(layout.root, layout.focused_pane)?.active === tabId
   })
 
 function TerminalView({

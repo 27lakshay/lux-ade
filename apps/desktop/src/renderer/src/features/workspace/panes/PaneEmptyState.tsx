@@ -2,6 +2,7 @@ import { Row } from '@/components/Row'
 import { Shortcut } from '@/components/Shortcut'
 import { Caption, Text } from '@/components/Typography'
 import { Icon } from '@/icons/Icon'
+import { nanoid } from 'nanoid'
 import { openTab } from '../model/layout-store'
 import { newTerminal } from '../terminals/terminal-tabs'
 import { TAB_ICON } from './Tab'
@@ -18,7 +19,7 @@ export function PaneEmptyState({ paneId }: { paneId: string }) {
         <Row
           leading={<Icon name={TAB_ICON.conversation} tone="muted" />}
           trailing={<Shortcut appCommand="new-conversation" />}
-          onClick={() => openTab({ kind: 'conversation', title: 'New conversation' }, paneId)}
+          onClick={() => void openTab({ kind: 'new_conversation' }, paneId)}
         >
           New conversation
         </Row>
@@ -27,7 +28,8 @@ export function PaneEmptyState({ paneId }: { paneId: string }) {
         </Row>
         <Row
           leading={<Icon name={TAB_ICON.browser} tone="muted" />}
-          onClick={() => openTab({ kind: 'browser', title: 'Browser' }, paneId)}
+          // Browser tabs have no daemon records yet (ticket 09): the tab names a page to come.
+          onClick={() => void openTab({ kind: 'browser', id: `browser-${nanoid(8)}` }, paneId)}
         >
           Open browser
         </Row>

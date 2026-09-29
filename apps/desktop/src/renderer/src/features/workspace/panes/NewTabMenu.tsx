@@ -29,7 +29,7 @@ export function NewTabMenu({ paneId }: { paneId: string }) {
         </TooltipContent>
       </Tooltip>
       <DropdownMenuContent align="start" className="w-56">
-        <DropdownMenuItem onClick={() => openTab({ kind: 'conversation', title: 'New conversation' }, paneId)}>
+        <DropdownMenuItem onClick={() => void openTab({ kind: 'new_conversation' }, paneId)}>
           <Icon name={TAB_ICON.conversation} />
           New conversation
           <DropdownMenuShortcut>

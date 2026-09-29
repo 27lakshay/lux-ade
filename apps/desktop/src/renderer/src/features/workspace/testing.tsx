@@ -4,34 +4,68 @@ import { StrictMode } from 'react'
 import { render } from 'vitest-browser-react'
 import { Toaster } from '@/components/ui/toast'
 import { TooltipProvider } from '@/components/ui/tooltip'
-import type { ClientState } from '@ade/client'
+import type { ClientState, Terminal } from '@ade/client'
 import { createAppRouter } from '../../app/router'
 import { createDaemonStore } from '../../state/daemon-store'
-import { clientState, createFakeHost } from '../../state/fake-host'
+import { clientState, createFakeHost, nextFrame } from '../../state/fake-host'
 import { DaemonStoreContext } from '../../state/hooks'
 import { MotionProvider } from '../../app/MotionProvider'
 import { ConfirmHost } from '../../provisional/ConfirmDialog'
 import { NameHost } from '../../provisional/NameDialog'
 import '../../app/app.css'
+import { createFakeLayouts, type FakeLayouts } from '../../dev/layout-double/fake-layouts'
 import type { RenderContent } from './content/ContentHosts'
-import { defaultLayout } from './model/layout'
-import { DEFAULT_WORKSPACE, layoutStore, STORAGE_KEY } from './model/layout-store'
+import { tabContent } from './content/tab-content'
+import { defaultLayout, type Layout } from './model/layout'
+import { layoutNow, layoutStore, openTab } from './model/layout-store'
+import { startLayoutSync } from './model/layout-sync'
 import { Workspace } from './Workspace'
 
 // Renders the workspace at window size with the app's providers, for browser tests. StrictMode, as
-// in the app: it runs effects twice, which is where startup bugs hide.
+// in the app: it runs effects twice, which is where startup bugs hide. The window's layouts come
+// from a fake daemon (dev/layout-double), which applies actions as the daemon does.
 
-export function resetLayout(): void {
-  localStorage.removeItem(STORAGE_KEY)
+/** The workspace the fake daemon's window shows first. */
+export const WORKSPACE = 'ws-1'
+
+let layouts: FakeLayouts
+let stopSync: (() => void) | null = null
+
+/** Lets the fake daemon's replies and frames arrive. */
+export const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
+
+/** A fresh window on a fake daemon: `WORKSPACE` shown, with one empty pane `p1`. */
+export const resetLayout = (): Promise<void> => startWith({})
+
+/** A fresh window on a fake daemon whose window has these layouts too, by workspace. */
+export async function startWith(saved: Record<string, Layout>): Promise<void> {
+  stopSync?.()
   layoutStore.setState({
-    active: DEFAULT_WORKSPACE,
-    layouts: { [DEFAULT_WORKSPACE]: defaultLayout('p1') },
-    recent: [DEFAULT_WORKSPACE],
+    windowId: 'window-test',
+    window: null,
+    records: {},
+    pending: null,
     keepMounted: 3,
     keepTerminals: 1,
   })
+  layouts = createFakeLayouts({
+    workspaceId: WORKSPACE,
+    windowId: 'window-test',
+    layouts: { [WORKSPACE]: defaultLayout('p1'), ...saved },
+  })
+  stopSync = startLayoutSync(layouts.connection)
   document.documentElement.style.setProperty('--titlebar-height', '40px')
   document.documentElement.style.setProperty('--traffic-lights-inset', '80px')
+  await settle()
+}
+
+/** The fake daemon behind the window. */
+export const daemonLayouts = (): FakeLayouts => layouts
+
+/** The layout on screen, once what was sent has arrived. */
+export async function shown(): Promise<Layout> {
+  await settle()
+  return layoutNow()
 }
 
 /**
@@ -40,13 +74,73 @@ export function resetLayout(): void {
  */
 let daemon = createFakeHost()
 
+type Catalog = NonNullable<ClientState['catalog']>
+let catalog: Catalog = { workspaces: [], conversations: [], terminals: [] }
+let sequence = 0
+
 /** Shows these workspaces and conversations in the navigator, as a connected daemon's catalog. */
-export function setCatalog(catalog: NonNullable<ClientState['catalog']>): void {
-  daemon.pushClientState(clientState({ sequence: Date.now(), catalog }))
+export function setCatalog(next: Catalog): void {
+  catalog = { terminals: [], ...next }
+  daemon.pushClientState(clientState({ sequence: ++sequence, catalog }))
 }
 
-export function renderWorkspace(renderContent?: RenderContent) {
+/** A terminal record as the catalog lists it. */
+export const terminalRecord = (id: string, title: string, fields: Partial<Terminal> = {}): Terminal => ({
+  id,
+  workspace_id: WORKSPACE,
+  kind: 'shell',
+  title,
+  status: 'running',
+  exit_code: null,
+  busy: false,
+  foreground: null,
+  primary: false,
+  service_id: null,
+  script_run_id: null,
+  conversation_id: null,
+  ...fields,
+})
+
+/**
+ * Opens a tab on a new conversation or terminal record titled `title` (added to the catalog), in
+ * `paneId` or the focused pane. Returns the tab's ID.
+ */
+export async function openTitled(kind: 'conversation' | 'terminal', title: string, paneId?: string): Promise<string> {
+  const id = `${kind}-${++sequence}`
+  if (kind === 'terminal')
+    catalog = { ...catalog, terminals: [...(catalog.terminals ?? []), terminalRecord(id, title)] }
+  else
+    catalog = {
+      ...catalog,
+      conversations: [
+        ...catalog.conversations,
+        { id, workspace_id: WORKSPACE, title, provider: 'fake', status: 'idle' },
+      ],
+    }
+  daemon.pushClientState(clientState({ sequence, catalog }))
+  // The catalog reaches the store on the next frame; the tab is titled from it.
+  await nextFrame()
+  await openTab({ kind, id }, paneId)
+  await settle()
+  return `tab-${id}`
+}
+
+/** A tab's title, as the tab strip shows it: its record's title in the catalog. */
+export function titleOf(tabId: string | null | undefined): string | null {
+  const target = tabId ? layoutNow().tabs[tabId]?.target : undefined
+  if (!target) return null
+  if (target.kind === 'terminal') return catalog.terminals?.find((item) => item.id === target.id)?.title ?? null
+  if (target.kind === 'conversation') return catalog.conversations.find((item) => item.id === target.id)?.title ?? null
+  return target.kind
+}
+
+/** Tabs draw their real content only where the test gave the window a terminal stream. */
+const testContent: RenderContent = (tab, workspaceId) =>
+  window.adeHost?.terminal ? tabContent(tab, workspaceId) : null
+
+export function renderWorkspace(renderContent: RenderContent = testContent) {
   daemon = createFakeHost()
+  catalog = { workspaces: [], conversations: [], terminals: [] }
   const { store } = createDaemonStore(daemon.host)
   const Screen = () => <Workspace renderContent={renderContent} />
   const router = createAppRouter({ Workspace: Screen, history: createMemoryHistory({ initialEntries: ['/'] }) })

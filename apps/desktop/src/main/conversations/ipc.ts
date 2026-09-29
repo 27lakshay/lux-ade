@@ -29,7 +29,7 @@ import { activeReviewContext, assertReviewContext, reviewBatchPrompt, reviewProm
 import type { DraftState, SendPending } from '../../shared/bridge/conversations'
 import { conversationOperations, isAllowedOperation } from '../../shared/bridge/operations'
 import { validId } from '../validation'
-import { selectedWorkspaces } from '../workspaces'
+import { selectedWorkspace } from '../windows'
 import {
   beginSend,
   daemon,
@@ -282,7 +282,7 @@ export function registerConversationIpc(): void {
           }
           const review = reviewSelections.get(entry.send)
           if (review) {
-            const selection = selectedWorkspaces.get(event.sender.id)
+            const selection = selectedWorkspace(event.sender.id)
             if (
               !selection ||
               selection.workspaceId !== review.workspaceId ||

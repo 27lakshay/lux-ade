@@ -1,4 +1,4 @@
-import type { CatalogProject, ClientState, Conversation, Terminal, Workspace } from '@ade/client'
+import type { CatalogProject, ClientState, Conversation, Terminal, Window, Workspace } from '@ade/client'
 import { createStore, type StoreApi } from 'zustand/vanilla'
 import type { AdeHost } from '../../../shared/bridge'
 import { latestPerFrame } from './frame-batch'
@@ -20,6 +20,8 @@ export interface DaemonState {
   terminals: Record<string, Terminal>
   /** Every project (a repository or a folder) by ID, as workspaces name it in `project_id`. */
   projects: Record<string, CatalogProject>
+  /** Every window of the profile by ID, with the revision of each of its layouts. */
+  windows: Record<string, Window>
 }
 
 export type DaemonStore = StoreApi<DaemonState>
@@ -35,6 +37,7 @@ const initialState: DaemonState = {
   conversations: {},
   terminals: {},
   projects: {},
+  windows: {},
 }
 
 function sameRecord(previous: unknown, next: unknown): boolean {
@@ -62,6 +65,7 @@ function reduceClientState(state: DaemonState, client: ClientState): DaemonState
   const conversations = normalize(client.catalog?.conversations ?? [], state.conversationIds, state.conversations)
   const terminals = normalize(client.catalog?.terminals ?? [], [], state.terminals)
   const projects = normalize(client.catalog?.projects ?? [], [], state.projects)
+  const windows = normalize(client.catalog?.windows ?? [], [], state.windows)
   return {
     status: client.status,
     detail: client.detail,
@@ -73,6 +77,7 @@ function reduceClientState(state: DaemonState, client: ClientState): DaemonState
     conversations: conversations.byId,
     terminals: terminals.byId,
     projects: projects.byId,
+    windows: windows.byId,
   }
 }
 

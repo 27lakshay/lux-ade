@@ -1,11 +1,19 @@
 import { benchTerminalBridge } from '@ade/terminal/bench'
 import type { TerminalBridge } from '@ade/terminal'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import { dispatch, layoutStore, openTabIn, setActiveWorkspace } from '../model/layout-store'
+import { dispatch, layoutNow, layoutStore, openTab } from '../model/layout-store'
 import { handleLayoutCommand } from '../model/layout-commands'
 import { panes } from '../model/layout-tree'
-import { renderWorkspace, resetLayout, setCatalog } from '../testing'
-import type { TerminalCloseOutcome } from '../../../../../shared/bridge/terminals'
+import {
+  daemonLayouts,
+  renderWorkspace,
+  resetLayout,
+  setCatalog,
+  settle,
+  terminalRecord,
+  titleOf,
+  WORKSPACE,
+} from '../testing'
 import { closePane, closeTab, newTerminal } from './terminal-tabs'
 
 beforeEach(resetLayout)
@@ -13,11 +21,20 @@ afterEach(() => {
   window.adeHost = undefined as unknown as typeof window.adeHost
 })
 
-/** A host whose terminal commands are spies, and whose terminal stream is `bridge`. */
+let created = 0
+
+/**
+ * A host whose terminal commands are spies and whose stream is `bridge`. Creating a terminal opens
+ * its tab in the fake daemon's layout, as `terminal.create` with `place` does.
+ */
 const hostSpy = (overrides: Partial<Window['adeHost']['terminals']> = {}, bridge?: TerminalBridge) => {
   const terminals = {
-    create: vi.fn(async () => 't1'),
-    close: vi.fn(async (): Promise<TerminalCloseOutcome> => ({ closed: true })),
+    create: vi.fn(async (_workspaceId: string, paneId?: string) => {
+      const id = `t${++created}`
+      daemonLayouts().shells.set(id, { foreground: null })
+      daemonLayouts().placeTerminal(id, paneId)
+      return id
+    }),
     restart: vi.fn(async () => {}),
     ...overrides,
   }
@@ -25,104 +42,97 @@ const hostSpy = (overrides: Partial<Window['adeHost']['terminals']> = {}, bridge
     terminals,
     terminal: bridge ?? benchTerminalBridge({ scrollback: 20, linesPerSecond: 0 }),
     setWindowMinimumSize: vi.fn(),
-    workspaces: { select: vi.fn(async () => true) },
   } as unknown as typeof window.adeHost
   return terminals
 }
-const tabsOf = (workspace: string) => Object.values(layoutStore.getState().layouts[workspace]?.tabs ?? {})
+const tabs = () => Object.values(layoutNow().tabs)
+/** A shell the fake daemon knows, with its tab open. */
+async function shellTab(id: string, foreground: string | null = null): Promise<string> {
+  daemonLayouts().shells.set(id, { foreground })
+  await openTab({ kind: 'terminal', id })
+  return `tab-${id}`
+}
 
-test('a new terminal starts in the daemon, then opens on its ID where it runs', async () => {
-  let started: (id: string) => void = () => {}
-  const host = hostSpy({ create: vi.fn(() => new Promise<string>((resolve) => (started = resolve))) })
-  setActiveWorkspace('w1')
-  const opening = newTerminal()
-  // The window moves on before the daemon answers: the tab still joins w1.
-  setActiveWorkspace('w2')
-  started('t1')
-  await opening
-  expect(host.create).toHaveBeenCalledWith('w1')
-  expect(tabsOf('w1')).toEqual([expect.objectContaining({ kind: 'terminal', target: { kind: 'terminal', id: 't1' } })])
-  expect(tabsOf('w2')).toEqual([])
+test('a new terminal is one daemon command that starts the shell and places its tab', async () => {
+  const host = hostSpy()
+  await newTerminal('p1')
+  await settle()
+  expect(host.create).toHaveBeenCalledWith(WORKSPACE, 'p1')
+  expect(tabs()).toEqual([{ id: 'tab-t1', target: { kind: 'terminal', id: 't1' } }])
+  expect(daemonLayouts().calls).not.toContain('layout.apply')
 })
 
 test('with no workspace yet, a new terminal says so and starts nothing', async () => {
   const host = hostSpy()
   const screen = await renderWorkspace()
+  // The daemon has not named the window's workspace yet.
+  layoutStore.setState({ window: null })
   await newTerminal()
   expect(host.create).not.toHaveBeenCalled()
   await expect.element(screen.getByText('No workspace to start a terminal in')).toBeVisible()
 })
 
-test('closing a terminal tab stops the terminal first; a refusal keeps the tab', async () => {
-  const host = hostSpy({
-    close: vi.fn().mockRejectedValueOnce(new Error('Daemon is unavailable')).mockResolvedValue({ closed: true }),
-  })
+test('closing a shell tab is tab.close: the daemon stops the shell, and a failure keeps the tab', async () => {
+  hostSpy()
   const screen = await renderWorkspace()
-  setActiveWorkspace('w1')
-  openTabIn('w1', { kind: 'terminal', title: 'Terminal', target: { kind: 'terminal', id: 't1' } })
-  const tabId = tabsOf('w1')[0]!.id
+  const tabId = await shellTab('t1')
+  const bridge = daemonLayouts().connection.bridge
+  const real = bridge.closeTab.bind(bridge)
+  bridge.closeTab = vi.fn().mockRejectedValueOnce(new Error('Daemon is unavailable')).mockImplementation(real)
   await closeTab(tabId)
-  expect(host.close).toHaveBeenCalledWith('t1')
-  expect(tabsOf('w1')).toHaveLength(1)
+  expect(tabs()).toHaveLength(1)
   await expect.element(screen.getByText('Daemon is unavailable')).toBeVisible()
   await closeTab(tabId)
-  expect(tabsOf('w1')).toHaveLength(0)
+  expect(tabs()).toHaveLength(0)
+  expect(daemonLayouts().shells.has('t1')).toBe(false)
 })
 
-test('closing a busy terminal asks first, and forces only once confirmed', async () => {
-  const close = vi.fn(async (_id: string, force?: boolean): Promise<TerminalCloseOutcome> =>
-    force ? { closed: true } : { closed: false, running: 'sleep' },
-  )
-  hostSpy({ close })
+test('closing a busy terminal asks first, naming the command, and forces only once confirmed', async () => {
+  hostSpy()
   const screen = await renderWorkspace()
-  setActiveWorkspace('w1')
-  openTabIn('w1', { kind: 'terminal', title: 'Terminal', target: { kind: 'terminal', id: 't1' } })
-  const tabId = tabsOf('w1')[0]!.id
-
+  const tabId = await shellTab('t1', 'sleep')
   const cancelled = closeTab(tabId)
   const dialog = screen.getByRole('alertdialog')
   await expect.element(dialog.getByText('Stop “sleep”?')).toBeVisible()
   await dialog.getByRole('button', { name: 'Cancel' }).click()
   await cancelled
-  expect(close).toHaveBeenCalledTimes(1)
-  expect(tabsOf('w1')).toHaveLength(1)
+  expect(tabs()).toHaveLength(1)
+  expect(daemonLayouts().shells.has('t1')).toBe(true)
 
   const confirmed = closeTab(tabId)
   await screen.getByRole('alertdialog').getByRole('button', { name: 'Close terminal' }).click()
   await confirmed
-  expect(close).toHaveBeenLastCalledWith('t1', true)
-  expect(tabsOf('w1')).toHaveLength(0)
+  expect(tabs()).toHaveLength(0)
+  // Asked, cancelled; asked again, then forced.
+  expect(daemonLayouts().calls.filter((call) => call === 'tab.close')).toHaveLength(3)
 })
 
-test('closing a pane stops its terminals; one that will not stop keeps its tab', async () => {
-  const close = vi.fn(async (id: string): Promise<TerminalCloseOutcome> => {
-    if (id === 't2') throw new Error('Still running')
-    return { closed: true }
-  })
-  hostSpy({ close })
-  setActiveWorkspace('w1')
-  openTabIn('w1', { kind: 'conversation', title: 'Chat' })
-  openTabIn('w1', { kind: 'terminal', title: 'One', target: { kind: 'terminal', id: 't1' } })
-  openTabIn('w1', { kind: 'terminal', title: 'Two', target: { kind: 'terminal', id: 't2' } })
-  const pane = panes(layoutStore.getState().layouts.w1!.root)[0]!
-  await closePane(pane.id)
-  expect(close.mock.calls.map(([id]) => id).sort()).toEqual(['t1', 't2'])
-  expect(tabsOf('w1').map((tab) => tab.title)).toEqual(['Two'])
+test('closing a pane is pane.close: its tabs go, a busy shell asks first', async () => {
+  hostSpy()
+  const screen = await renderWorkspace()
+  await openTab({ kind: 'new_conversation' })
+  await shellTab('t1')
+  await shellTab('t2', 'npm test')
+  const pane = panes(layoutNow().root)[0]!
+  const closing = closePane(pane.id)
+  await expect.element(screen.getByRole('alertdialog').getByText('Stop “npm test”?')).toBeVisible()
+  await screen.getByRole('alertdialog').getByRole('button', { name: 'Close pane' }).click()
+  await closing
+  expect(tabs()).toEqual([])
+  expect([...daemonLayouts().shells.keys()]).toEqual([])
 })
 
 test('a terminal tab draws the terminal it names, and takes the keyboard when shown', async () => {
   hostSpy()
   await renderWorkspace()
-  setActiveWorkspace('w1')
-  openTabIn('w1', { kind: 'terminal', title: 'Terminal', target: { kind: 'terminal', id: 't1' } })
+  await shellTab('t1')
   await expect.poll(() => document.querySelector('[data-terminal="t1"] canvas')).toBeTruthy()
   const input = () => document.querySelector('[data-terminal="t1"] textarea')
   await expect.poll(() => document.activeElement === input()).toBe(true)
   // Another tab takes the pane, then the terminal is chosen again: it has the keyboard again.
-  openTabIn('w1', { kind: 'conversation', title: 'Chat' })
+  await openTab({ kind: 'new_conversation' })
   await expect.poll(() => document.activeElement === input()).toBe(false)
-  const terminalTab = tabsOf('w1').find((tab) => tab.kind === 'terminal')!
-  dispatch({ type: 'activateTab', tabId: terminalTab.id })
+  await dispatch({ type: 'activate_tab', tab_id: 'tab-t1' })
   await expect.poll(() => document.activeElement === input()).toBe(true)
 })
 
@@ -132,68 +142,51 @@ test('a stream that will not attach is retried, then the terminal says why and o
   })
   const host = hostSpy({}, { attach })
   const screen = await renderWorkspace()
-  setActiveWorkspace('w1')
-  openTabIn('w1', { kind: 'terminal', title: 'Terminal', target: { kind: 'terminal', id: 't1' } })
+  await shellTab('t1')
   await expect
     .element(screen.getByText('The selected terminal is unavailable in this profile'), { timeout: 8000 })
     .toBeVisible()
   // The first attach and three retries.
   expect(attach).toHaveBeenCalledTimes(4)
   await screen.getByRole('button', { name: 'Restart shell' }).click()
-  expect(host.restart).toHaveBeenCalledWith('w1', 't1')
+  expect(host.restart).toHaveBeenCalledWith(WORKSPACE, 't1')
   await expect.poll(() => attach.mock.calls.length).toBe(5)
 }, 15_000)
 
 test('New terminal is a menu command and a choice under the tab strip’s +', async () => {
   const host = hostSpy()
   const screen = await renderWorkspace()
-  setActiveWorkspace('w1')
   expect(handleLayoutCommand('new-terminal')).toBe(true)
-  await expect.poll(() => tabsOf('w1').length).toBe(1)
+  await expect.poll(() => tabs().length).toBe(1)
   await screen.getByRole('button', { name: 'New tab' }).first().click()
   await screen.getByRole('menuitem', { name: /New terminal/ }).click()
-  await expect.poll(() => tabsOf('w1').length).toBe(2)
+  await expect.poll(() => tabs().length).toBe(2)
   expect(host.create).toHaveBeenCalledTimes(2)
-  expect(host.create).toHaveBeenCalledWith('w1')
+  expect(host.create).toHaveBeenLastCalledWith(WORKSPACE, 'p1')
 })
 
 test('a terminal tab is titled by its terminal: the shell, or the command running in it', async () => {
   hostSpy()
   const screen = await renderWorkspace()
-  setActiveWorkspace('w1')
-  openTabIn('w1', { kind: 'terminal', title: 'Terminal', target: { kind: 'terminal', id: 't1' } })
-  const terminal = {
-    id: 't1',
-    workspace_id: 'w1',
-    kind: 'shell',
-    status: 'running',
-    exit_code: null,
-    busy: false,
-    foreground: null,
-    primary: false,
-    service_id: null,
-    script_run_id: null,
-    conversation_id: null,
-  } as const
-  setCatalog({ workspaces: [], conversations: [], terminals: [{ ...terminal, title: 'zsh' }] })
+  await shellTab('t1')
+  setCatalog({ workspaces: [], conversations: [], terminals: [terminalRecord('t1', 'zsh')] })
   await expect.element(screen.getByRole('tab', { name: /zsh/ })).toBeVisible()
-  setCatalog({ workspaces: [], conversations: [], terminals: [{ ...terminal, title: 'sleep 60', busy: true }] })
+  expect(titleOf('tab-t1')).toBe('zsh')
+  setCatalog({ workspaces: [], conversations: [], terminals: [terminalRecord('t1', 'sleep 60', { busy: true })] })
   await expect.element(screen.getByRole('tab', { name: /sleep 60/ })).toBeVisible()
 })
 
 test('a hidden terminal frees its canvas, and draws again when shown', async () => {
   hostSpy()
   await renderWorkspace()
-  setActiveWorkspace('w1')
-  openTabIn('w1', { kind: 'terminal', title: 'Terminal', target: { kind: 'terminal', id: 't1' } })
+  await shellTab('t1')
   await expect.poll(() => document.querySelector('[data-terminal="t1"] canvas')).toBeTruthy()
   // Held directly: a hidden tab's element is out of the page.
   const canvas = document.querySelector<HTMLCanvasElement>('[data-terminal="t1"] canvas')!
   await expect.poll(() => canvas.width).toBeGreaterThan(0)
-  openTabIn('w1', { kind: 'conversation', title: 'Chat' })
+  await openTab({ kind: 'new_conversation' })
   await expect.poll(() => canvas.isConnected).toBe(false)
   await expect.poll(() => canvas.width).toBe(0)
-  const terminalTab = tabsOf('w1').find((tab) => tab.kind === 'terminal')!
-  dispatch({ type: 'activateTab', tabId: terminalTab.id })
+  await dispatch({ type: 'activate_tab', tab_id: 'tab-t1' })
   await expect.poll(() => canvas.width).toBeGreaterThan(0)
 })

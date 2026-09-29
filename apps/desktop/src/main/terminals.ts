@@ -1,13 +1,12 @@
 import { randomUUID } from 'node:crypto'
-import { DaemonRequestError, dailyUseCommand } from '@ade/client'
-import type { TerminalCloseOutcome } from '../shared/bridge/terminals'
+import { dailyUseCommand } from '@ade/client'
 import { handle } from './ipc'
 import { getClient, getSocket, isSwitching } from './profile-connection'
 import { validId } from './validation'
+import { recordOf } from './windows'
 
-// The renderer's terminal commands: create, close and restart a workspace's terminals. Each is one
-// daemon effect command under a fresh operation ID. The daemon decides whether a terminal is busy;
-// a busy refusal comes back as the running command, so the window can ask before forcing.
+// The renderer's terminal commands: create and restart a workspace's terminals. Each is one daemon
+// effect command under a fresh operation ID. A shell closes with its last tab (layouts.ts).
 
 function endpoint(): string {
   const socket = getSocket()
@@ -28,39 +27,17 @@ function owner(workspaceId: unknown, terminalId: unknown) {
 }
 
 export function registerTerminalIpc(): void {
-  handle('ade:terminal-create', async (_event, workspaceId: unknown) => {
-    if (!validId(workspaceId)) throw new Error('Invalid workspace')
+  handle('ade:terminal-create', async (event, workspaceId: unknown, paneId: unknown) => {
+    if (!validId(workspaceId) || (paneId !== undefined && !validId(paneId)))
+      throw new Error('Invalid workspace or pane')
     const created = await dailyUseCommand(endpoint(), {
       op: 'terminal.create',
       workspace_id: workspaceId,
       operation_id: randomUUID(),
+      // Its tab opens in this window in the same step.
+      place: { window_id: recordOf(event.sender.id), ...(paneId !== undefined ? { pane_id: paneId } : {}) },
     })
     return created.terminal_id
-  })
-
-  handle('ade:terminal-close', async (_event, terminalId: unknown, force: unknown): Promise<TerminalCloseOutcome> => {
-    if (!validId(terminalId)) throw new Error('Invalid terminal')
-    const terminal = getClient()
-      .getState()
-      .catalog?.terminals?.find((item) => item.id === terminalId)
-    // Already gone, or a service's, script's or Conversation's terminal: those have their own
-    // controls, and closing their tab only takes it out of the layout.
-    if (!terminal || terminal.kind !== 'shell') return { closed: true }
-    try {
-      await dailyUseCommand(endpoint(), {
-        op: 'terminal.close',
-        operation_id: randomUUID(),
-        terminal_id: terminalId,
-        ...(force === true ? { force: true } : {}),
-      })
-      return { closed: true }
-    } catch (error) {
-      if (error instanceof DaemonRequestError && error.code === 'terminal_busy') {
-        const running = error.details.foreground
-        return { closed: false, running: typeof running === 'string' ? running : null }
-      }
-      throw error
-    }
   })
 
   handle('ade:terminal-restart', async (_event, workspaceId: unknown, terminalId: unknown) => {

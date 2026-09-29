@@ -1,25 +1,23 @@
 import type { AppCommand } from '../../../../../shared/app-commands'
 import { commandService } from '../../../app/commands'
-import type { Edge } from './layout'
-import type { LayoutAction } from './layout.logic'
+import type { Edge, LayoutAction } from './layout'
 import { findPane, neighbourPane } from './layout-tree'
 import { toggleSidebar } from '../cards/fit'
 import { growFocusedPane } from '../panes/grow'
 import { hasRoomFor, noRoom, trySplit } from '../panes/room'
 import { closePane, closeTab, newTerminal } from '../terminals/terminal-tabs'
-import { dispatch, layoutStore, openTab } from './layout-store'
+import { dispatch, layoutNow, openTab, swapSidebars, toggleMaximize } from './layout-store'
 
 // The workspace's commands: from the native menu (app commands) and in the palette. Every mouse
 // action on the layout has one.
 
 const focused = () => {
-  const { layouts, active } = layoutStore.getState()
-  const layout = layouts[active]!
-  return { layout, pane: findPane(layout.root, layout.focusedPane) }
+  const layout = layoutNow()
+  return { layout, pane: findPane(layout.root, layout.focused_pane) }
 }
 
 /** Applies a change to the panes when they still fit afterwards (panes/room.ts). */
-const whenRoom = (action: LayoutAction): void => (hasRoomFor(action) ? dispatch(action) : noRoom())
+const whenRoom = (action: LayoutAction): void => (hasRoomFor(action) ? void dispatch(action) : noRoom())
 
 /** Handles a native-menu command that acts on the layout; returns whether it did. */
 export function handleLayoutCommand(command: AppCommand): boolean {
@@ -37,7 +35,7 @@ export function handleLayoutCommand(command: AppCommand): boolean {
     }
     case 'new-tab':
     case 'new-conversation':
-      openTab({ kind: 'conversation', title: 'New conversation' })
+      void openTab({ kind: 'new_conversation' })
       return true
     case 'new-terminal':
       void newTerminal(focused().pane?.id)
@@ -63,7 +61,7 @@ export function registerLayoutCommands(): void {
     category: 'Terminal',
     run: () => void newTerminal(focused().pane?.id),
   })
-  add('layout.swapSidebars', 'Swap sidebars', () => dispatch({ type: 'swapSidebars' }))
+  add('layout.swapSidebars', 'Swap sidebars', () => void swapSidebars())
   add('layout.toggleLeft', 'Toggle left sidebar', () => toggleSidebar('left'))
   add('layout.toggleRight', 'Toggle right sidebar', () => toggleSidebar('right'))
   add('layout.splitRight', 'Split pane right', () => {
@@ -74,11 +72,11 @@ export function registerLayoutCommands(): void {
     const { pane } = focused()
     if (pane) trySplit(pane.id, 'column')
   })
-  add('layout.resetLayout', 'Reset layout', () => dispatch({ type: 'resetLayout' }))
-  add('layout.equalizePanes', 'Equalize panes', () => dispatch({ type: 'equalizeSplits' }))
+  add('layout.resetLayout', 'Reset layout', () => void dispatch({ type: 'reset_layout' }))
+  add('layout.equalizePanes', 'Equalize panes', () => void dispatch({ type: 'equalize_splits', split_id: null }))
   add('layout.toggleMaximize', 'Maximize or restore pane', () => {
     const { pane } = focused()
-    if (pane) dispatch({ type: 'toggleMaximize', paneId: pane.id })
+    if (pane) void toggleMaximize(pane.id)
   })
   commandService.registerKeybinding({ key: '$mod+Shift+Enter', command: 'layout.toggleMaximize' })
   add('layout.closePane', 'Close pane', () => {
@@ -107,11 +105,11 @@ function registerPaneDirectionCommands(): void {
     }
     add(`layout.focus${name}`, `Focus pane ${name.toLowerCase()}`, `$mod+Alt+${arrow}`, () => {
       const found = neighbour(edge)
-      if (found?.target) dispatch({ type: 'focusPane', paneId: found.target.id })
+      if (found?.target) void dispatch({ type: 'focus_pane', pane_id: found.target.id })
     })
     add(`layout.swap${name}`, `Swap pane ${name.toLowerCase()}`, `$mod+Alt+Shift+${arrow}`, () => {
       const found = neighbour(edge)
-      if (found?.target) whenRoom({ type: 'swapPanes', paneId: found.pane.id, targetId: found.target.id })
+      if (found?.target) whenRoom({ type: 'swap_panes', pane_id: found.pane.id, target_id: found.target.id })
     })
     add(`layout.grow${name}`, `Grow pane ${name.toLowerCase()}`, `$mod+Control+${arrow}`, () =>
       growFocusedPane(edge, false),
@@ -122,7 +120,12 @@ function registerPaneDirectionCommands(): void {
     add(`layout.moveTab${name}`, `Move tab to pane ${name.toLowerCase()}`, null, () => {
       const found = neighbour(edge)
       if (found?.target && found.pane.active)
-        whenRoom({ type: 'moveTab', tabId: found.pane.active, paneId: found.target.id, index: Number.MAX_SAFE_INTEGER })
+        whenRoom({
+          type: 'move_tab',
+          tab_id: found.pane.active,
+          pane_id: found.target.id,
+          index: Number.MAX_SAFE_INTEGER,
+        })
     })
   }
 }

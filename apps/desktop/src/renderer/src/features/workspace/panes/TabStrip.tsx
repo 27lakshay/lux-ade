@@ -7,9 +7,9 @@ import { useShallow } from 'zustand/react/shallow'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { SPRING_LOAD_MS, transitions } from '../../../app/motion'
 import type { PaneNode } from '../model/layout'
-import { dispatch, useLayout } from '../model/layout-store'
+import { dispatch, layoutNow, useLayout } from '../model/layout-store'
 import { findPane } from '../model/layout-tree'
-import { activeLayout, isDragData, type TargetData } from './drag'
+import { isDragData, type TargetData } from './drag'
 import { hasRoomFor } from './room'
 import { Tab } from './Tab'
 
@@ -106,7 +106,7 @@ export function TabStrip({
       setSpringing(id)
       if (id)
         springTimer = setTimeout(() => {
-          dispatch({ type: 'activateTab', tabId: id })
+          void dispatch({ type: 'activate_tab', tab_id: id })
           springTab = null
           setSpringing(null)
         }, SPRING_LOAD_MS)
@@ -124,7 +124,7 @@ export function TabStrip({
       const { index, over } = hitTab(measured, x)
       const from = source.paneId === pane.id ? measured.findIndex((tab) => tab.id === source.tabId) : -1
       if (from === -1) {
-        fits ??= hasRoomFor({ type: 'moveTab', tabId: source.tabId, paneId: pane.id, index })
+        fits ??= hasRoomFor({ type: 'move_tab', tab_id: source.tabId, pane_id: pane.id, index })
         if (!fits) return { index: null, over }
       }
       const stays = from !== -1 && (index === from || index === from + 1)
@@ -158,8 +158,7 @@ export function TabStrip({
                 ? previous
                 : { index: gap, width },
           )
-          const layout = activeLayout()
-          const active = layout ? findPane(layout.root, pane.id)?.active : null
+          const active = findPane(layoutNow().root, pane.id)?.active
           spring(over && over !== active ? over : null)
         },
         onDragLeave: reset,
@@ -211,7 +210,7 @@ export function TabStrip({
             const next = tabAfterKey(pane, event.key)
             if (!next) return
             event.preventDefault()
-            dispatch({ type: 'activateTab', tabId: next })
+            void dispatch({ type: 'activate_tab', tab_id: next })
             // The tab is focusable once it is the active one, after this render.
             requestAnimationFrame(() => strip.current?.querySelector<HTMLElement>(`[data-tab-id="${next}"]`)?.focus())
           }}

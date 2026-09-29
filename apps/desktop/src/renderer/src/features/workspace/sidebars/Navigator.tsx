@@ -39,7 +39,7 @@ export function Navigator() {
       <Row
         leading={<Icon name="newConversation" tone="muted" />}
         trailing={<Shortcut appCommand="new-conversation" />}
-        onClick={() => openTab({ kind: 'conversation', title: 'New conversation' })}
+        onClick={() => void openTab({ kind: 'new_conversation' })}
       >
         New conversation
       </Row>

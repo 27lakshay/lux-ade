@@ -39,13 +39,17 @@ export function serveAppScheme(session: Session): void {
   })
 }
 
-/** Where the app window loads its UI from. */
-/** The app page for the window of this name (see src/renderer/src/app/window-name.ts). */
-export function windowUrl(name: string): string {
+/**
+ * The app page for a daemon window record (`?window=<record ID>`, read by
+ * src/renderer/src/app/window-id.ts); without one until the daemon gives the window a record.
+ */
+export function windowUrl(record: string | null): string {
   const url = new URL(appUrl())
-  url.searchParams.set('window', name)
+  if (record) url.searchParams.set('window', record)
   return url.toString()
 }
+
+/** Where the app window loads its UI from. */
 
 export function appUrl(): string {
   if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) return process.env.ELECTRON_RENDERER_URL

@@ -9,18 +9,9 @@ import { Card } from '../cards/Card'
 import { Grip } from '../cards/Grip'
 import { attachHost } from '../content/hosts'
 import type { DropZone, PaneNode } from '../model/layout'
-import { dispatch, useLayout } from '../model/layout-store'
+import { dispatch, layoutNow, toggleMaximize, useLayout } from '../model/layout-store'
 import { findPane } from '../model/layout-tree'
-import {
-  activeLayout,
-  dropChanges,
-  dropFits,
-  isDragData,
-  showDragPreview,
-  zoneAt,
-  type DragData,
-  type TargetData,
-} from './drag'
+import { dropChanges, dropFits, isDragData, showDragPreview, zoneAt, type DragData, type TargetData } from './drag'
 import { DragChip } from './DragChip'
 import { NewTabMenu } from './NewTabMenu'
 import { PaneEmptyState } from './PaneEmptyState'
@@ -46,8 +37,7 @@ const zoneLabel = (source: DragData | null, zone: DropZone, fits: boolean): stri
   !fits ? 'No room' : source?.kind === 'pane' && zone === 'centre' ? 'Swap' : null
 
 const tabCountLabel = (paneId: string): string => {
-  const layout = activeLayout()
-  const count = layout ? (findPane(layout.root, paneId)?.tabs.length ?? 0) : 0
+  const count = findPane(layoutNow().root, paneId)?.tabs.length ?? 0
   return count === 1 ? 'Pane · 1 tab' : `Pane · ${count} tabs`
 }
 
@@ -106,7 +96,7 @@ function usePaneDrag(paneId: string) {
 }
 
 export function Pane({ pane }: { pane: PaneNode }) {
-  const focused = useLayout((layout) => layout.focusedPane === pane.id)
+  const focused = useLayout((layout) => layout.focused_pane === pane.id)
   const { card, grip, body, over, dragging } = usePaneDrag(pane.id)
   const bar = useRef<HTMLDivElement>(null)
   const host = useRef<HTMLDivElement>(null)
@@ -126,19 +116,13 @@ export function Pane({ pane }: { pane: PaneNode }) {
       paneId={pane.id}
       focused={focused}
       className={cn(dragging && 'opacity-50')}
-      grip={
-        <Grip
-          ref={grip}
-          label="Move pane"
-          onDoubleClick={() => dispatch({ type: 'toggleMaximize', paneId: pane.id })}
-        />
-      }
+      grip={<Grip ref={grip} label="Move pane" onDoubleClick={() => void toggleMaximize(pane.id)} />}
     >
       <div
         className="flex min-h-0 flex-1 flex-col"
         // A click or the keyboard arriving anywhere in the pane makes it the focused one.
-        onPointerDownCapture={() => !focused && dispatch({ type: 'focusPane', paneId: pane.id })}
-        onFocusCapture={() => !focused && dispatch({ type: 'focusPane', paneId: pane.id })}
+        onPointerDownCapture={() => !focused && void dispatch({ type: 'focus_pane', pane_id: pane.id })}
+        onFocusCapture={() => !focused && void dispatch({ type: 'focus_pane', pane_id: pane.id })}
       >
         <div ref={bar} data-tab-bar className="@container flex h-10 shrink-0 items-center gap-0.5 px-1.5">
           <TabStrip pane={pane} bar={bar}>

@@ -19,7 +19,7 @@ import { emit } from '../ipc'
 import { getClientGeneration, getSocket, journalProfileId } from '../profile-connection'
 import { reviewNote } from '../review'
 import { validId } from '../validation'
-import { selectedWorkspaces } from '../workspaces'
+import { selectedWorkspace } from '../windows'
 import type { PendingSendState, SendResult } from '../../shared/bridge/conversations'
 
 type Fields<O extends DailyUseOperation> = Omit<DailyUseRequest<O>, 'op'>
@@ -83,7 +83,7 @@ function session(entry: DraftEntry, intent: SendIntent): () => boolean {
     if (getSocket() !== entry.endpoint || getClientGeneration() !== generation) return false
     const review = reviewSelections.get(intent)
     if (!review) return true
-    const selection = selectedWorkspaces.get(review.senderId)
+    const selection = selectedWorkspace(review.senderId)
     return (
       selection?.workspaceId === review.workspaceId &&
       selection.conversationId === review.conversationId &&

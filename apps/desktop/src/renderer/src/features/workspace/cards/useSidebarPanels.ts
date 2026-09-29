@@ -1,8 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import { useGroupRef, type PanelImperativeHandle } from 'react-resizable-panels'
 import { DURATION } from '../../../app/motion'
-import { SIDEBAR_WIDTH, type Layout, type SidebarId } from '../model/layout'
-import { dispatch, layoutStore, useLayout } from '../model/layout-store'
+import { clampWidth, SIDEBAR_WIDTH, type SidebarId } from '../model/layout'
+import { dispatch, layoutNow, useLayout } from '../model/layout-store'
 import { minSize } from '../model/layout-tree'
 import { sidebarsThatFit, useSidebarFit } from './fit'
 
@@ -14,7 +14,6 @@ import { sidebarsThatFit, useSidebarFit } from './fit'
 // - Collapse and expand animate the panels' real sizes for a moment ([data-layout-animating]).
 
 const IDS = ['navigator', 'inspector'] as const
-const layoutNow = (): Layout | undefined => layoutStore.getState().layouts[layoutStore.getState().active]
 /** A sidebar panel's width on screen. The library's getSize() can lag a frame behind it. */
 const drawnWidth = (id: SidebarId): number => document.getElementById(id)?.getBoundingClientRect().width ?? 0
 
@@ -78,6 +77,12 @@ export function useSidebarPanels(
   // The width each sidebar panel was last given, by a drag or by the sync below. The panels' own
   // getSize() reads stale for a frame after a change, so it cannot be compared with the model.
   const applied = useRef({ ...widths })
+  /**
+   * The layout's widths when the panels last followed them. A width changes the panels only when
+   * the layout's changes: while a width dragged by hand is on its way to the daemon, the layout
+   * still has the old one, and the panel keeps what the hand left.
+   */
+  const followed = useRef({ ...widths })
   const syncing = useRef(false)
 
   /** A resize by hand ended: keep widths, and notice a sidebar dragged shut or open. */
@@ -87,11 +92,14 @@ export function useSidebarPanels(
       // A sidebar closed for want of room is not the person's choice: leave the layout as it is.
       if (!panel || useSidebarFit.getState().squeezed.includes(id)) continue
       const isCollapsed = panel.isCollapsed()
-      if (isCollapsed !== layoutNow()?.collapsed[id])
-        dispatch({ type: 'setCollapsed', sidebar: id, collapsed: isCollapsed })
+      if (isCollapsed !== layoutNow().collapsed[id])
+        void dispatch({ type: 'set_collapsed', sidebar: id, collapsed: isCollapsed })
       if (!isCollapsed) {
-        dispatch({ type: 'setWidth', sidebar: id, width: panel.getSize().inPixels })
-        applied.current[id] = layoutNow()!.widths[id]
+        // The daemon keeps the width as it rounds it; the panel already shows it, so the reply
+        // moves nothing (sync compares with what was applied).
+        const width = clampWidth(panel.getSize().inPixels)
+        applied.current[id] = width
+        if (width !== layoutNow().widths[id]) void dispatch({ type: 'set_width', sidebar: id, width })
       }
     }
   }
@@ -116,7 +124,6 @@ export function useSidebarPanels(
       () => {
         settle.current = null
         const now = layoutNow()
-        if (!now) return
         for (const id of IDS) {
           const panel = refs[id].current
           if (!panel || !shownNow.current[id] || panel.isCollapsed()) continue
@@ -147,10 +154,10 @@ export function useSidebarPanels(
     const space = element.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) - gutters
     const layout = layoutNow()
     const toPercent = (pixels: number): number => (pixels / space) * 100
-    const centreMin = toPercent(layout ? minSize(layout.root, layout.tabs).width : 0)
+    const centreMin = toPercent(minSize(layout.root, layout.tabs).width)
     // Shown sidebars get their saved width; the centre takes the rest. If that leaves the centre
     // under its minimum, they give back down to their own.
-    for (const id of IDS) next[id] = shownNow.current[id] && layout ? toPercent(layout.widths[id]) : 0
+    for (const id of IDS) next[id] = shownNow.current[id] ? toPercent(layout.widths[id]) : 0
     const shown = IDS.filter((id) => shownNow.current[id])
     let over = shown.reduce((total, id) => total + next[id]!, 0) + centreMin - 100
     for (const id of shown) {
@@ -167,7 +174,6 @@ export function useSidebarPanels(
   const sync = (): void => {
     if (document.querySelector('[data-separator=active]')) return
     const layout = layoutNow()
-    if (!layout) return
     syncing.current = true
     closeSqueezed()
     for (const id of IDS) {
@@ -180,10 +186,11 @@ export function useSidebarPanels(
         panel.resize(`${width}px`)
         applied.current[id] = width
         settleWidths()
-      } else if (applied.current[id] !== layout.widths[id]) {
+      } else if (followed.current[id] !== layout.widths[id] && applied.current[id] !== layout.widths[id]) {
         panel.resize(`${layout.widths[id]}px`)
         applied.current[id] = layout.widths[id]
       }
+      followed.current[id] = layout.widths[id]
     }
     syncing.current = false
   }

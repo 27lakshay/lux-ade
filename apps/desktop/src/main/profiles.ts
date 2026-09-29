@@ -32,7 +32,7 @@ import {
 } from './profile-connection'
 import { watchActivity } from './notifications'
 import { setStreamProfile } from './stream-bridge'
-import { selectedWorkspaces, selectionRequests } from './workspaces'
+import { onClientState } from './windows'
 
 async function attachClient(endpoint: string, profileId: string): Promise<void> {
   const home = getProfileState().profiles.find((item) => item.id === profileId)?.home
@@ -52,8 +52,6 @@ async function attachClient(endpoint: string, profileId: string): Promise<void> 
   const previousFeed = getUnsubscribeFeed()
   const next = new AdeClient(endpoint)
   const generation = nextClientGeneration()
-  selectedWorkspaces.clear()
-  selectionRequests.clear()
   setClient(next)
   setSocket(endpoint)
   // The bridge closes the previous profile's terminal attachments and streams from the new one.
@@ -66,6 +64,7 @@ async function attachClient(endpoint: string, profileId: string): Promise<void> 
     next.subscribe((state) => {
       if (generation === getClientGeneration()) {
         broadcast('ade:client-state-changed', state)
+        onClientState(state)
         if (state.status === 'connected') {
           void nextBrowserOwner
             .register(endpoint, state.bootId)

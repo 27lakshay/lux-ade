@@ -4,6 +4,7 @@ import type { ThemePreference } from '../window-chrome'
 import type { BrowserBridge } from './browser'
 import type { ConversationsBridge } from './conversations'
 import type { FilesBridge } from './files'
+import type { LayoutsBridge } from './layouts'
 import type { ProfilesBridge } from './profiles'
 import type { ReviewBridge } from './review'
 import type { ServicesBridge } from './services'
@@ -30,6 +31,8 @@ export interface AdeHost {
   profiles: ProfilesBridge
   conversations: ConversationsBridge
   workspaces: WorkspacesBridge
+  /** This window's daemon record and its layouts. */
+  layouts: LayoutsBridge
   services: ServicesBridge
   review: ReviewBridge
   files: FilesBridge

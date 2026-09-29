@@ -17,7 +17,7 @@ import {
 import { isAllowedOperation, reviewOperations } from '../shared/bridge/operations'
 import { getClient, getClientGeneration, getSocket, journalProfileId } from './profile-connection'
 import { validId } from './validation'
-import { selectedWorkspaces } from './workspaces'
+import { selectedWorkspace } from './windows'
 
 let gitJournal: GitJournal | null = null
 export const setGitJournal = (value: GitJournal): void => {
@@ -57,7 +57,7 @@ export function activeReviewContext(senderId: number, workspaceId: unknown): Rev
   if (!validId(workspaceId) || !state.catalog?.workspaces.some((item) => item.id === workspaceId)) {
     throw new Error('Workspace is unavailable in this profile')
   }
-  const selection = selectedWorkspaces.get(senderId)
+  const selection = selectedWorkspace(senderId)
   if (!selection || selection.workspaceId !== workspaceId || selection.generation !== getClientGeneration()) {
     throw new Error('Selected workspace changed; return to Changes and try again')
   }
@@ -65,7 +65,7 @@ export function activeReviewContext(senderId: number, workspaceId: unknown): Rev
 }
 
 export function assertReviewContext(context: ReviewContext, workspaceId: string, conversationId?: string): void {
-  const selection = selectedWorkspaces.get(context.senderId)
+  const selection = selectedWorkspace(context.senderId)
   if (
     getSocket() !== context.endpoint ||
     getClientGeneration() !== context.generation ||

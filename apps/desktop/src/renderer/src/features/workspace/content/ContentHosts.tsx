@@ -4,8 +4,8 @@ import { ErrorBoundary } from 'react-error-boundary'
 import { useStore } from 'zustand'
 import { useShallow } from 'zustand/react/shallow'
 import { ErrorReport } from '../../../provisional/ErrorReport'
-import type { Tab } from '../model/layout'
-import { layoutStore } from '../model/layout-store'
+import { tabKind, type Tab } from '../model/layout'
+import { activeWorkspace, keptWorkspaces, layoutStore, type LayoutState } from '../model/layout-store'
 import { hostFor, releaseHost } from './hosts'
 import { tabContent } from './tab-content'
 
@@ -20,10 +20,12 @@ import { tabContent } from './tab-content'
 export type RenderContent = (tab: Tab, workspaceId: string) => ReactNode
 
 const tabExists = (tabId: string): boolean =>
-  Object.values(layoutStore.getState().layouts).some((layout) => tabId in layout.tabs)
+  Object.values(layoutStore.getState().records).some((record) => tabId in record.layout.tabs)
 
-const workspaceOf = (state: ReturnType<typeof layoutStore.getState>, tabId: string): string =>
-  Object.entries(state.layouts).find(([, layout]) => tabId in layout.tabs)?.[0] ?? state.active
+const workspaceOf = (state: LayoutState, tabId: string): string =>
+  Object.values(state.records).find((record) => tabId in record.layout.tabs)?.workspace_id ??
+  activeWorkspace(state) ??
+  ''
 
 // Memoised: the list of kept tabs changes whenever a tab opens or closes, and each host whose tab
 // did not change then skips rendering.
@@ -47,10 +49,10 @@ const TabHost = memo(function TabHost({ tab, render }: { tab: Tab; render: Rende
 })
 
 /** Terminals only for the most recent `keepTerminals` workspaces; other content for all kept ones. */
-const keptTabs = (state: ReturnType<typeof layoutStore.getState>): Tab[] =>
-  state.recent.flatMap((workspace, index) =>
-    Object.values(state.layouts[workspace]?.tabs ?? {}).filter(
-      (tab) => tab.kind !== 'terminal' || index < Math.min(state.keepTerminals, state.keepMounted),
+const keptTabs = (state: LayoutState): Tab[] =>
+  keptWorkspaces(state).flatMap((workspace, index) =>
+    Object.values(state.records[workspace]?.layout.tabs ?? {}).filter(
+      (tab) => tabKind(tab.target) !== 'terminal' || index < Math.min(state.keepTerminals, state.keepMounted),
     ),
   )
 

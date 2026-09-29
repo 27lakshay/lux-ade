@@ -1,6 +1,4 @@
 import { useState } from 'react'
-import { useLocalStorage } from 'usehooks-ts'
-import { useStore } from 'zustand'
 import { IconButton } from '@/components/IconButton'
 import { INDENT, Row } from '@/components/Row'
 import { Status } from '@/components/Status'
@@ -25,12 +23,10 @@ import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Icon } from '@/icons/Icon'
 import type { IconName } from '@/icons/icons'
-import { WINDOW_NAME } from '../../../app/window-name'
 import { useDaemon } from '../../../state/hooks'
-import { layoutStore } from '../model/layout-store'
 import { conversationState, navigatorTree, type NavigatorProject, type NavigatorWorkspace } from './navigator-tree'
 import { deleteWorktree, newWorkspace, removeWorkspace, renameWorkspace } from './workspace-actions'
-import { selectWorkspace, useWorkspaceSync } from './workspace-selection'
+import { selectWorkspace, useCollapsedProjects, useShownWorkspace } from './workspace-selection'
 
 // The navigator's list: projects, their workspaces and each workspace's conversations, built from
 // the daemon's catalog (navigator-tree.ts). Rows are the Pen "Project row", "Workspace row" and
@@ -242,22 +238,19 @@ function ProjectRows({
 }
 
 export function ProjectTree() {
-  useWorkspaceSync()
   const workspaceIds = useDaemon((state) => state.workspaceIds)
   const workspaces = useDaemon((state) => state.workspaces)
   const conversationIds = useDaemon((state) => state.conversationIds)
   const conversations = useDaemon((state) => state.conversations)
   const projectRecords = useDaemon((state) => state.projects)
-  const active = useStore(layoutStore, (state) => state.active)
+  const active = useShownWorkspace()
   const connected = useDaemon((state) => state.status === 'connected')
-  const [collapsed, setCollapsed] = useLocalStorage<string[]>(`ade.navigator.collapsed:${WINDOW_NAME}`, [])
+  const [collapsed, toggle] = useCollapsedProjects()
   const projects = navigatorTree(
     workspaceIds.map((id) => workspaces[id]!),
     conversationIds.map((id) => conversations[id]!),
     projectRecords,
   )
-  const toggle = (id: string): void =>
-    setCollapsed((ids) => (ids.includes(id) ? ids.filter((other) => other !== id) : [...ids, id]))
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">

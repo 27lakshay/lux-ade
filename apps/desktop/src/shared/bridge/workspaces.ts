@@ -6,7 +6,6 @@ export interface WorkspacesBridge {
   open(folder: string): Promise<DailyUseResponse<'workspace.open'>>
   /** Null when the user cancels the folder dialog. */
   choose(): Promise<DailyUseResponse<'workspace.open'> | null>
-  select(id: string, conversationId: string | null): Promise<boolean>
   listRestoreBindings(): Promise<RestoreBindings>
   rebindRestored(
     profileId: string,

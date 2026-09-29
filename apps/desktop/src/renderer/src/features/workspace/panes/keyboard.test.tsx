@@ -2,16 +2,16 @@ import { userEvent } from 'vitest/browser'
 import { beforeEach, expect, test } from 'vitest'
 import { commandService } from '../../../app/commands'
 import { registerLayoutCommands } from '../model/layout-commands'
-import { dispatch, layoutStore, openTab } from '../model/layout-store'
+import { dispatch, layoutNow } from '../model/layout-store'
 import { panes } from '../model/layout-tree'
-import { renderWorkspace, resetLayout, section } from '../testing'
+import { openTitled, renderWorkspace, resetLayout, section } from '../testing'
 import { tabAfterKey } from './TabStrip'
 
 // Everything the mouse does to tabs and sizes, the keyboard can do too.
 
 beforeEach(resetLayout)
-const layout = () => layoutStore.getState().layouts.default!
-const titleOf = (id: string | null) => (id ? layout().tabs[id]!.title : null)
+const layout = layoutNow
+const titleOf = (id: string | null) => (id ? document.getElementById(id)?.textContent : null)
 
 test('arrow keys, Home and End pick the tab they move to, and stop at the ends', () => {
   const pane = { type: 'pane' as const, id: 'p', tabs: ['a', 'b', 'c'], active: 'b' }
@@ -25,7 +25,7 @@ test('arrow keys, Home and End pick the tab they move to, and stop at the ends',
 
 test('the keyboard moves between tabs: one Tab stop, then arrows, Home and End', async () => {
   await renderWorkspace()
-  for (const title of ['One', 'Two', 'Three']) openTab({ kind: 'terminal', title })
+  for (const title of ['One', 'Two', 'Three']) await openTitled('terminal', title)
   const tab = (title: string) =>
     [...document.querySelectorAll<HTMLElement>('[data-tab-bar] [role=tab]')].find((e) => e.textContent === title)!
   await expect.poll(() => tab('Three')).toBeTruthy()
@@ -66,8 +66,8 @@ test('the inspector’s views work the same way, and never change width', async 
 
 test('every resize handle says what it resizes; Escape goes back to the focused pane', async () => {
   await renderWorkspace()
-  openTab({ kind: 'terminal', title: 'Shell' })
-  dispatch({ type: 'splitPane', paneId: 'p1', direction: 'row', newPaneId: 'p2' })
+  await openTitled('terminal', 'Shell')
+  await dispatch({ type: 'split_pane', pane_id: 'p1', direction: 'row', new_pane_id: 'p2' })
   await expect.poll(() => document.querySelectorAll('section[aria-label="Pane"]').length).toBe(2)
   const names = [...document.querySelectorAll('[role=separator]')].map((e) => e.getAttribute('aria-label'))
   expect(names).toEqual(expect.arrayContaining(['Resize navigator', 'Resize inspector', 'Resize panes side by side']))
@@ -82,8 +82,8 @@ test('every resize handle says what it resizes; Escape goes back to the focused 
 test('Ctrl+Cmd+Arrow grows the focused pane, never past the pane beyond’s minimum', async () => {
   registerLayoutCommands()
   await renderWorkspace()
-  dispatch({ type: 'splitPane', paneId: 'p1', direction: 'row', newPaneId: 'p2' })
-  dispatch({ type: 'focusPane', paneId: 'p1' })
+  await dispatch({ type: 'split_pane', pane_id: 'p1', direction: 'row', new_pane_id: 'p2' })
+  await dispatch({ type: 'focus_pane', pane_id: 'p1' })
   await expect.poll(() => document.querySelectorAll('section[aria-label="Pane"]').length).toBe(2)
   const width = () => section('Pane')!.getBoundingClientRect().width
   const before = width()

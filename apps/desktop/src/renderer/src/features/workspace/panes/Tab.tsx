@@ -7,12 +7,13 @@ import { Caption } from '@/components/Typography'
 import { cn } from '@/lib/utils'
 import { Icon } from '@/icons/Icon'
 import type { IconName } from '@/icons/icons'
-import type { Tab as TabData, TabKind } from '../model/layout'
+import { tabKind, type Tab as TabData, type TabKind } from '../model/layout'
 import { transitions } from '../../../app/motion'
 import { useDaemon } from '../../../state/hooks'
-import { dispatch } from '../model/layout-store'
+import { dispatch, layoutNow } from '../model/layout-store'
+import { targetLabel, targetTitle } from '../model/tab-title'
 import { closeTab } from '../terminals/terminal-tabs'
-import { activeLayout, showDragPreview, type DragData } from './drag'
+import { showDragPreview, type DragData } from './drag'
 import { DragChip } from './DragChip'
 
 export const TAB_ICON: Record<TabKind, IconName> = {
@@ -44,11 +45,9 @@ export function Tab({
 }) {
   const ref = useRef<HTMLDivElement>(null)
   const [dragging, setDragging] = useState(false)
-  const activate = (): void => dispatch({ type: 'activateTab', tabId: tab.id })
-  // A terminal's tab shows the terminal's own title (the shell, or the command it runs).
-  const title = useDaemon((state) =>
-    tab.target?.kind === 'terminal' ? (state.terminals[tab.target.id]?.title ?? tab.title) : tab.title,
-  )
+  const activate = (): void => void dispatch({ type: 'activate_tab', tab_id: tab.id })
+  // The title of what the tab shows: a terminal's (the shell, or the command it runs), a conversation's.
+  const title = useDaemon((state) => targetTitle(state, tab.target))
 
   useEffect(() => {
     const element = ref.current
@@ -59,8 +58,12 @@ export function Tab({
       getInitialData: (): DragData => ({ kind: 'tab', tabId, paneId }),
       // Read at drag time, so the drag is not re-attached whenever the title changes.
       onGenerateDragPreview: ({ nativeSetDragImage }) => {
-        const data = activeLayout()?.tabs[tabId]
-        if (data) showDragPreview(nativeSetDragImage, <DragChip icon={TAB_ICON[data.kind]} label={data.title} />)
+        const data = layoutNow().tabs[tabId]
+        if (data)
+          showDragPreview(
+            nativeSetDragImage,
+            <DragChip icon={TAB_ICON[tabKind(data.target)]} label={targetLabel(data.target)} />,
+          )
       },
       onDragStart: () => setDragging(true),
       onDrop: () => setDragging(false),
@@ -104,7 +107,7 @@ export function Tab({
           transition={transitions.springLoad}
         />
       )}
-      <Icon name={TAB_ICON[tab.kind]} size="sm" className="relative" />
+      <Icon name={TAB_ICON[tabKind(tab.target)]} size="sm" className="relative" />
       {/* Always as wide as when selected: selecting a tab never nudges its neighbours. */}
       <Caption
         tone="inherit"

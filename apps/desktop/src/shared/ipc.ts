@@ -3,6 +3,7 @@ import type { AdeHost } from './bridge'
 import type { BrowserBridge, BrowserState } from './bridge/browser'
 import type { ConversationsBridge } from './bridge/conversations'
 import type { FilesBridge } from './bridge/files'
+import type { LayoutsBridge } from './bridge/layouts'
 import type { ProfilesBridge } from './bridge/profiles'
 import type { ReviewBridge } from './bridge/review'
 import type { ServicesBridge } from './bridge/services'
@@ -34,7 +35,6 @@ export interface InvokeChannels {
 
   'ade:workspace-open': WorkspacesBridge['open']
   'ade:workspace-choose': WorkspacesBridge['choose']
-  'ade:workspace-select': WorkspacesBridge['select']
   'ade:workspace-rename': WorkspacesBridge['rename']
   'ade:workspace-remove': WorkspacesBridge['remove']
   'ade:worktree-create': WorkspacesBridge['createWorktree']
@@ -42,8 +42,15 @@ export interface InvokeChannels {
   'ade:terminal-create': TerminalsBridge['create']
   'ade:settings-get': SettingsBridge['get']
   'ade:settings-set': SettingsBridge['set']
-  'ade:terminal-close': TerminalsBridge['close']
   'ade:terminal-restart': TerminalsBridge['restart']
+  'ade:window-id': LayoutsBridge['windowId']
+  'ade:layout-get': LayoutsBridge['get']
+  'ade:layout-apply': LayoutsBridge['apply']
+  'ade:layout-replace': LayoutsBridge['replace']
+  'ade:tab-close': LayoutsBridge['closeTab']
+  'ade:pane-close': LayoutsBridge['closePane']
+  'ade:window-show-workspace': LayoutsBridge['showWorkspace']
+  'ade:window-collapse': LayoutsBridge['setCollapsedProjects']
   'ade:restore-bindings': WorkspacesBridge['listRestoreBindings']
   'ade:restore-binding': WorkspacesBridge['rebindRestored']
   'ade:restore-choose-folder': WorkspacesBridge['chooseRestoreFolder']
@@ -84,6 +91,8 @@ export interface EventChannels {
   'ade:client-state-changed': [state: Awaited<ReturnType<ProfilesBridge['getClientState']>>]
   'ade:profile-state-changed': [state: ProfileState]
   'ade:draft-error': [error: { conversationId: string; message: string }]
+  /** Main gave the window another daemon record (a profile switch, or the daemon came up late). */
+  'ade:window-id-changed': [windowId: string | null]
   'ade:browser-state': [state: BrowserState]
   'ade:browser-lease-lost': [profileId: string]
   /** The stream bridge restarted; its ports are closed. Reconnect with `ade:stream-connect`. */

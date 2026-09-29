@@ -1,4 +1,5 @@
 import { app, BrowserWindow, dialog, screen, session } from 'electron'
+import type { Window } from '@ade/client'
 import { broadcast, handle, listen, registerAppWindow } from './ipc'
 import { createHash } from 'node:crypto'
 import { join, resolve } from 'node:path'
@@ -40,7 +41,9 @@ import { disconnectWindow, setStreamProfile, startStreamBridge, stopStreamBridge
 import { registerSettingsIpc } from './settings'
 import { registerTerminalIpc } from './terminals'
 import { registerWorkspaceActionIpc } from './workspace-actions'
-import { registerWorkspaceIpc, selectedWorkspaces, selectionRequests } from './workspaces'
+import { registerWorkspaceIpc } from './workspaces'
+import { registerLayoutIpc } from './layouts'
+import { onClientState, reopenWindow, startWindows, trackWindow } from './windows'
 import { installAppMenu } from './app-menu'
 import { registerAppScheme, serveAppScheme, windowUrl } from './app-protocol'
 import { lockDownAppSession, lockDownAppWindow, refuseWebviews } from './app-security'
@@ -87,6 +90,7 @@ listen('ade:window-minimum-size', (event, width: unknown, height: unknown) => {
 registerProfileIpc()
 registerConversationIpc()
 registerWorkspaceIpc()
+registerLayoutIpc()
 registerWorkspaceActionIpc()
 registerTerminalIpc()
 registerSettingsIpc()
@@ -111,24 +115,27 @@ registerQuitTeardown(() => {
 // setting changed just before quitting survives.
 registerQuitTeardown(() => session.defaultSession.flushStorageData())
 
-/** The window's name: Electron restores its bounds by it, and the renderer keeps its layout by it. */
-const MAIN_WINDOW = 'main'
 /** Main's own floor for any window, whatever its layout asks for. */
 const WINDOW_MINIMUM = { width: 720, height: 480 } as const
 
-function openMainWindow(): void {
+/**
+ * Opens a native window for a daemon window record, at its bounds; or, with no daemon yet, a window
+ * that gets its record once the daemon connects (windows.ts).
+ */
+function openAppWindow(record: Window | null): BrowserWindow {
+  const bounds = record?.bounds
   const window = new BrowserWindow({
     // Shown once the first frame is painted (ready-to-show below), so it never opens blank.
     show: false,
-    width: 1440,
-    height: 900,
+    width: bounds ? Math.round(bounds.width) : 1440,
+    height: bounds ? Math.round(bounds.height) : 900,
+    ...(bounds ? { x: Math.round(bounds.x), y: Math.round(bounds.y) } : {}),
     minWidth: WINDOW_MINIMUM.width,
     minHeight: WINDOW_MINIMUM.height,
     title: 'ADE',
-    // Electron restores this window's position, size and fullscreen or maximized state by name.
-    // (Experimental in Electron 44.) The pane layout is the renderer's, not the window's.
-    name: MAIN_WINDOW,
-    windowStatePersistence: true,
+    // The daemon keeps the window's position and size; Electron keeps its fullscreen or maximized
+    // state by name, the record's ID (experimental in Electron 44).
+    ...(record ? { name: record.id, windowStatePersistence: true } : {}),
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: TRAFFIC_LIGHTS,
     // The page's own background, so resizing or loading never shows another colour.
@@ -143,6 +150,7 @@ function openMainWindow(): void {
   if (process.env.ADE_E2E_HIDE_WINDOW !== '1') window.once('ready-to-show', () => window.show())
   windowIds.set(window.webContents.id, singleWindowId)
   registerAppWindow(window.webContents)
+  trackWindow(window, record?.id ?? null)
   logWindowConsole(window.webContents, 'window')
   recoverRendererFailures(window)
   let readyForClose = false
@@ -200,8 +208,6 @@ function openMainWindow(): void {
   window.webContents.on('destroyed', () => {
     closeBrowserWindow(window)
     disconnectWindow(window.webContents.id)
-    selectedWorkspaces.delete(window.webContents.id)
-    selectionRequests.delete(window.webContents.id)
     for (const [key, entry] of drafts) {
       if (!key.startsWith(`${window.webContents.id}:`)) continue
       void flushDraft(entry)
@@ -212,7 +218,8 @@ function openMainWindow(): void {
   })
 
   lockDownAppWindow(window.webContents)
-  void window.loadURL(windowUrl(MAIN_WINDOW))
+  void window.loadURL(windowUrl(record?.id ?? null))
+  return window
 }
 
 app
@@ -239,6 +246,7 @@ app
     setUnsubscribeClient(
       getClient().subscribe((state) => {
         broadcast('ade:client-state-changed', state)
+        onClientState(state)
         if (state.status === 'connected' && fixedSocket) {
           void getBrowserOwner()
             ?.register(fixedSocket, state.bootId)
@@ -251,7 +259,6 @@ app
     getClient().start()
     startStreamBridge()
     setStreamProfile(getSocket() ?? null)
-    openMainWindow()
     if (managedProfiles) {
       setStartupProfileSelection(
         refreshProfiles()
@@ -266,9 +273,9 @@ app
           }),
       )
     }
-    app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) openMainWindow()
-    })
+    // One native window per open daemon window record, once the daemon answers.
+    await startWindows(openAppWindow)
+    app.on('activate', reopenWindow)
   })
   .catch((error: unknown) => {
     if (process.env.ADE_E2E_USER_DATA_DIR) {

@@ -4,7 +4,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Icon } from '@/icons/Icon'
 import type { IconName } from '@/icons/icons'
-import { dispatch, useLayout } from '../model/layout-store'
+import { toggleMaximize, useLayout } from '../model/layout-store'
 import { closePane } from '../terminals/terminal-tabs'
 import { trySplit } from './room'
 
@@ -35,7 +35,7 @@ export function PaneToolbar({ paneId }: { paneId: string }) {
           {
             icon: maximized ? 'restore' : 'maximize',
             label: maximized ? 'Restore pane' : 'Maximize pane',
-            run: () => dispatch({ type: 'toggleMaximize', paneId }),
+            run: () => void toggleMaximize(paneId),
           } satisfies Action,
         ]),
     { icon: 'close', label: 'Close pane', run: () => void closePane(paneId) },

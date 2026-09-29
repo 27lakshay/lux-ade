@@ -1,14 +1,14 @@
 import { beforeEach, expect, test } from 'vitest'
 import { structureKey, panes } from '../model/layout-tree'
-import { dispatch, layoutStore, openTab } from '../model/layout-store'
-import { dragTo, renderWorkspace, resetLayout, startDrag } from '../testing'
+import { dispatch, layoutNow } from '../model/layout-store'
+import { dragTo, openTitled, renderWorkspace, resetLayout, startDrag, titleOf } from '../testing'
 import { zoneAt } from './drag'
 import { SPRING_LOAD_MS } from '../../../app/motion'
 
 beforeEach(resetLayout)
 
-const layout = () => layoutStore.getState().layouts.default!
-const titles = (paneIndex = 0) => panes(layout().root)[paneIndex]!.tabs.map((id) => layout().tabs[id]!.title)
+const layout = () => layoutNow()
+const titles = (paneIndex = 0) => panes(layout().root)[paneIndex]!.tabs.map((id) => titleOf(id))
 
 test('the zone is the nearest edge within a quarter of the pane, else the centre', () => {
   const rect = new DOMRect(0, 0, 400, 200)
@@ -23,7 +23,7 @@ test('the zone is the nearest edge within a quarter of the pane, else the centre
 
 test('dragging a tab onto another reorders the strip', async () => {
   const screen = await renderWorkspace()
-  for (const title of ['One', 'Two', 'Three']) openTab({ kind: 'terminal', title })
+  for (const title of ['One', 'Two', 'Three']) await openTitled('terminal', title)
   await expect.element(screen.getByRole('tab', { name: /Three/ })).toBeVisible()
   const three = screen.getByRole('tab', { name: /Three/ }).element()
   const one = screen.getByRole('tab', { name: /One/ }).element()
@@ -34,7 +34,7 @@ test('dragging a tab onto another reorders the strip', async () => {
 
 test("dragging a tab onto a pane's right edge splits it off", async () => {
   const screen = await renderWorkspace()
-  for (const title of ['One', 'Two']) openTab({ kind: 'terminal', title })
+  for (const title of ['One', 'Two']) await openTitled('terminal', title)
   await expect.element(screen.getByRole('tab', { name: /Two/ })).toBeVisible()
   const body = document.querySelector('[data-pane-drop]')!
   const width = body.getBoundingClientRect().width
@@ -47,9 +47,9 @@ test("dragging a tab onto a pane's right edge splits it off", async () => {
 /** Two panes side by side, holding the tabs `Left` and `Right`. */
 async function twoPanes() {
   const screen = await renderWorkspace()
-  openTab({ kind: 'terminal', title: 'Left' })
+  await openTitled('terminal', 'Left')
   await screen.getByRole('button', { name: 'Split right' }).click()
-  openTab({ kind: 'terminal', title: 'Right' })
+  await openTitled('terminal', 'Right')
   await expect.poll(() => panes(layout().root).length).toBe(2)
   return screen
 }
@@ -114,10 +114,10 @@ test('a pane dropped on the bottom dock edge spans the whole width', async () =>
 test('a tab dropped on the left dock edge becomes a full-height pane', async () => {
   await twoPanes()
   // Three terminal panes need 976px: room the centre has with the sidebars closed.
-  dispatch({ type: 'setCollapsed', sidebar: 'navigator', collapsed: true })
-  dispatch({ type: 'setCollapsed', sidebar: 'inspector', collapsed: true })
+  await dispatch({ type: 'set_collapsed', sidebar: 'navigator', collapsed: true })
+  await dispatch({ type: 'set_collapsed', sidebar: 'inspector', collapsed: true })
   await expect.poll(() => document.getElementById('centre')!.getBoundingClientRect().width).toBeGreaterThan(1000)
-  openTab({ kind: 'terminal', title: 'Extra' })
+  await openTitled('terminal', 'Extra')
   await expect.poll(() => screenTab('Extra')).toBeTruthy()
   const drag = await startDrag(screenTab('Extra'))
   await expect.poll(() => document.querySelector('[data-dock-edge=left]')).not.toBeNull()
@@ -130,7 +130,7 @@ test('a tab dropped on the left dock edge becomes a full-height pane', async () 
 
 test('the only tab of the only pane cannot dock', async () => {
   const screen = await renderWorkspace()
-  openTab({ kind: 'terminal', title: 'Only' })
+  await openTitled('terminal', 'Only')
   await expect.element(screen.getByRole('tab', { name: /Only/ })).toBeVisible()
   const before = JSON.stringify(layout())
   const drag = await startDrag(screenTab('Only'))
@@ -142,7 +142,7 @@ test('the only tab of the only pane cannot dock', async () => {
 
 test('hovering a dragged tab over an inactive tab opens it; passing over does not', async () => {
   await twoPanes()
-  openTab({ kind: 'terminal', title: 'Hidden' }, panes(layout().root)[0]!.id)
+  await openTitled('terminal', 'Hidden', panes(layout().root)[0]!.id)
   await dispatchActivate('Left')
   const drag = await startDrag(screenTab('Right'))
   await drag.over(screenTab('Hidden'))
@@ -156,7 +156,7 @@ test('hovering a dragged tab over an inactive tab opens it; passing over does no
 
 const activeTitle = (paneIndex: number) => {
   const pane = panes(layout().root)[paneIndex]!
-  return pane.active ? layout().tabs[pane.active]!.title : null
+  return pane.active ? titleOf(pane.active) : null
 }
 async function dispatchActivate(title: string) {
   ;(screenTab(title) as HTMLElement).click()
@@ -169,7 +169,7 @@ test('a pane’s grip never drops into a tab strip, and a tab never swaps panes'
   await dragTo(paneGrip(1), screenTab('Left'))
   expect(JSON.stringify(layout().root)).toBe(before)
   // A tab on another pane's centre joins it; it never swaps the panes.
-  openTab({ kind: 'terminal', title: 'Mover' }, panes(layout().root)[1]!.id)
+  await openTitled('terminal', 'Mover', panes(layout().root)[1]!.id)
   await expect.poll(() => screenTab('Mover')).toBeTruthy()
   await dragTo(screenTab('Mover'), paneBody(0))
   await expect.poll(() => titles(0)).toEqual(['Left', 'Mover'])
@@ -178,7 +178,7 @@ test('a pane’s grip never drops into a tab strip, and a tab never swaps panes'
 
 test('a long tab strip scrolls sideways with the wheel', async () => {
   const screen = await renderWorkspace()
-  for (let index = 0; index < 20; index++) openTab({ kind: 'terminal', title: `Tab number ${index}` })
+  for (let index = 0; index < 20; index++) await openTitled('terminal', `Tab number ${index}`)
   await expect.element(screen.getByRole('tab', { name: /Tab number 19/ })).toBeVisible()
   const viewport = document
     .querySelector('[data-pane-drop]')!
@@ -203,7 +203,7 @@ test('dragging a sidebar by its grip onto the other swaps their sides', async ()
 
 test('a sidebar cannot be dropped onto a pane, nor a pane onto a sidebar', async () => {
   const screen = await renderWorkspace()
-  openTab({ kind: 'terminal', title: 'One' })
+  await openTitled('terminal', 'One')
   await expect.element(screen.getByRole('tab', { name: /One/ })).toBeVisible()
   const before = JSON.stringify(layout())
   await dragTo(
@@ -224,7 +224,7 @@ test('swapping two panes back and forth never breaks the resize groups', async (
   window.addEventListener('error', onError)
   const [first, second] = panes(layout().root).map((pane) => pane.id)
   for (let round = 0; round < 4; round++) {
-    dispatch({ type: 'swapPanes', paneId: first!, targetId: second! })
+    await dispatch({ type: 'swap_panes', pane_id: first!, target_id: second! })
     await expect.poll(() => document.querySelectorAll('section[aria-label="Pane"]').length).toBe(2)
   }
   window.removeEventListener('error', onError)
