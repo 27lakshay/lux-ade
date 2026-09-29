@@ -18,6 +18,9 @@ Blocked by: [06](06-lane-sdk-reliability.md), [07](07-desktop-switch-over.md)
    old lifecycle-ID lookup, the SDK's fallback that builds `projects` from an older daemon, the
    tolerant parsing kept only for older desktops, the one-time localStorage layout import
    (`layout-import.ts`) and its tests, and the prototype `windows` table handling in migrations.
+   Squash the store's migration chain into one schema (D19): a new profile gets it at once, any
+   other version is refused with a clear message; the data backfills (projects, unread markers,
+   seen marks, terminal records) go with it. Backups restore only the current schema.
 3. The whole-effort acceptance from the map: the CLI-only window run, the desktop showing it,
    the benchmark.
 4. Full `pnpm check:static` and `pnpm test:e2e:protocol` on `main`; retire the lane trees.
