@@ -5,7 +5,18 @@ import { createDaemonStore } from './daemon-store'
 import { clientState, createFakeHost, nextFrame } from './fake-host'
 import { DaemonStoreContext, useDaemon } from './hooks'
 
-const workspace = (id: string, name: string): Workspace => ({ id, name }) as unknown as Workspace
+const workspace = (id: string, name: string): Workspace => ({
+  id,
+  name,
+  root: `/code/${name}`,
+  needs_rebind: false,
+  worktree_lifecycle_needs_rebind: false,
+  project_id: `project_${id}`,
+  kind: 'folder',
+  branch: null,
+  default: false,
+  ade_owned: false,
+})
 
 test('a component re-renders only when the record it selects changes', async () => {
   const fake = createFakeHost()

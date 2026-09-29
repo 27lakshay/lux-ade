@@ -3,7 +3,18 @@ import { describe, expect, test } from 'vitest'
 import { createDaemonStore } from './daemon-store'
 import { clientState, createFakeHost, nextFrame } from './fake-host'
 
-const workspace = (id: string, name = id): Workspace => ({ id, name }) as unknown as Workspace
+const workspace = (id: string, name = id): Workspace => ({
+  id,
+  name,
+  root: `/code/${name}`,
+  needs_rebind: false,
+  worktree_lifecycle_needs_rebind: false,
+  project_id: `project_${id}`,
+  kind: 'folder',
+  branch: null,
+  default: false,
+  ade_owned: false,
+})
 const conversation = (id: string, title = id): Conversation =>
   ({ id, title, workspace_id: 'w1' }) as unknown as Conversation
 

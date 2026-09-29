@@ -107,19 +107,15 @@ export interface Workspace {
   name: string
   needs_rebind: boolean
   worktree_lifecycle_needs_rebind: boolean
-  /**
-   * The project the workspace belongs to; never empty. The SDK's catalog
-   * parser always sets it and the fields below; they are optional only so
-   * hand-built fixtures stay valid.
-   */
-  project_id?: string
-  kind?: WorkspaceKind
+  /** The project the workspace belongs to; never empty. */
+  project_id: string
+  kind: WorkspaceKind
   /** The branch `HEAD` names; null when detached or not a Git checkout. */
-  branch?: string | null
+  branch: string | null
   /** The daemon's own workspace, which cannot be removed. */
-  default?: boolean
+  default: boolean
   /** ADE made or adopted this linked worktree and may delete it. */
-  ade_owned?: boolean
+  ade_owned: boolean
 }
 
 export type WorkspaceKind = 'primary_checkout' | 'linked_worktree' | 'folder'

@@ -43,7 +43,7 @@ export function navigatorTree(
   }
   const grouped = new Map<string, NavigatorProject>()
   for (const workspace of workspaces) {
-    const projectId = workspace.project_id ?? workspace.id
+    const projectId = workspace.project_id
     const project = projects[projectId]
     const group = grouped.get(projectId) ?? {
       id: projectId,
@@ -55,9 +55,9 @@ export function navigatorTree(
       id: workspace.id,
       name: workspace.name,
       root: workspace.root,
-      branch: workspace.branch ?? null,
-      default: workspace.default ?? false,
-      deletableWorktree: workspace.kind === 'linked_worktree' && workspace.ade_owned === true,
+      branch: workspace.branch,
+      default: workspace.default,
+      deletableWorktree: workspace.kind === 'linked_worktree' && workspace.ade_owned,
       conversations: conversationsOf.get(workspace.id) ?? [],
     })
     grouped.set(projectId, group)
