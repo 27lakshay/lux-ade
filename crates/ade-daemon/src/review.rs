@@ -281,60 +281,6 @@ pub fn feedback_search(store: &Store, request: &Value) -> Result<Value> {
     })
 }
 
-/// Copies Git receipts from the retired `jobs` table into `operations` once.
-/// The `jobs` table stays in place, unused.
-fn migrate_jobs(db: &mut Connection) -> Result<()> {
-    let exists: bool = db.query_row(
-        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='jobs')",
-        [],
-        |row| row.get(0),
-    )?;
-    if !exists {
-        return Ok(());
-    }
-    let tx = db.transaction()?;
-    let rows = tx
-        .prepare("SELECT id,root,request,result FROM jobs")?
-        .query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-            ))
-        })?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-    for (id, root, request, result) in rows {
-        let (Ok(request), Ok(mut operation)) = (
-            serde_json::from_str::<Value>(&request),
-            serde_json::from_str::<GitOperation>(&result),
-        ) else {
-            continue;
-        };
-        let Ok(mutation) = Mutation::decode(&request) else {
-            continue;
-        };
-        let created = operation.started_at;
-        if receipts::begin(&tx, &id, mutation.op(), &mutation.payload()?, None, created)?
-            != Admission::New
-        {
-            continue;
-        }
-        if operation.status == GitOperationStatus::Running {
-            operation.status = GitOperationStatus::Interrupted;
-            operation.error = Some(INTERRUPTED.into());
-        }
-        let status = match operation.status {
-            GitOperationStatus::Succeeded | GitOperationStatus::Failed => Status::Settled,
-            GitOperationStatus::Running | GitOperationStatus::Interrupted => Status::Unknown,
-        };
-        let receipt = serde_json::to_value(GitReceipt { root, operation })?;
-        receipts::settle(&tx, &id, status, Some(&receipt), now_ms())?;
-    }
-    tx.commit()?;
-    Ok(())
-}
-
 /// Marks every Git operation that was running when the daemon stopped as
 /// interrupted. Its receipt becomes unknown, so the ID never runs again.
 fn interrupt_open_receipts(db: &mut Connection) -> Result<()> {
@@ -1264,7 +1210,6 @@ impl Review {
         db.pragma_update(None, "synchronous", "FULL")?;
         receipts::ensure(&db)?;
         outbox::ensure(&db)?;
-        migrate_jobs(&mut db)?;
         interrupt_open_receipts(&mut db)?;
         Ok(Arc::new(Self {
             worktrees,

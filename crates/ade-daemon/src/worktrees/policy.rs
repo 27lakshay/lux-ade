@@ -260,9 +260,8 @@ pub enum Authority {
 /// - `found` is the tree's current (device, inode), `None` if unreadable.
 /// - `marker` is the marker file's content, `None` if unreadable.
 ///
-/// A record without an identity predates identities and compares none. A
-/// replacement at the same path keeps the admin dir and marker, so only the
-/// identity tells it apart.
+/// A replacement at the same path keeps the admin dir and marker, so only the
+/// recorded identity tells it apart; a record without one is never verified.
 pub fn authority_of(
     owner: Option<&Value>,
     repository: &str,
@@ -274,7 +273,7 @@ pub fn authority_of(
     };
     let same_tree = match (owner["device"].as_str(), owner["inode"].as_str()) {
         (Some(device), Some(inode)) => found.is_some_and(|(d, i)| d == device && i == inode),
-        _ => true,
+        _ => false,
     };
     if owner["repository_id"] == repository
         && same_tree
@@ -497,13 +496,13 @@ mod tests {
             authority_of(None, "repo", same(), Some("t")),
             Authority::None
         );
-        assert!(may_remove(Authority::None).is_err());
-        // A record from before identities were kept compares none.
-        let legacy = serde_json::json!({"repository_id": "repo", "token": "t"});
+        let unidentified = serde_json::json!({"repository_id": "repo", "marker": "/admin/marker",
+            "token": "t"});
         assert_eq!(
-            authority_of(Some(&legacy), "repo", None, Some("t")),
-            Authority::Verified
+            authority_of(Some(&unidentified), "repo", same(), Some("t")),
+            Authority::Changed
         );
+        assert!(may_remove(Authority::None).is_err());
     }
 
     fn naming<'a>(name: Option<&'a str>, branch: Option<&'a str>) -> Naming<'a> {
