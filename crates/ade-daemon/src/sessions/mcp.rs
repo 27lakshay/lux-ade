@@ -264,7 +264,7 @@ fn mcp_command(store: &Store, request: &Value) -> Result<Value> {
             let provider = non_empty("provider", &resolve.provider)?;
             ensure!(
                 provider_ids().contains(&provider),
-                "Unknown provider {provider}"
+                ade_core::error::ProviderNotFound(provider.to_owned())
             );
             let workspace = store.workspace(workspace_id)?;
             ensure(connection)?;

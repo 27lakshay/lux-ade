@@ -242,6 +242,12 @@ pub struct ProjectNotRepository(pub String);
 #[error("Unknown setting {0}")]
 pub struct UnknownSetting(pub String);
 
+/// A request named a provider this daemon has neither built in nor
+/// registered. `provider.capabilities` lists the ones it has.
+#[derive(Debug, thiserror::Error)]
+#[error("Unknown provider: {0}")]
+pub struct ProviderNotFound(pub String);
+
 /// An effect whose outcome cannot be known, such as a Git command interrupted
 /// by a crash. The message is the operation's own account of what to inspect;
 /// the envelope types it `outcome_unknown`, so a client can tell it from a
@@ -665,6 +671,10 @@ pub fn error_envelope(error: anyhow::Error) -> serde_json::Value {
         return serde_json::json!({"type":"error","message":unknown.to_string(),
             "code":"unknown_setting","recovery":"check_setting_name"});
     }
+    if let Some(unknown) = error.downcast_ref::<ProviderNotFound>() {
+        return serde_json::json!({"type":"error","message":unknown.to_string(),
+            "code":"provider_not_found","recovery":"list_providers"});
+    }
     if error.downcast_ref::<NeedsRebind>().is_some() {
         return serde_json::json!({"type":"error","message":NeedsRebind.to_string(),
             "code":"needs_rebind","recovery":"rebind_workspace"});
@@ -814,6 +824,11 @@ mod workspace_tests {
         assert_eq!(folder["code"], "project_not_repository");
         let unknown = error_envelope(UnknownSetting("colour".into()).into());
         assert_eq!(unknown["code"], "unknown_setting");
+        let provider = error_envelope(
+            anyhow::Error::from(ProviderNotFound("gemini".into())).context("Create failed"),
+        );
+        assert_eq!(provider["code"], "provider_not_found");
+        assert_eq!(provider["recovery"], "list_providers");
         let busy =
             error_envelope(LifecycleBusy("Repository lifecycle operation is running").into());
         assert_eq!(busy["code"], "lifecycle_busy");

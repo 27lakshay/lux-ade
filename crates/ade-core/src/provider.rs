@@ -93,7 +93,7 @@ pub fn descriptor(id: &str) -> Result<&'static Descriptor> {
     descriptors()
         .iter()
         .find(|p| p.id == id)
-        .ok_or_else(|| anyhow::anyhow!("Unknown provider: {id}"))
+        .ok_or_else(|| crate::error::ProviderNotFound(id.to_owned()).into())
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

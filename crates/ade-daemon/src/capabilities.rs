@@ -7,7 +7,8 @@
 //! profile database. The `provider_presets` table lives in `sessions.sqlite`
 //! and is created here idempotently. Pure decisions live in [`core`].
 use ade_core::contract::providers::*;
-use anyhow::{Context as _, Result, anyhow, bail, ensure};
+use ade_core::error::ProviderNotFound;
+use anyhow::{Context as _, Result, bail, ensure};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use std::{
     ffi::OsString,
@@ -34,7 +35,7 @@ pub fn record(provider: &str) -> Result<CapabilityRecord> {
     records()
         .into_iter()
         .find(|record| record.provider == provider)
-        .ok_or_else(|| anyhow!("Unknown provider: {provider}"))
+        .ok_or_else(|| ProviderNotFound(provider.to_owned()).into())
 }
 
 /// Resolves the executable an override or `PATH` names, as the runtime does
@@ -60,7 +61,7 @@ fn resolve(configured: OsString, search: Option<OsString>) -> Option<PathBuf> {
 /// can change it at any time.
 pub fn installation(provider: &str, managed: bool) -> Result<Vec<ReadinessCheck>> {
     let needs = ade_runtime::capabilities::installation(provider)
-        .ok_or_else(|| anyhow!("Unknown provider: {provider}"))?;
+        .ok_or_else(|| ProviderNotFound(provider.to_owned()))?;
     Ok(needs
         .iter()
         .map(|need| {

@@ -272,7 +272,10 @@ pub fn validate(definition: &Definition, providers: &[&str]) -> Result<()> {
     if let ProviderSelection::Only { provider_ids } = &definition.providers {
         identifiers("Provider selection", provider_ids)?;
         for id in provider_ids {
-            ensure!(providers.contains(&id.as_str()), "Unknown provider {id}");
+            ensure!(
+                providers.contains(&id.as_str()),
+                crate::error::ProviderNotFound(id.clone())
+            );
         }
     }
     Ok(())

@@ -96,7 +96,7 @@ impl Sessions {
             Some(descriptor) => descriptor,
             None => self
                 .registered_descriptor(provider)?
-                .with_context(|| format!("Unknown provider: {provider}"))?,
+                .ok_or_else(|| ade_core::error::ProviderNotFound(provider.to_owned()))?,
         };
         Ok(Some(crate::capabilities::core::registered_record(
             &descriptor,

@@ -96,7 +96,7 @@ A workspace_remove_blocked or worktree_delete_blocked error also lists
   24 worktree_delete_blocked             25 project_not_found, project_not_repository
   26 unknown_setting                     27 review_anchor_stale
   28 draft_not_empty                     29 lifecycle_busy
-  30 review_prompt_too_long
+  30 review_prompt_too_long              31 provider_not_found
   16 also: a workspace worktree operation that ended "failed"
 Commands that change state without their own --request-id take the global
 --operation-id ID. Without it the CLI generates one, and an error names it as
@@ -491,6 +491,7 @@ const exitCodes: Record<ErrorCode | KnownDaemonErrorCode, number> = {
   draft_not_empty: 28,
   lifecycle_busy: 29,
   review_prompt_too_long: 30,
+  provider_not_found: 31,
 }
 
 void main()

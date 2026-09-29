@@ -52,6 +52,7 @@ export const daemonRefusalCodes = [
   'draft_not_empty',
   'review_prompt_too_long',
   'lifecycle_busy',
+  'provider_not_found',
 ] as const
 
 export type KnownDaemonErrorCode = (typeof categoryErrorCodes)[number] | (typeof daemonRefusalCodes)[number]
