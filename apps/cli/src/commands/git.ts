@@ -1,10 +1,8 @@
-import { createHash } from 'node:crypto'
-import { call, dailyUseCommand, formatReviewFeedback, requestDaemon, type ReviewFeedback } from '@ade/client'
+import { call, dailyUseCommand } from '@ade/client'
 import { GitOperationBlocked, readGitJournal, sendGitMutation, type GitIntent } from '@ade/client/journals'
 import {
   boundedInteger,
   CliError,
-  jsonObject,
   namedOptions,
   parseWords,
   positionals,
@@ -13,7 +11,7 @@ import {
   withJournals,
   type CommandResult,
 } from '../shared.js'
-import { decodeReply, journalFailure, type Fields } from './conversations.js'
+import { journalFailure } from './conversations.js'
 
 export const gitUsage = `  git status WORKSPACE_ID                Read fresh Git status and revision tokens
   git diff WORKSPACE_ID PATH [--staged]  Read a file diff and its preview token
@@ -21,8 +19,6 @@ export const gitUsage = `  git status WORKSPACE_ID                Read fresh Git
                                         Page a large diff; SIDE is staged or unstaged
   git feedback-search WORKSPACE_ID [--path PATH] [--query TEXT] [--limit 1..50] [--before CURSOR]
                                         Search saved review notes by file or note text
-  git feedback-send CONVERSATION_ID REQUEST_ID FEEDBACK_JSON
-                                        Send structured anchored review notes once
   git stage WORKSPACE_ID PATH REVISION --request-id ID
   git unstage WORKSPACE_ID PATH REVISION --request-id ID
                                         Change exactly one reviewed file
@@ -69,128 +65,6 @@ function reviewSearchCursor(value: string): number {
     throw new CliError('usage', 'CURSOR must be a positive integer returned by feedback-search.')
   }
   return number
-}
-
-function reviewFeedback(value: string | undefined): ReviewFeedback {
-  const feedback = jsonObject(value, 'FEEDBACK_JSON')
-  const keys = Object.keys(feedback)
-  if (
-    Buffer.byteLength(JSON.stringify(feedback)) > 64 * 1024 ||
-    keys.length !== 3 ||
-    !keys.includes('format') ||
-    !keys.includes('workspace_id') ||
-    !keys.includes('notes') ||
-    feedback.format !== 'ade-review-feedback-v1' ||
-    typeof feedback.workspace_id !== 'string' ||
-    !feedback.workspace_id ||
-    !Array.isArray(feedback.notes) ||
-    feedback.notes.length < 1 ||
-    feedback.notes.length > 16
-  ) {
-    throw new CliError('usage', 'FEEDBACK_JSON must be bounded ade-review-feedback-v1 with 1 to 16 notes.')
-  }
-  for (const entry of feedback.notes) {
-    if (
-      !entry ||
-      typeof entry !== 'object' ||
-      Array.isArray(entry) ||
-      Object.keys(entry).length !== 2 ||
-      !('anchor' in entry) ||
-      !('note' in entry) ||
-      typeof entry.note !== 'string' ||
-      !entry.note.trim() ||
-      Buffer.byteLength(entry.note) > 4096 ||
-      !entry.anchor ||
-      typeof entry.anchor !== 'object' ||
-      Array.isArray(entry.anchor)
-    ) {
-      throw new CliError('usage', 'Each review note needs an anchor and 1 to 4096 bytes of text.')
-    }
-    const anchor = entry.anchor as Record<string, unknown>
-    if (
-      Object.keys(anchor).some(
-        (key) =>
-          ![
-            'workspace_id',
-            'path',
-            'staged',
-            'revision',
-            'token',
-            'hunk',
-            'line',
-            'text',
-            'end_line',
-            'end_text',
-          ].includes(key),
-      ) ||
-      anchor.workspace_id !== feedback.workspace_id ||
-      typeof anchor.path !== 'string' ||
-      !anchor.path ||
-      typeof anchor.staged !== 'boolean' ||
-      typeof anchor.revision !== 'string' ||
-      !/^[0-9a-f]{16}$/.test(anchor.revision) ||
-      typeof anchor.token !== 'string' ||
-      !/^[0-9a-f]{16}$/.test(anchor.token) ||
-      typeof anchor.hunk !== 'string' ||
-      !anchor.hunk.startsWith('@@ ') ||
-      anchor.hunk.length > 512 ||
-      !Number.isSafeInteger(anchor.line) ||
-      (anchor.line as number) < 1 ||
-      typeof anchor.text !== 'string' ||
-      Buffer.byteLength(anchor.text) > 8192 ||
-      ((anchor.end_line !== undefined || anchor.end_text !== undefined) &&
-        (!Number.isSafeInteger(anchor.end_line) ||
-          (anchor.end_line as number) < (anchor.line as number) ||
-          (anchor.end_line as number) - (anchor.line as number) >= 1000 ||
-          typeof anchor.end_text !== 'string' ||
-          Buffer.byteLength(anchor.end_text) > 8192))
-    ) {
-      throw new CliError(
-        'usage',
-        'Review anchors need a workspace, file, side, revision, token and selected line or range.',
-      )
-    }
-  }
-  return feedback as ReviewFeedback
-}
-
-async function sendReviewFeedback(
-  socketPath: string,
-  conversationId: string,
-  requestId: string,
-  feedback: ReviewFeedback,
-): Promise<Record<string, unknown>> {
-  const text = formatReviewFeedback(feedback)
-  // A request gets its own durable draft owner, separate from every GUI window.
-  const windowId = `cli-review-${createHash('sha256')
-    .update(conversationId)
-    .update('\0')
-    .update(requestId)
-    .digest('hex')}`
-  const owner: Fields<'draft.get'> = { conversation_id: conversationId, window_id: windowId }
-  const { draft } = decodeReply('draft.get', await requestDaemon(socketPath, 'draft.get', owner))
-  if (draft.revision === 0) {
-    const save: Fields<'draft.save'> = { ...owner, text, revision: 1 }
-    decodeReply('draft.save', await requestDaemon(socketPath, 'draft.save', save))
-  }
-  const prepare: Fields<'draft.send.prepare'> = {
-    ...owner,
-    request_id: requestId,
-    draft_text: text,
-    revision: 1,
-    text,
-    review_feedback: feedback,
-  }
-  decodeReply('draft.send.prepare', await requestDaemon(socketPath, 'draft.send.prepare', prepare))
-  const response = await requestDaemon(socketPath, 'agent.send_review', {
-    conversation_id: conversationId,
-    request_id: requestId,
-    text,
-    review_feedback: feedback,
-  })
-  const complete: Fields<'draft.send.complete'> = { ...owner, request_id: requestId }
-  decodeReply('draft.send.complete', await requestDaemon(socketPath, 'draft.send.complete', complete))
-  return { ...response, request_id: requestId }
 }
 
 /** A Git mutation through the client journal; a blocking operation names its request ID. */
@@ -319,14 +193,6 @@ export async function runGitCommand(
       ...(options['--limit'] === undefined ? {} : { limit: reviewSearchLimit(options['--limit']) }),
       ...(options['--before'] === undefined ? {} : { before: reviewSearchCursor(options['--before']) }),
     })
-  }
-  if (area === 'git' && action === 'feedback-send') {
-    if (rest.length !== 3 || !rest[1] || rest[1].length > 256) {
-      throw new CliError('usage', 'git feedback-send requires CONVERSATION_ID REQUEST_ID FEEDBACK_JSON.')
-    }
-    const feedback = reviewFeedback(rest[2])
-    const requestId = required(rest[1], 'REQUEST_ID')
-    return sendReviewFeedback(socketPath, required(rest[0], 'CONVERSATION_ID'), requestId, feedback)
   }
   if (area === 'git' && action === 'hunk') {
     const parsed = parseWords(rest, ['--request-id'], ['--unstage'], 'git hunk')

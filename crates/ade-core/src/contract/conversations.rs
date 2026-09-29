@@ -310,22 +310,6 @@ pub struct DraftSendGetRequest {
 /// `request_id` is the send's ID and becomes the accepted message's ID.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct DraftSendPrepareRequest {
-    /// One review anchor; excludes `review_feedback`.
-    #[serde(
-        default,
-        deserialize_with = "present",
-        skip_serializing_if = "Option::is_none"
-    )]
-    #[schemars(with = "Value")]
-    pub review_anchor: Option<Value>,
-    /// A review feedback batch; excludes `review_anchor`.
-    #[serde(
-        default,
-        deserialize_with = "present",
-        skip_serializing_if = "Option::is_none"
-    )]
-    #[schemars(with = "Value")]
-    pub review_feedback: Option<Value>,
     pub draft_text: String,
     pub revision: i64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -491,12 +475,6 @@ pub struct SendIntent {
     pub attachments: Vec<Attachment>,
     /// `pending`, `rejected`, `completed` or `aborted`.
     pub state: String,
-    /// Null unless the send carries one review anchor.
-    #[schemars(with = "Value")]
-    pub review_anchor: Option<Value>,
-    /// Null unless the send carries a review feedback batch.
-    #[schemars(with = "Value")]
-    pub review_feedback: Option<Value>,
 }
 
 /// The `draft.send.get` reply. `intent` is null when no send is unresolved.
@@ -1033,8 +1011,6 @@ mod tests {
             text: "prompt".into(),
             attachments: vec![attachment()],
             state: "pending".into(),
-            review_anchor: None,
-            review_feedback: Some(json!({"format": "ade-review-feedback-v1"})),
         }
     }
 
@@ -1338,19 +1314,12 @@ mod tests {
             "draft.send.get",
             json!({"op": "draft.send.get", "conversation_id": "c", "window_id": "w"}),
         );
-        let prepare: DraftSendPrepareRequest = request(
+        request::<DraftSendPrepareRequest>(
             "draft.send.prepare",
             json!({"op": "draft.send.prepare", "conversation_id": "c", "window_id": "w",
                 "request_id": "send_1", "draft_text": "draft", "text": "prompt",
-                "revision": 1, "review_feedback": {"format": "ade-review-feedback-v1"}}),
+                "revision": 1}),
         );
-        assert!(prepare.review_anchor.is_none() && prepare.review_feedback.is_some());
-        let null_anchor: DraftSendPrepareRequest = serde_json::from_value(json!({
-            "conversation_id": "c", "window_id": "w", "request_id": "send_1",
-            "draft_text": "", "text": "prompt", "revision": 1, "review_anchor": null,
-        }))
-        .unwrap();
-        assert_eq!(null_anchor.review_anchor, Some(Value::Null));
         request::<DraftSendCompleteRequest>(
             "draft.send.complete",
             json!({"op": "draft.send.complete", "conversation_id": "c", "window_id": "w",
@@ -1363,8 +1332,7 @@ mod tests {
         );
         let wire_intent = json!({"request_id": "send_1", "conversation_id": "conversation_1",
             "window_id": "window_1", "draft_revision": 2, "draft_text": "draft",
-            "text": "prompt", "attachments": [attachment()], "state": "pending",
-            "review_anchor": null, "review_feedback": {"format": "ade-review-feedback-v1"}});
+            "text": "prompt", "attachments": [attachment()], "state": "pending"});
         response(
             "draft.send.get",
             &SendIntentState {

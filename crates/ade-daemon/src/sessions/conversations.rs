@@ -2,7 +2,7 @@
 use super::*;
 use ade_core::contract::agents::{
     AgentCancelRequest, AgentChildTranscriptRequest, AgentDisconnectRequest, AgentResumeRequest,
-    AgentSendReviewRequest, ChildTranscriptPage,
+    ChildTranscriptPage,
 };
 use ade_core::contract::conversations::{
     Ack, AgentAnswerRequest, AgentSendRequest, AttachmentImportRequest, AttachmentInspectRequest,
@@ -383,14 +383,6 @@ impl Sessions {
                 })
             }
             "draft.send.prepare" => {
-                ensure!(
-                    request.get("review_anchor").is_none()
-                        || request.get("review_feedback").is_none(),
-                    "Choose one review payload"
-                );
-                if let Some(feedback) = request.get("review_feedback") {
-                    crate::review::feedback_anchors(feedback)?;
-                }
                 field(request, "draft_text", Value::as_str, "Missing draft text")?;
                 field(request, "revision", Value::as_i64, "Missing draft revision")?;
                 field(request, "text", Value::as_str, "Missing prompt text")?;
@@ -402,19 +394,13 @@ impl Sessions {
                     context_nodes: Vec::new(),
                 };
                 let data = self.data.lock().unwrap();
-                let intent = persistence_result(
-                    data.store.prepare_send_intent(
-                        non_empty("conversation_id", &prepare.conversation_id)?,
-                        non_empty("window_id", &prepare.window_id)?,
-                        non_empty("request_id", &prepare.request_id)?,
-                        &draft,
-                        &prepare.text,
-                        prepare
-                            .review_anchor
-                            .as_ref()
-                            .or(prepare.review_feedback.as_ref()),
-                    ),
-                )?;
+                let intent = persistence_result(data.store.prepare_send_intent(
+                    non_empty("conversation_id", &prepare.conversation_id)?,
+                    non_empty("window_id", &prepare.window_id)?,
+                    non_empty("request_id", &prepare.request_id)?,
+                    &draft,
+                    &prepare.text,
+                ))?;
                 reply(&SendIntentPrepared {
                     tag: Default::default(),
                     intent,
@@ -488,135 +474,11 @@ impl Sessions {
                 let key = non_empty("request_id", &send.request_id)?;
                 let text = send.text.as_str();
                 let attachments = send.attachments.as_slice();
-                if let Err(error) = self.send(
-                    conversation,
-                    key,
-                    text,
-                    attachments,
-                    false,
-                    SendAdmission::ordinary(),
-                ) {
+                if let Err(error) = self.send(conversation, key, text, attachments, false, None) {
                     let data = self.data.lock().unwrap();
                     let _ = data
                         .store
                         .reject_send_intent(conversation, key, text, attachments);
-                    return Err(error);
-                }
-                reply(&Ack::default())
-            }
-            "agent.send_review" => {
-                // Keep the prompt-specific wording for a missing text field.
-                request["text"].as_str().context("Missing prompt text")?;
-                let review: AgentSendReviewRequest = decode(request)?;
-                let conversation = non_empty("conversation_id", &review.conversation_id)?;
-                let key = non_empty("request_id", &review.request_id)?;
-                let text = review.text.as_str();
-                let anchor = review.review_anchor.as_ref();
-                let feedback = review.review_feedback.as_ref();
-                ensure!(
-                    anchor.is_some() != feedback.is_some(),
-                    "Provide one review payload"
-                );
-                let anchors = if let Some(feedback) = feedback {
-                    crate::review::feedback_anchors(feedback)?
-                } else {
-                    vec![anchor.context("Missing review anchor")?]
-                };
-                let attachments = review.attachments;
-                ensure!(
-                    attachments.is_empty(),
-                    "Review feedback cannot include attachments"
-                );
-                let (workspace, binding, common_binding) =
-                    {
-                        let data = self.data.lock().unwrap();
-                        data.store.guard_send_intent(
-                            conversation,
-                            key,
-                            text,
-                            &attachments,
-                            anchor.or(feedback),
-                        )?;
-                        let current = data.store.conversation(conversation)?;
-                        let workspace = data.store.workspace(&current.workspace_id)?;
-                        ensure!(
-                            anchors.iter().all(|anchor| anchor["workspace_id"].as_str()
-                                == Some(workspace.id.as_str())),
-                            "Review feedback targets a different workspace"
-                        );
-                        let binding = data.store.workspace_binding_identity(&workspace.id)?;
-                        let common_binding = data
-                            .store
-                            .workspace_repository(&workspace.id)?
-                            .as_deref()
-                            .map(|id| data.store.repository_binding_identity(id))
-                            .transpose()?;
-                        (workspace, binding, common_binding)
-                    };
-                let accepted = self.data.lock().unwrap().store.message(key)?;
-                if accepted.is_some_and(|m| {
-                    m.conversation_id == conversation
-                        && m.role == "user"
-                        && m.text == text
-                        && m.attachments == attachments
-                        && m.review_feedback.as_ref() == feedback
-                }) {
-                    self.send(
-                        conversation,
-                        key,
-                        text,
-                        &attachments,
-                        false,
-                        SendAdmission {
-                            review_anchor: anchor,
-                            review_feedback: feedback,
-                            prelease: None,
-                        },
-                    )?;
-                    return reply(&Ack::default());
-                }
-                let lease = {
-                    let mut attempts = 0;
-                    loop {
-                        match self.worktrees.agent_lease(&workspace.root) {
-                            Ok(lease) => break lease,
-                            Err(error)
-                                if attempts < 10
-                                    && error.to_string()
-                                        == "Worktree setup/lifecycle operation is in progress" =>
-                            {
-                                attempts += 1;
-                                std::thread::sleep(std::time::Duration::from_millis(20));
-                            }
-                            Err(error) => return Err(error),
-                        }
-                    }
-                };
-                let result = self.review.validate_anchors_then(
-                    &workspace.root,
-                    binding,
-                    common_binding,
-                    &anchors,
-                    || {
-                        self.send(
-                            conversation,
-                            key,
-                            text,
-                            &attachments,
-                            false,
-                            SendAdmission {
-                                review_anchor: anchor,
-                                review_feedback: feedback,
-                                prelease: Some(lease),
-                            },
-                        )
-                    },
-                );
-                if let Err(error) = result {
-                    let data = self.data.lock().unwrap();
-                    let _ = data
-                        .store
-                        .reject_send_intent(conversation, key, text, &attachments);
                     return Err(error);
                 }
                 reply(&Ack::default())

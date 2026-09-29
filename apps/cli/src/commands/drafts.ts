@@ -1,7 +1,10 @@
 import { dailyUseCommand } from '@ade/client'
 import { CliError, namedOptions, required, type CommandResult } from '../shared.js'
 
-export const draftUsage = `  draft history CONVERSATION_ID [--window ID] [--before ENTRY_ID] [--limit N]
+export const draftUsage = `  draft get CONVERSATION_ID --window ID Read a window's draft and its revision
+  draft save CONVERSATION_ID --window ID --text TEXT --revision N
+                                        Save the window's draft; an older revision changes nothing
+  draft history CONVERSATION_ID [--window ID] [--before ENTRY_ID] [--limit N]
                                         List recalled sent and discarded drafts, newest first
   draft recall CONVERSATION_ID ENTRY_ID --window ID --expected-revision N --revision N
                                         Restore a recalled draft if the window draft is still at N
@@ -50,6 +53,24 @@ export async function runDraftCommand(
   rest: string[],
 ): Promise<CommandResult | undefined> {
   if (area !== 'draft') return undefined
+  if (action === 'get') {
+    const { args, options } = split(rest, 1, ['--window'], 'get')
+    return dailyUseCommand(socketPath, {
+      op: 'draft.get',
+      conversation_id: args[0],
+      window_id: required(options['--window'], '--window'),
+    })
+  }
+  if (action === 'save') {
+    const { args, options } = split(rest, 1, ['--window', '--text', '--revision'], 'save')
+    return dailyUseCommand(socketPath, {
+      op: 'draft.save',
+      conversation_id: args[0],
+      window_id: required(options['--window'], '--window'),
+      text: required(options['--text'], '--text'),
+      revision: integer(options['--revision'], '--revision'),
+    })
+  }
   if (action === 'history') {
     const { args, options } = split(rest, 1, ['--window', '--before', '--limit'], 'history')
     return dailyUseCommand(socketPath, {

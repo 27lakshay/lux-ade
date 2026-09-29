@@ -9,7 +9,6 @@
 import { decodeResponse, type Operation, type Request, type Response } from '@ade/contracts'
 import { decideSendRecovery, findPendingSend } from './outbox.js'
 import { DaemonRequestError, isDaemonRefusal, requestDaemon, type RequestOptions } from './request.js'
-import { sameReviewAnchor, sameReviewFeedback, type ReviewAnchor, type ReviewFeedback } from './review.js'
 import type { SendJournal, SendJournalIdentity, SendJournalRecord } from './send-journal.js'
 
 type Fields<O extends Operation> = Omit<Request<O>, 'op'>
@@ -39,8 +38,6 @@ export type SendIntent = {
   preparing: boolean
   admitted: boolean
   inFlight: Promise<SendResult> | null
-  reviewAnchor?: ReviewAnchor
-  reviewFeedback?: ReviewFeedback
 }
 
 /** Who owns a draft: the daemon's draft owner is a window of one profile. */
@@ -95,8 +92,6 @@ function journalRecord(entry: SendOwner, intent: SendIntent, dispatchStarted: bo
     draftRevision: intent.revision,
     attachments: intent.attachments,
     dispatchStarted,
-    ...(intent.reviewAnchor ? { reviewAnchor: intent.reviewAnchor } : {}),
-    ...(intent.reviewFeedback ? { reviewFeedback: intent.reviewFeedback } : {}),
   }
 }
 
@@ -120,9 +115,7 @@ function sameDaemonIntent(saved: DaemonSendIntent, intent: SendIntent): boolean 
     saved.text === intent.text &&
     saved.draft_text === intent.draftText &&
     saved.draft_revision === intent.revision &&
-    JSON.stringify(saved.attachments) === JSON.stringify(intent.attachments) &&
-    sameReviewAnchor(saved.review_anchor, intent.reviewAnchor) &&
-    sameReviewFeedback(saved.review_feedback, intent.reviewFeedback)
+    JSON.stringify(saved.attachments) === JSON.stringify(intent.attachments)
   )
 }
 
@@ -180,9 +173,7 @@ export class SendPipeline<E extends SendEntry = SendEntry> {
         record.text === intent.text &&
         record.draftText === intent.draftText &&
         record.draftRevision === intent.revision &&
-        JSON.stringify(record.attachments) === JSON.stringify(intent.attachments) &&
-        sameReviewAnchor(record.reviewAnchor, intent.reviewAnchor) &&
-        sameReviewFeedback(record.reviewFeedback, intent.reviewFeedback),
+        JSON.stringify(record.attachments) === JSON.stringify(intent.attachments),
     )
   }
 
@@ -321,8 +312,6 @@ export class SendPipeline<E extends SendEntry = SendEntry> {
       text?: unknown
       attachments?: unknown
       state?: unknown
-      review_anchor?: unknown
-      review_feedback?: unknown
     } | null
     if (
       recovered &&
@@ -342,9 +331,7 @@ export class SendPipeline<E extends SendEntry = SendEntry> {
         recorded.text !== recovered.text ||
         recorded.draftText !== recovered.draft_text ||
         recorded.draftRevision !== recovered.draft_revision ||
-        JSON.stringify(recorded.attachments) !== JSON.stringify(recovered.attachments) ||
-        !sameReviewAnchor(recorded.reviewAnchor, recovered.review_anchor) ||
-        !sameReviewFeedback(recorded.reviewFeedback, recovered.review_feedback))
+        JSON.stringify(recorded.attachments) !== JSON.stringify(recovered.attachments))
     ) {
       throw new Error('Local prompt recovery conflicts with the profile daemon; preserve both records for review')
     }
@@ -362,8 +349,6 @@ export class SendPipeline<E extends SendEntry = SendEntry> {
         draftText: recovered.draft_text as string,
         draftRevision: recovered.draft_revision as number,
         attachments: recovered.attachments as unknown[],
-        ...(recovered.review_anchor ? { reviewAnchor: recovered.review_anchor as ReviewAnchor } : {}),
-        ...(recovered.review_feedback ? { reviewFeedback: recovered.review_feedback as ReviewFeedback } : {}),
         dispatchStarted: true,
         restoreHold: true,
       })
@@ -385,8 +370,6 @@ export class SendPipeline<E extends SendEntry = SendEntry> {
             draftText: recovered.draft_text as string,
             draftRevision: recovered.draft_revision as number,
             attachments: recovered.attachments as unknown[],
-            ...(recovered.review_anchor ? { reviewAnchor: recovered.review_anchor as ReviewAnchor } : {}),
-            ...(recovered.review_feedback ? { reviewFeedback: recovered.review_feedback as ReviewFeedback } : {}),
           }
         : null)
     const visibleDraft = recorded
@@ -410,8 +393,6 @@ export class SendPipeline<E extends SendEntry = SendEntry> {
             draftText: restored.draftText,
             revision: restored.draftRevision,
             attachments: restored.attachments,
-            reviewAnchor: restored.reviewAnchor,
-            reviewFeedback: restored.reviewFeedback,
             state: (recovered?.state as 'pending' | 'rejected') || 'pending',
             preparing: false,
             admitted: recovered !== null,
@@ -426,8 +407,8 @@ export class SendPipeline<E extends SendEntry = SendEntry> {
   private async acceptedSend(
     entry: E,
     intent: SendIntent,
-    response: Response<'agent.send' | 'agent.send_review'>,
-  ): Promise<Response<'agent.send' | 'agent.send_review'>> {
+    response: Response<'agent.send'>,
+  ): Promise<Response<'agent.send'>> {
     if (localRecord(entry, await this.journal.list())?.restoreHold) {
       throw new Error('Restored prompt is held until its source outcome is reconciled')
     }
@@ -544,17 +525,14 @@ export class SendPipeline<E extends SendEntry = SendEntry> {
     const deliver = async (): Promise<SendResult> => {
       if (!activeProfile()) return uncertain()
       try {
-        const op = intent.reviewAnchor || intent.reviewFeedback ? 'agent.send_review' : 'agent.send'
-        const raw = await requestDaemon(entry.endpoint, op, {
+        const raw = await requestDaemon(entry.endpoint, 'agent.send', {
           conversation_id: entry.conversationId,
           request_id: intent.requestId,
           text: intent.text,
           attachments: intent.attachments,
-          ...(intent.reviewAnchor ? { review_anchor: intent.reviewAnchor } : {}),
-          ...(intent.reviewFeedback ? { review_feedback: intent.reviewFeedback } : {}),
         })
         // A reply that fails its contract is handled as a lost reply: the daemon is asked below.
-        const response = decodeResponse(op, raw)
+        const response = decodeResponse('agent.send', raw)
         if (!activeProfile()) return uncertain()
         try {
           return await this.acceptedSend(entry, intent, response)
@@ -623,8 +601,6 @@ export class SendPipeline<E extends SendEntry = SendEntry> {
           text: intent.text,
           revision: intent.revision,
           attachments: intent.attachments as Attachments,
-          ...(intent.reviewAnchor ? { review_anchor: intent.reviewAnchor } : {}),
-          ...(intent.reviewFeedback ? { review_feedback: intent.reviewFeedback } : {}),
         })
         const persisted = prepared.intent as { request_id?: string; state?: string } | null
         if (

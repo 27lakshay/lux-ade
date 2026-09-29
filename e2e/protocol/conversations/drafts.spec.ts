@@ -254,3 +254,27 @@ test('F036: a draft with a pending send cannot be edited or replaced until the s
     }),
   ).toMatchObject({ outcome: 'restored', draft: { text: 'saved text', revision: 3 } })
 })
+
+test('F036: the CLI reads and saves a window draft, and an older revision changes nothing', async ({ profile }) => {
+  const { conversationId } = await startConversation(profile, 'codex')
+  const window = ['--window', 'cli-window']
+  const saved = await profile.cli(
+    'draft',
+    'save',
+    conversationId,
+    ...window,
+    '--text',
+    'from the CLI',
+    '--revision',
+    '2',
+  )
+  expect(saved.code, saved.stderr).toBe(0)
+  expect(saved.json).toMatchObject({ type: 'draft', draft: { text: 'from the CLI', revision: 2 } })
+  const stale = await profile.cli('draft', 'save', conversationId, ...window, '--text', 'stale', '--revision', '1')
+  expect(stale.json).toMatchObject({ draft: { text: 'from the CLI', revision: 2 } })
+  expect((await profile.cli('draft', 'get', conversationId, ...window)).json).toMatchObject({
+    draft: { text: 'from the CLI', revision: 2 },
+  })
+  expect(await draft(profile, conversationId, 'cli-window')).toMatchObject({ text: 'from the CLI', revision: 2 })
+  expect((await profile.cli('draft', 'get', conversationId)).code).toBe(2)
+})

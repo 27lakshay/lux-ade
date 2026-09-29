@@ -2,18 +2,21 @@
 // review prompt the desktop used to build, checks every anchor against the
 // workspace's current status and diff, and queues the prompt on the
 // Conversation; the delivered message keeps the feedback for search.
-import { pathToFileURL } from 'node:url'
 import type { ReviewFeedback } from '../../../packages/client/dist/index.js'
 import { expect, test, type ScratchProfile, type ScratchRepo } from '../fixtures'
-import { binaries } from '../fixtures/environment'
 import { operationId } from '../worktrees/lifecycle'
 
-type ClientModule = typeof import('../../../packages/client/dist/index.js')
-
-/** The SDK's own batch formatter, as the desktop used it. */
-async function formatReviewFeedback(feedback: ReviewFeedback): Promise<string> {
-  const client = (await import(pathToFileURL(binaries.client).href)) as ClientModule
-  return client.formatReviewFeedback(feedback)
+/** The batch prompt clients built before the daemon did (the SDK's former `formatReviewFeedback`). */
+function formatReviewFeedback(feedback: ReviewFeedback): string {
+  const notes = feedback.notes.map(
+    ({ anchor, note }, index) =>
+      `${index + 1}. File: ${anchor.path}\nSide: ${anchor.staged ? 'staged' : 'unstaged'}\n` +
+      `Diff token: ${anchor.token}\nStatus revision: ${anchor.revision}\nHunk: ${anchor.hunk}\n` +
+      `${anchor.end_line === undefined ? 'Line' : 'Lines'}: +${anchor.line}${anchor.end_line === undefined ? '' : ` to +${anchor.end_line}`}\n` +
+      `Selected text: ${anchor.text}${anchor.end_text === undefined ? '' : `\nEnd text: ${anchor.end_text}`}\n` +
+      `Feedback: ${note.trim()}`,
+  )
+  return `Review feedback for workspace ${feedback.workspace_id}\n\n${notes.join('\n\n')}`
 }
 
 type Anchor = {
@@ -145,7 +148,7 @@ test('a batch with a note per anchor queues the client batch prompt', async ({ p
     conversation_id: conversationId,
     feedback: feedback as never,
   })
-  expect(sent.text).toBe(await formatReviewFeedback(feedback))
+  expect(sent.text).toBe(formatReviewFeedback(feedback))
 })
 
 test('a stale anchor, a filled draft and a conversation in another workspace are refused before queueing', async ({

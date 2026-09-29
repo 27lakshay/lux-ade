@@ -1,20 +1,6 @@
 //! Agent sends, resumes, provider event handling, cancellation and answers.
 use super::*;
 
-pub(super) struct SendAdmission<'a> {
-    pub(super) review_anchor: Option<&'a Value>,
-    pub(super) review_feedback: Option<&'a Value>,
-    pub(super) prelease: Option<crate::worktrees::Lease>,
-}
-impl SendAdmission<'_> {
-    pub(super) fn ordinary() -> Self {
-        Self {
-            review_anchor: None,
-            review_feedback: None,
-            prelease: None,
-        }
-    }
-}
 pub(super) struct Agent {
     pub(super) run_id: String,
     pub(super) rpc: Option<Arc<dyn Provider>>,
@@ -156,10 +142,7 @@ impl Sessions {
                 &head.text,
                 &head.attachments,
                 true,
-                SendAdmission {
-                    review_feedback: feedback.as_ref(),
-                    ..SendAdmission::ordinary()
-                },
+                feedback.as_ref(),
             ) {
                 let mut d = self.data.lock().unwrap();
                 if d.draining {
@@ -192,7 +175,7 @@ impl Sessions {
         text: &str,
         attachments: &[crate::model::Attachment],
         queued: bool,
-        admission: SendAdmission<'_>,
+        review_feedback: Option<&Value>,
     ) -> Result<()> {
         ensure!(text.len() <= 64 * 1024, "Prompt exceeds 64 KiB");
         let workspace_id = self
@@ -203,7 +186,7 @@ impl Sessions {
             .conversation(id)?
             .workspace_id;
         self.ensure_workspace_bound(&workspace_id)?;
-        let mut lease = admission.prelease;
+        let mut lease = None;
         let (c, run, rpc, prompt) = loop {
             // A new Agent's lease runs git, so it is taken before the session
             // lock. A connected Agent already holds one.
@@ -227,13 +210,7 @@ impl Sessions {
             );
             Self::ensure_lease_resolved(&d, &super::leases::LeaseKey::Agent(id.to_owned()))?;
             Self::ensure_not_stopping(&d, id)?;
-            d.store.guard_send_intent(
-                id,
-                key,
-                text,
-                attachments,
-                admission.review_anchor.or(admission.review_feedback),
-            )?;
+            d.store.guard_send_intent(id, key, text, attachments)?;
             let current = d.store.conversation(id)?;
             Self::ensure_not_imported(&current)?;
             Self::ensure_account_current(
@@ -255,7 +232,7 @@ impl Sessions {
                         && m.role == "user"
                         && m.text == text
                         && m.attachments == attachments
-                        && m.review_feedback.as_ref() == admission.review_feedback),
+                        && m.review_feedback.as_ref() == review_feedback),
                     "Resume this Conversation before sending another prompt"
                 );
             }
@@ -274,7 +251,7 @@ impl Sessions {
                 text,
                 attachments,
                 queued,
-                admission.review_feedback,
+                review_feedback,
             )?;
             if begin.duplicate {
                 return Ok(());

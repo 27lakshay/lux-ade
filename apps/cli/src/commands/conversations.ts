@@ -52,10 +52,10 @@ export async function journalFailure<T>(work: () => Promise<T>): Promise<T> {
 }
 
 /** A typed request body: the operation's contract without its `op`. */
-export type Fields<O extends DailyUseOperation> = Omit<DailyUseRequest<O>, 'op'>
+type Fields<O extends DailyUseOperation> = Omit<DailyUseRequest<O>, 'op'>
 
 /** Check a daemon reply against its contract; a mismatch is a protocol error. */
-export function decodeReply<O extends DailyUseOperation>(op: O, response: unknown): DailyUseResponse<O> {
+function decodeReply<O extends DailyUseOperation>(op: O, response: unknown): DailyUseResponse<O> {
   try {
     return decodeDailyUseResponse(op, response)
   } catch (error) {

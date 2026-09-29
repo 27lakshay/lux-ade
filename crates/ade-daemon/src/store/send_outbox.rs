@@ -60,7 +60,7 @@ pub fn send_list_limit(limit: Option<u64>) -> Result<u64> {
     Ok(limit)
 }
 
-const INTENT_COLUMNS: &str = "request_id,conversation_id,window_id,draft_revision,draft_text,text,attachments,state,review_anchor,restore_hold";
+const INTENT_COLUMNS: &str = "request_id,conversation_id,window_id,draft_revision,draft_text,text,attachments,state,restore_hold";
 
 impl Store {
     /// One window's unresolved sends across Conversations, ordered by
@@ -84,7 +84,7 @@ impl Store {
             ))?
             .query_map(
                 params![window, after.unwrap_or(""), limit as i64 + 1],
-                |row| Ok((send_intent_row(row)?, row.get::<_, i64>(9)? != 0)),
+                |row| Ok((send_intent_row(row)?, row.get::<_, i64>(8)? != 0)),
             )?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         let more = rows.len() as u64 > limit;
@@ -117,7 +117,7 @@ impl Store {
             .query_row(
                 &format!("SELECT {INTENT_COLUMNS} FROM send_intents WHERE request_id=?1"),
                 [request_id],
-                |row| Ok((send_intent_row(row)?, row.get::<_, i64>(9)? != 0)),
+                |row| Ok((send_intent_row(row)?, row.get::<_, i64>(8)? != 0)),
             )
             .optional()?
             .context("Unknown send intent")?;

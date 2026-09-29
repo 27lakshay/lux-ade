@@ -138,15 +138,17 @@ test('named CLI commands page a large diff and search retained review notes', as
     ],
   }
   const sendFeedback = (id: string, body: unknown) =>
-    profile.cli('git', 'feedback-send', conversationId, id, JSON.stringify(body))
-  const ack = { code: 0, json: { type: 'ack', request_id: 'cli-parity-feedback' } }
-  expect(await sendFeedback('cli-parity-feedback', feedback)).toMatchObject(ack)
-  expect(await sendFeedback('cli-parity-feedback', feedback)).toMatchObject(ack)
+    profile.cli('--operation-id', id, 'review', 'send', conversationId, '--feedback', JSON.stringify(body))
+  const queued = { code: 0, json: { type: 'review_feedback_queued', queued_prompt_id: 'cli-parity-feedback' } }
+  expect(await sendFeedback('cli-parity-feedback', feedback)).toMatchObject(queued)
+  expect(await sendFeedback('cli-parity-feedback', feedback)).toMatchObject(queued)
   const changedFeedback = { ...feedback, notes: [{ ...feedback.notes[0], note: 'Changed note' }] }
   expect(await sendFeedback('cli-parity-feedback', changedFeedback)).toMatchObject({
-    code: 7,
-    json: { code: 'daemon' },
+    code: 8,
+    json: { code: 'conflict' },
   })
+  // The queue delivers the prompt as a message under the same ID.
+  await expect.poll(() => messageIds(profile, conversationId)).toContain('cli-parity-feedback')
 
   const found = await profile.cli(
     'git',
@@ -187,29 +189,16 @@ test('named CLI commands page a large diff and search retained review notes', as
     { code: 2, json: { code: 'usage' } },
   )
   expect(await sendFeedback('invalid-feedback', { ...feedback, notes: [] })).toMatchObject({
-    code: 2,
-    json: { code: 'usage' },
+    code: 7,
+    json: { code: 'daemon', message: expect.stringMatching(/1 to 16 notes/) },
   })
 
-  // Feedback anchored to a diff that changed is refused before admission, and stays refused.
+  // Feedback anchored to a diff that changed is refused before it is queued.
   await waitForIdle(profile, conversationId)
   await repo.write('tracked.txt', 'baseline\nchanged after review\n')
   expect(await sendFeedback('cli-parity-stale', feedback)).toMatchObject({
     code: 27,
     json: { code: 'review_anchor_stale', message: expect.stringMatching(/Stale diff/i) },
-  })
-  expect(
-    await sendFeedback('cli-parity-stale', {
-      ...feedback,
-      notes: [{ ...feedback.notes[0], note: 'Reused stale ID with changed feedback' }],
-    }),
-  ).toMatchObject({
-    code: 7,
-    json: { code: 'daemon', message: expect.stringMatching(/already used for a different prompt/i) },
-  })
-  expect(await sendFeedback('cli-parity-stale', feedback)).toMatchObject({
-    code: 7,
-    json: { code: 'daemon', message: expect.stringMatching(/rejected before admission/i) },
   })
   expect(await messageIds(profile, conversationId)).not.toContain('cli-parity-stale')
   expect(await turnStarts(profile)).toBe(1)
@@ -234,7 +223,6 @@ test('batch feedback admits every range together and retains structured anchors 
   const repo = await ade.repo({ initialFiles: { 'tracked.txt': 'baseline\n' } })
   await repo.write('tracked.txt', 'baseline\nfirst\nsecond\nthird\n')
   const { workspaceId, conversationId } = await startConversation(profile, 'codex', repo.path)
-  const owner = { conversation_id: conversationId, window_id: 'review-window' }
   const page = (await profile.call('review.diff_page', {
     workspace_id: workspaceId,
     path: 'tracked.txt',
@@ -256,48 +244,33 @@ test('batch feedback admits every range together and retains structured anchors 
     text: line(number).text,
   })
   const feedback = {
-    format: 'ade-review-feedback-v1',
+    format: 'ade-review-feedback-v1' as const,
     workspace_id: workspaceId,
     notes: [
       { anchor: { ...anchor(2), end_line: 3, end_text: line(3).text }, note: 'Review the range' },
       { anchor: anchor(4), note: 'Review the final line' },
     ],
   }
-  const draft = 'Review tracked.txt lines 2-4: Review the range; Review the final line'
-  const sendReview = (request_id: string, review_feedback: typeof feedback) =>
-    profile.call('agent.send_review', { conversation_id: conversationId, request_id, text: draft, review_feedback })
-  const prepare = (window: typeof owner, request_id: string, review_feedback: typeof feedback) =>
-    profile.call('draft.send.prepare', {
-      ...window,
-      request_id,
-      draft_text: draft,
-      revision: 1,
-      text: draft,
-      review_feedback,
-    })
-  await profile.call('draft.save', { ...owner, text: draft, revision: 1 })
+  const send = (operation_id: string, body: typeof feedback) =>
+    profile.call('review.feedback.send', { operation_id, conversation_id: conversationId, feedback: body })
+  const conversation = () => profile.call('conversation.get', { conversation_id: conversationId })
 
-  // One wrong anchor refuses the whole batch; nothing is admitted.
+  // One wrong anchor refuses the whole batch; nothing is queued.
   const invalid = {
     ...feedback,
     notes: [feedback.notes[0], { ...feedback.notes[1], anchor: { ...anchor(4), text: '+wrong' } }],
   }
-  await prepare(owner, 'review-bad', invalid)
-  await expect(sendReview('review-bad', invalid)).rejects.toThrow('Stale diff')
+  await expect(send('review-bad', invalid)).rejects.toThrow('Stale diff')
+  expect((await conversation()).queued).toEqual([])
   expect(await messageIds(profile, conversationId)).toEqual([])
-  expect(await profile.call('draft.send.get', owner)).toMatchObject({
-    intent: { request_id: 'review-bad', state: 'rejected' },
-  })
-  await profile.call('draft.send.abort', { ...owner, request_id: 'review-bad' })
 
-  expect(await prepare(owner, 'review-batch', feedback)).toMatchObject({ intent: { review_feedback: feedback } })
-  expect(await profile.call('draft.send.get', owner)).toMatchObject({ intent: { review_feedback: feedback } })
-  await expect(prepare(owner, 'review-batch', { ...feedback, notes: [feedback.notes[0]] })).rejects.toThrow(
-    'different prompt',
-  )
-  await sendReview('review-batch', feedback)
-  expect((await profile.call('conversation.get', { conversation_id: conversationId })).messages).toEqual(
-    expect.arrayContaining([expect.objectContaining({ id: 'review-batch', review_feedback: feedback })]),
+  const queued = await send('review-batch', feedback)
+  expect(queued).toMatchObject({ type: 'review_feedback_queued', queued_prompt_id: 'review-batch' })
+  await expect.poll(() => messageIds(profile, conversationId)).toContain('review-batch')
+  expect((await conversation()).messages).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ id: 'review-batch', text: queued.text, review_feedback: feedback }),
+    ]),
   )
   expect(
     await profile.call('review.feedback.search', {
@@ -316,26 +289,19 @@ test('batch feedback admits every range together and retains structured anchors 
     ],
   })
   await waitForIdle(profile, conversationId)
-  expect((await profile.call('conversation.get', { conversation_id: conversationId })).messages).toEqual(
-    expect.arrayContaining([expect.objectContaining({ id: 'review-batch', review_feedback: feedback })]),
-  )
-  // The same send again converges on the admitted one.
-  await expect(sendReview('review-batch', feedback)).resolves.toMatchObject({ type: 'ack' })
+  // The same send again replays its recorded reply.
+  expect(await send('review-batch', feedback)).toEqual(queued)
 
-  // A file changed after selection makes a prepared review stale.
-  const staleOwner = { conversation_id: conversationId, window_id: 'review-stale-window' }
-  await profile.call('draft.save', { ...staleOwner, text: draft, revision: 1 })
-  await prepare(staleOwner, 'review-stale-file', feedback)
+  // A file changed after selection makes the feedback stale.
   await repo.write('tracked.txt', 'baseline\nfirst\nchanged after selection\nthird\n')
-  await expect(sendReview('review-stale-file', feedback)).rejects.toThrow('Stale diff')
-  expect(await profile.call('draft.send.get', staleOwner)).toMatchObject({
-    intent: { request_id: 'review-stale-file', state: 'rejected' },
-  })
+  await expect(send('review-stale-file', feedback)).rejects.toThrow('Stale diff')
   expect(await turnStarts(profile)).toBe(1)
 
   await profile.restartDaemon()
   expect((await profile.call('conversation.get', { conversation_id: conversationId })).messages).toEqual(
-    expect.arrayContaining([expect.objectContaining({ id: 'review-batch', text: draft, review_feedback: feedback })]),
+    expect.arrayContaining([
+      expect.objectContaining({ id: 'review-batch', text: queued.text, review_feedback: feedback }),
+    ]),
   )
   expect(await profile.call('review.feedback.search', { workspace_id: workspaceId, query: 'range' })).toMatchObject({
     results: [{ message_id: 'review-batch', review_feedback: { notes: [feedback.notes[0]] } }],

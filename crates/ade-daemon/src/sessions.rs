@@ -63,7 +63,7 @@ mod skills;
 mod terminals;
 mod workspaces;
 
-use agents::{Agent, SendAdmission};
+use agents::Agent;
 pub use inspection::{FEED_QUEUE_CAPACITY, SessionInspection};
 use services::{HealthAttempt, HealthSample};
 use workspaces::selected_binding;
@@ -852,7 +852,6 @@ impl Sessions {
             | "draft.send.list"
             | "draft.send.acknowledge"
             | "agent.send"
-            | "agent.send_review"
             | "queue.enqueue"
             | "queue.cancel"
             | "queue.pause"

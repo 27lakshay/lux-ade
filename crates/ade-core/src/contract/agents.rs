@@ -4,7 +4,6 @@
 //! `agent.send` and `agent.answer` live in [`super::conversations`].
 use super::conversations::Ack;
 use super::{FrameSpec, OperationSpec, Tier};
-use crate::model::Attachment;
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
@@ -14,7 +13,6 @@ pub fn operations() -> Vec<OperationSpec> {
         OperationSpec::new::<AgentCancelRequest, Ack>("agent.cancel", Tier::EffectCommand),
         OperationSpec::new::<AgentResumeRequest, Ack>("agent.resume", Tier::EffectCommand),
         OperationSpec::new::<AgentDisconnectRequest, Ack>("agent.disconnect", Tier::EffectCommand),
-        OperationSpec::new::<AgentSendReviewRequest, Ack>("agent.send_review", Tier::EffectCommand),
         OperationSpec::new::<AgentChildTranscriptRequest, ChildTranscriptPage>(
             "agent.child_transcript",
             Tier::Query,
@@ -73,35 +71,6 @@ pub struct AgentDisconnectRequest {
     /// the same ID with another payload is a conflict.
     pub operation_id: String,
     pub conversation_id: String,
-}
-
-/// `agent.send_review`: submit a prompt that carries review feedback.
-/// `request_id` is the caller-owned send identity shared with the draft send
-/// intent. Exactly one of `review_anchor` and `review_feedback` is present.
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
-pub struct AgentSendReviewRequest {
-    pub conversation_id: String,
-    pub request_id: String,
-    pub text: String,
-    /// Review prompts reject attachments; an empty list is accepted.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub attachments: Vec<Attachment>,
-    /// One review anchor.
-    #[serde(
-        default,
-        deserialize_with = "present",
-        skip_serializing_if = "Option::is_none"
-    )]
-    #[schemars(with = "Value")]
-    pub review_anchor: Option<Value>,
-    /// A review feedback batch.
-    #[serde(
-        default,
-        deserialize_with = "present",
-        skip_serializing_if = "Option::is_none"
-    )]
-    #[schemars(with = "Value")]
-    pub review_feedback: Option<Value>,
 }
 
 /// `agent.child_transcript`: one page of a provider child agent's transcript.
@@ -301,7 +270,6 @@ mod tests {
             ("agent.cancel", "effect_command"),
             ("agent.resume", "effect_command"),
             ("agent.disconnect", "effect_command"),
-            ("agent.send_review", "effect_command"),
             ("agent.child_transcript", "query"),
             ("agent.list", "query"),
             ("agent.account_inspect", "query"),
@@ -332,30 +300,6 @@ mod tests {
                 "turn_id": "turn_1"}),
         );
         assert_eq!(fenced.turn_id.as_deref(), Some("turn_1"));
-    }
-
-    #[test]
-    fn send_review_keeps_explicit_null_payloads() {
-        let feedback = json!({"workspace_id": "workspace_1", "comments": []});
-        let decoded: AgentSendReviewRequest = request(
-            "agent.send_review",
-            json!({"op": "agent.send_review", "conversation_id": "conversation_1",
-                "request_id": "send_1", "text": "review", "review_feedback": feedback}),
-        );
-        assert_eq!(decoded.review_feedback, Some(feedback));
-        assert_eq!(decoded.review_anchor, None);
-        let decoded: AgentSendReviewRequest = serde_json::from_value(json!({
-            "conversation_id": "c", "request_id": "r", "text": "t",
-            "attachments": [], "review_anchor": null,
-        }))
-        .unwrap();
-        assert_eq!(decoded.review_anchor, Some(Value::Null));
-        assert_eq!(decoded.review_feedback, None);
-        let (name, _, _) = operation("agent.send_review");
-        assert!(!validator(&name).is_valid(&json!({
-            "op": "agent.send_review", "conversation_id": "c", "request_id": "r",
-            "text": "t", "note": "extra",
-        })));
     }
 
     #[test]

@@ -42,13 +42,7 @@ export {
   type OperationIdOperation,
 } from './call.js'
 export { isOperation, operationIdOperations, operations, type Operation, type Tier } from '@ade/contracts'
-export {
-  formatReviewFeedback,
-  sameReviewAnchor,
-  sameReviewFeedback,
-  type ReviewAnchor,
-  type ReviewFeedback,
-} from './review.js'
+export { type ReviewAnchor, type ReviewFeedback } from './review.js'
 export {
   applyWindowFrame,
   parseWindow,

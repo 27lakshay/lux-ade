@@ -3,20 +3,6 @@ use super::*;
 pub use ade_core::contract::conversations::SendIntent;
 
 pub(super) fn send_intent_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SendIntent> {
-    let stored: Option<serde_json::Value> = row
-        .get::<_, Option<String>>(8)?
-        .map(|value| serde_json::from_str(&value))
-        .transpose()
-        .map_err(|error| {
-            rusqlite::Error::FromSqlConversionFailure(
-                8,
-                rusqlite::types::Type::Text,
-                Box::new(error),
-            )
-        })?;
-    let is_batch = stored
-        .as_ref()
-        .is_some_and(|value| value["format"] == "ade-review-feedback-v1");
     Ok(SendIntent {
         request_id: row.get(0)?,
         conversation_id: row.get(1)?,
@@ -26,8 +12,6 @@ pub(super) fn send_intent_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SendI
         text: row.get(5)?,
         attachments: attachment_row(row, 6)?,
         state: row.get(7)?,
-        review_anchor: if is_batch { None } else { stored.clone() },
-        review_feedback: if is_batch { stored } else { None },
     })
 }
 
@@ -49,7 +33,7 @@ impl Store {
         self.conversation(conversation)?;
         check_id(window)?;
         self.connection.query_row(
-            "SELECT request_id,conversation_id,window_id,draft_revision,draft_text,text,attachments,state,review_anchor FROM send_intents WHERE conversation_id=?1 AND window_id=?2 AND state IN ('pending','rejected')",
+            "SELECT request_id,conversation_id,window_id,draft_revision,draft_text,text,attachments,state FROM send_intents WHERE conversation_id=?1 AND window_id=?2 AND state IN ('pending','rejected')",
             params![conversation, window],
             send_intent_row,
         ).optional().map_err(Into::into)
@@ -62,10 +46,9 @@ impl Store {
         request_id: &str,
         text: &str,
         attachments: &[Attachment],
-        review_payload: Option<&serde_json::Value>,
     ) -> Result<()> {
         let intent: Option<SendIntent> = self.connection.query_row(
-            "SELECT request_id,conversation_id,window_id,draft_revision,draft_text,text,attachments,state,review_anchor FROM send_intents WHERE request_id=?1",
+            "SELECT request_id,conversation_id,window_id,draft_revision,draft_text,text,attachments,state FROM send_intents WHERE request_id=?1",
             [request_id], send_intent_row,
         ).optional()?;
         if let Some(intent) = intent {
@@ -73,12 +56,7 @@ impl Store {
             ensure!(
                 intent.conversation_id == conversation
                     && intent.text == text
-                    && intent.attachments == attachments
-                    && intent
-                        .review_anchor
-                        .as_ref()
-                        .or(intent.review_feedback.as_ref())
-                        == review_payload,
+                    && intent.attachments == attachments,
                 "Send intent ID was already used for a different prompt or conversation"
             );
             ensure!(intent.state != "aborted", "Send intent was aborted");
@@ -117,7 +95,6 @@ impl Store {
         request_id: &str,
         draft: &Draft,
         text: &str,
-        review_payload: Option<&serde_json::Value>,
     ) -> Result<SendIntent> {
         check_id(request_id)?;
         check_id(window)?;
@@ -130,14 +107,13 @@ impl Store {
         validate_attachments(&self.connection, conversation, &draft.attachments)?;
         let tx = self.transaction()?;
         if let Some(existing) = tx.query_row(
-            "SELECT request_id,conversation_id,window_id,draft_revision,draft_text,text,attachments,state,review_anchor FROM send_intents WHERE request_id=?1",
+            "SELECT request_id,conversation_id,window_id,draft_revision,draft_text,text,attachments,state FROM send_intents WHERE request_id=?1",
             [request_id], send_intent_row,
         ).optional()? {
             ensure!(existing.conversation_id == conversation && existing.window_id == window
                 && existing.draft_revision == draft.revision && existing.draft_text == draft.text
                 && existing.text == text
-                && existing.attachments == draft.attachments
-                && existing.review_anchor.as_ref().or(existing.review_feedback.as_ref()) == review_payload,
+                && existing.attachments == draft.attachments,
                 "Send intent ID was already used for a different prompt or owner");
             return Ok(existing);
         }
@@ -157,8 +133,8 @@ impl Store {
             "SELECT 1 FROM send_intents WHERE conversation_id=?1 AND window_id=?2 AND state IN ('pending','rejected')",
             params![conversation,window], |_| Ok(()),
         ).optional()?.is_none(), "Resolve the pending send before preparing another prompt");
-        tx.execute("INSERT INTO send_intents(request_id,conversation_id,window_id,draft_revision,draft_text,text,attachments,state,review_anchor) VALUES(?1,?2,?3,?4,?5,?6,?7,'pending',?8)",
-            params![request_id,conversation,window,draft.revision,draft.text,text,encode(&draft.attachments)?,review_payload.map(serde_json::to_string).transpose()?])?;
+        tx.execute("INSERT INTO send_intents(request_id,conversation_id,window_id,draft_revision,draft_text,text,attachments,state) VALUES(?1,?2,?3,?4,?5,?6,?7,'pending')",
+            params![request_id,conversation,window,draft.revision,draft.text,text,encode(&draft.attachments)?])?;
         tx.commit()?;
         Ok(SendIntent {
             request_id: request_id.into(),
@@ -169,12 +145,6 @@ impl Store {
             text: text.into(),
             attachments: draft.attachments.clone(),
             state: "pending".into(),
-            review_anchor: review_payload
-                .filter(|value| value["format"] != "ade-review-feedback-v1")
-                .cloned(),
-            review_feedback: review_payload
-                .filter(|value| value["format"] == "ade-review-feedback-v1")
-                .cloned(),
         })
     }
     /// An acknowledged user message and draft clear settle together. A missing
@@ -190,7 +160,7 @@ impl Store {
         self.ensure_send_intent_unheld(request_id)?;
         let tx = self.transaction()?;
         let intent: SendIntent = tx.query_row(
-            "SELECT request_id,conversation_id,window_id,draft_revision,draft_text,text,attachments,state,review_anchor FROM send_intents WHERE request_id=?1",
+            "SELECT request_id,conversation_id,window_id,draft_revision,draft_text,text,attachments,state FROM send_intents WHERE request_id=?1",
             [request_id], send_intent_row,
         ).optional()?.context("Unknown send intent")?;
         ensure!(
@@ -278,7 +248,7 @@ impl Store {
         self.ensure_send_intent_unheld(request_id)?;
         let tx = self.transaction()?;
         let intent: SendIntent = tx.query_row(
-            "SELECT request_id,conversation_id,window_id,draft_revision,draft_text,text,attachments,state,review_anchor FROM send_intents WHERE request_id=?1",
+            "SELECT request_id,conversation_id,window_id,draft_revision,draft_text,text,attachments,state FROM send_intents WHERE request_id=?1",
             [request_id], send_intent_row,
         ).optional()?.context("Unknown send intent")?;
         ensure!(

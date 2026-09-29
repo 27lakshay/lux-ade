@@ -9,7 +9,7 @@
 // - Commands settled in their handler's own transaction: skill adoption and
 //   placement, plugin install, uninstall and command invocation, delegation,
 //   child and parent messages, parallel groups, HostResources recovery,
-//   hook delivery retries, repository publishing and review prompts.
+//   hook delivery retries, repository publishing and review feedback.
 import { existsSync } from 'node:fs'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -584,8 +584,8 @@ export const domainCases: EffectCase[] = [
         : 0,
   },
   {
-    // Identified by its send request ID, as agent.send is.
-    op: 'agent.send_review',
+    // The queued prompt's ID is the operation ID.
+    op: 'review.feedback.send',
     outcome: settledReply,
     unknown: () => false,
     setup: async (context) => {
@@ -625,14 +625,21 @@ export const domainCases: EffectCase[] = [
       }
       return { conversationId: conversation.id, feedback }
     },
-    request: (state: { conversationId: string; feedback: unknown }, id, altered) => ({
+    request: (state: { conversationId: string; feedback: { notes: { note: string }[] } }, id, altered) => ({
+      operation_id: id,
       conversation_id: state.conversationId,
-      request_id: id,
-      text: altered ? 'Another review prompt' : 'Review tracked.txt line 2: Check this line',
-      review_feedback: state.feedback,
+      feedback: altered
+        ? { ...state.feedback, notes: [{ ...state.feedback.notes[0]!, note: 'Check this line again' }] }
+        : state.feedback,
     }),
-    effect: async (context) =>
-      (await context.profile.mockCalls('codex')).filter((entry) => entry.method === 'turn/start').length,
+    // Each admitted prompt is queued, then delivered as a message with the same ID.
+    effect: async (context, state: { conversationId: string }) => {
+      const snapshot = await context.profile.call('conversation.get', { conversation_id: state.conversationId })
+      return (
+        snapshot.messages.filter((message) => (message as { role: string }).role === 'user').length +
+        snapshot.queued.filter((prompt) => (prompt as { status: string }).status === 'queued').length
+      )
+    },
   },
 ]
 

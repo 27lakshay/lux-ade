@@ -1743,44 +1743,6 @@
       ],
       "type": "object"
     },
-    "AgentSendReviewRequest": {
-      "additionalProperties": false,
-      "description": "`agent.send_review`: submit a prompt that carries review feedback.\n`request_id` is the caller-owned send identity shared with the draft send\nintent. Exactly one of `review_anchor` and `review_feedback` is present.",
-      "properties": {
-        "attachments": {
-          "description": "Review prompts reject attachments; an empty list is accepted.",
-          "items": {
-            "$ref": "#/$defs/Attachment"
-          },
-          "type": "array"
-        },
-        "conversation_id": {
-          "type": "string"
-        },
-        "op": {
-          "const": "agent.send_review"
-        },
-        "request_id": {
-          "type": "string"
-        },
-        "review_anchor": {
-          "description": "One review anchor."
-        },
-        "review_feedback": {
-          "description": "A review feedback batch."
-        },
-        "text": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "op",
-        "conversation_id",
-        "request_id",
-        "text"
-      ],
-      "type": "object"
-    },
     "AppCommand": {
       "description": "An app command a key runs: the desktop's application-menu commands\n(F015). Every client reads the same keys for them from the daemon.",
       "enum": [
@@ -11365,12 +11327,6 @@
         },
         "request_id": {
           "type": "string"
-        },
-        "review_anchor": {
-          "description": "One review anchor; excludes `review_feedback`."
-        },
-        "review_feedback": {
-          "description": "A review feedback batch; excludes `review_anchor`."
         },
         "revision": {
           "maximum": 9007199254740991,
@@ -24503,12 +24459,6 @@
         "request_id": {
           "type": "string"
         },
-        "review_anchor": {
-          "description": "Null unless the send carries one review anchor."
-        },
-        "review_feedback": {
-          "description": "Null unless the send carries a review feedback batch."
-        },
         "state": {
           "description": "`pending`, `rejected`, `completed` or `aborted`.",
           "type": "string"
@@ -24528,9 +24478,7 @@
         "draft_text",
         "text",
         "attachments",
-        "state",
-        "review_anchor",
-        "review_feedback"
+        "state"
       ],
       "type": "object"
     },
@@ -31854,13 +31802,6 @@
       "domain": "agents",
       "name": "agent.disconnect",
       "request": "AgentDisconnectRequest",
-      "response": "Ack",
-      "tier": "effect_command"
-    },
-    {
-      "domain": "agents",
-      "name": "agent.send_review",
-      "request": "AgentSendReviewRequest",
       "response": "Ack",
       "tier": "effect_command"
     },

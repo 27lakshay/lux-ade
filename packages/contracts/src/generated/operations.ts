@@ -51,7 +51,6 @@ export const operations = {
   "agent.cancel": { tier: "effect_command", domain: "agents", request: "AgentCancelRequest", response: "Ack" },
   "agent.resume": { tier: "effect_command", domain: "agents", request: "AgentResumeRequest", response: "Ack" },
   "agent.disconnect": { tier: "effect_command", domain: "agents", request: "AgentDisconnectRequest", response: "Ack" },
-  "agent.send_review": { tier: "effect_command", domain: "agents", request: "AgentSendReviewRequest", response: "Ack" },
   "agent.child_transcript": { tier: "query", domain: "agents", request: "AgentChildTranscriptRequest", response: "ChildTranscriptPage" },
   "agent.list": { tier: "query", domain: "agents", request: "AgentListRequest", response: "AgentList" },
   "agent.account_inspect": { tier: "query", domain: "agents", request: "AgentAccountInspectRequest", response: "AgentAccountInspection" },
