@@ -174,3 +174,15 @@ test('lifecycle IDs from before projects move onto the project ID and still reso
   // Registering again finds the project ID.
   expect(await register(profile, repo)).toBe(projectId)
 })
+
+test('registering a repository with the lifecycle adds nothing to the catalog, and its first workspace takes that ID', async ({
+  ade,
+  profile,
+}) => {
+  const repo = await ade.repo()
+  const lifecycleId = await register(profile, repo)
+  expect((await catalog(profile)).projects.map((project) => project.id)).not.toContain(lifecycleId)
+  const { workspace } = await profile.call('workspace.open', { path: repo.path })
+  expect(workspace.project_id).toBe(lifecycleId)
+  expect(await register(profile, repo)).toBe(lifecycleId)
+})

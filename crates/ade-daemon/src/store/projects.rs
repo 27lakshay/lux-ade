@@ -435,29 +435,15 @@ impl Store {
         Ok(true)
     }
 
-    /// The catalog repository whose Git common directory is `common`, created
-    /// and bound when there is none, so the worktree lifecycle and the
-    /// catalog share one project ID.
-    pub fn project_for_common(&self, common: &str) -> Result<String> {
-        ensure!(!common.is_empty(), "Repository root is empty");
-        ensure!(!self.has_pending_rebind()?, ade_core::error::NeedsRebind);
-        let tx = self.transaction()?;
-        if let Some(id) = repository_by_common(&tx, common)? {
-            return Ok(id);
+    /// The catalog repository whose Git common directory is `common`, if the
+    /// catalog has one. It never creates one: a repository the lifecycle
+    /// registers first keeps the lifecycle's ID, and the catalog takes that ID
+    /// when a workspace of it opens (`workspace_open`'s `preferred_id`).
+    pub fn project_for_common(&self, common: &str) -> Result<Option<String>> {
+        if common.is_empty() {
+            return Ok(None);
         }
-        let repository = Repository {
-            id: new_id("repo"),
-            root: common.into(),
-            needs_rebind: false,
-            worktree_lifecycle_needs_rebind: false,
-        };
-        tx.execute(
-            "INSERT INTO repositories VALUES(?1,?2,?3)",
-            params![repository.id, repository.root, encode(&repository)?],
-        )?;
-        write_binding(&tx, "repository", &repository.id, &repository.root)?;
-        tx.commit()?;
-        Ok(repository.id)
+        repository_by_common(&self.connection, common)
     }
 
     /// A project by its ID: a repository, or a folder workspace's project.
@@ -545,13 +531,32 @@ mod tests {
         // The lifecycle finds the same project from the common directory.
         assert_eq!(
             store.project_for_common(&common).unwrap(),
-            checkout.project_id
+            Some(checkout.project_id.clone())
         );
-        // A repository the catalog has not seen is created once, bound.
-        let other = test_root(&format!("{}/.git", new_id("lifecycle-only")));
-        let created = store.project_for_common(&other).unwrap();
-        assert_eq!(store.project_for_common(&other).unwrap(), created);
-        assert!(store.repository_bound(&created).unwrap());
+        // A repository the catalog has not seen is not created by the lookup;
+        // its first workspace takes the lifecycle's ID.
+        let name = new_id("lifecycle-only");
+        let other = test_root(&format!("{name}/.git"));
+        assert_eq!(store.project_for_common(&other).unwrap(), None);
+        let opened = store
+            .workspace_open_as(
+                &test_root(&name),
+                Some(&other),
+                Some("repository_lifecycle"),
+            )
+            .unwrap();
+        assert_eq!(opened.project_id, "repository_lifecycle");
+        assert!(store.repository_bound("repository_lifecycle").unwrap());
+        // A preferred ID another repository holds is not reused.
+        let third = new_id("third");
+        let taken = store
+            .workspace_open_as(
+                &test_root(&third),
+                Some(&test_root(&format!("{third}/.git"))),
+                Some("repository_lifecycle"),
+            )
+            .unwrap();
+        assert_ne!(taken.project_id, "repository_lifecycle");
     }
 
     #[test]

@@ -573,7 +573,7 @@ pub struct Worktrees {
     project_ids: std::sync::OnceLock<ProjectIds>,
 }
 /// Finds or creates the catalog project for a Git common directory.
-pub type ProjectIds = Arc<dyn Fn(&str) -> Result<String> + Send + Sync>;
+pub type ProjectIds = Arc<dyn Fn(&str) -> Result<Option<String>> + Send + Sync>;
 pub struct Lease {
     hub: Arc<Worktrees>,
     path: PathBuf,
@@ -1237,7 +1237,7 @@ impl Worktrees {
     /// next start. Returns how many moved.
     pub fn unify_repository_ids(
         &self,
-        project_id: impl Fn(&str) -> Result<String>,
+        project_id: impl Fn(&str) -> Result<Option<String>>,
     ) -> Result<usize> {
         let repositories: Vec<Repository> = {
             let d = self.data.lock().unwrap();
@@ -1252,7 +1252,7 @@ impl Worktrees {
                 continue;
             }
             let target = match project_id(&repository.common_dir) {
-                Ok(target) if target != repository.id => target,
+                Ok(Some(target)) if target != repository.id => target,
                 Ok(_) => continue,
                 Err(error) => {
                     eprintln!(
@@ -2143,7 +2143,12 @@ impl Worktrees {
         );
         // The catalog's project for this repository, found before the
         // lifecycle lock: the catalog takes its own lock to create one.
-        let project = self.project_ids.get().map(|ids| ids(&common)).transpose()?;
+        let project = self
+            .project_ids
+            .get()
+            .map(|ids| ids(&common))
+            .transpose()?
+            .flatten();
         let d = self.data.lock().unwrap();
         let rows: Vec<String> =
             d.db.prepare("SELECT data FROM repositories")?

@@ -644,6 +644,17 @@ impl Store {
         root: &str,
         repository_root: Option<&str>,
     ) -> Result<WorkspaceRecord> {
+        self.workspace_open_as(root, repository_root, None)
+    }
+    /// `workspace_open`, where a repository the catalog does not have yet
+    /// takes `preferred_id` (the worktree lifecycle's ID for the same common
+    /// directory) unless another repository holds it.
+    pub fn workspace_open_as(
+        &self,
+        root: &str,
+        repository_root: Option<&str>,
+        preferred_id: Option<&str>,
+    ) -> Result<WorkspaceRecord> {
         ensure!(!root.is_empty(), "Workspace root is empty");
         let (mut needs_rebind, worktree_lifecycle_needs_rebind) = self.inherited_binding(root)?;
         needs_rebind |= self.has_pending_rebind()?;
@@ -695,8 +706,18 @@ impl Store {
             Some(if let Some(id) = existing {
                 id
             } else {
+                let taken = |id: &str| -> Result<bool> {
+                    Ok(tx
+                        .query_row("SELECT 1 FROM repositories WHERE id=?1", [id], |_| Ok(()))
+                        .optional()?
+                        .is_some())
+                };
+                let id = match preferred_id {
+                    Some(id) if !id.is_empty() && !taken(id)? => id.to_owned(),
+                    _ => new_id("repo"),
+                };
                 let repository = Repository {
-                    id: new_id("repo"),
+                    id,
                     root: repository_root.into(),
                     needs_rebind: false,
                     worktree_lifecycle_needs_rebind: false,

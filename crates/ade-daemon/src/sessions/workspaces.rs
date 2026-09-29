@@ -350,8 +350,15 @@ impl Sessions {
                 .and_then(|o| String::from_utf8(o.stdout).ok())
                 .map(|s| s.trim().to_owned())
         };
+        // A repository the lifecycle registered first keeps its ID as the project's.
+        let lifecycle = match &repo {
+            Some(common) => self.worktrees.repository_for_common(common)?,
+            None => None,
+        };
         let mut d = self.data.lock().unwrap();
-        let w = d.store.workspace_open(root, repo.as_deref())?;
+        let w = d
+            .store
+            .workspace_open_as(root, repo.as_deref(), lifecycle.as_deref())?;
         self.catalog_changed(&mut d)?;
         Ok(w)
     }
