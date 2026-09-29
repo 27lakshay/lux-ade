@@ -3,7 +3,17 @@
 // keyed by the revisions the caller saw. The same recall converges after a
 // lost reply, a reconnect and a daemon crash; an altered recall under the
 // same revisions writes nothing.
-import { expect, prompts, send, startConversation, test, waitForIdle, type ScratchProfile } from '../fixtures'
+import {
+  expect,
+  prompts,
+  send,
+  startConversation,
+  test,
+  turnReply,
+  waitForIdle,
+  waitForMessage,
+  type ScratchProfile,
+} from '../fixtures'
 import { sendAndLoseReply } from '../fixtures/lost-reply'
 
 async function draft(profile: ScratchProfile, conversationId: string, windowId: string) {
@@ -49,6 +59,8 @@ test('R001: a discard and a send are recorded in history once, whatever is retri
     attachments: [],
   })
   await send(profile, conversationId, prompts.turn, 'history-send')
+  // The turn finishes first, so the crash below cannot interrupt it before the provider starts it.
+  await waitForMessage(profile, conversationId, turnReply.codex)
   await sendAndLoseReply(profile, { op: 'draft.send.complete', ...owner, request_id: 'history-send' })
   await expect.poll(async () => (await draft(profile, conversationId, 'window-once')).text).toBe('')
   await profile.restartDaemon('kill')
