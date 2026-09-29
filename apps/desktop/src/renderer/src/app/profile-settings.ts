@@ -1,6 +1,8 @@
 import type { ProfileSettings } from '@ade/contracts'
 import type { AdeHost } from '../../../shared/bridge'
 import type { DaemonStore } from '../state/daemon-store'
+import type { Keybindings } from '../../../shared/app-commands'
+import { applyKeybindings } from './keybindings'
 import { applyMotionPreference } from './motion-preference'
 import { applyThemePreference } from './theme'
 
@@ -11,6 +13,7 @@ import { applyThemePreference } from './theme'
 function show(settings: ProfileSettings): void {
   applyThemePreference(settings.appearance)
   applyMotionPreference(settings.reduced_motion)
+  applyKeybindings(settings.keybindings as Keybindings)
 }
 
 /** Follows the daemon's settings; returns the unsubscribe function. */

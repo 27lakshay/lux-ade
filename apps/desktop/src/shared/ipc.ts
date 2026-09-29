@@ -83,6 +83,7 @@ export interface InvokeChannels {
 /** Renderer → main messages with no reply (`send` / `listen`). */
 export interface SendChannels {
   'ade:theme': AdeHost['setTheme']
+  'ade:keybindings': AdeHost['setKeybindings']
   'ade:window-minimum-size': AdeHost['setWindowMinimumSize']
 }
 

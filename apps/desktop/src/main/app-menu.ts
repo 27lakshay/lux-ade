@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, Menu, type MenuItemConstructorOptions } from 'electron'
 import { emit } from './ipc'
-import { APP_COMMAND_KEYS, type AppCommand } from '../shared/app-commands'
+import { APP_COMMAND_KEYS, type AppCommand, type Keybindings } from '../shared/app-commands'
 import { exportDiagnostics } from './diagnostics'
 
 // The native application menu. Global shortcuts live here as accelerators so they fire wherever
@@ -12,11 +12,27 @@ const send = (command: AppCommand) => () => {
   if (window && !window.isDestroyed()) emit(window.webContents, 'ade:command', command)
 }
 
+/** The profile's keybindings, as the window last reported them from the daemon's settings. */
+let bindings: Keybindings = { ...APP_COMMAND_KEYS }
+
 const item = (label: string, command: keyof typeof APP_COMMAND_KEYS): MenuItemConstructorOptions => ({
   label,
-  accelerator: APP_COMMAND_KEYS[command],
+  accelerator: bindings[command] ?? undefined,
   click: send(command),
 })
+
+/** Rebinds the menu to the profile's keybindings (the daemon checked them when they were set). */
+export function setMenuKeybindings(next: unknown): void {
+  if (!next || typeof next !== 'object' || Array.isArray(next)) return
+  const updated = { ...bindings }
+  for (const command of Object.keys(APP_COMMAND_KEYS) as (keyof typeof APP_COMMAND_KEYS)[]) {
+    const value = (next as Record<string, unknown>)[command]
+    if (value === null || (typeof value === 'string' && value.length <= 64)) updated[command] = value
+  }
+  if (JSON.stringify(updated) === JSON.stringify(bindings)) return
+  bindings = updated
+  installAppMenu()
+}
 
 export function installAppMenu(): void {
   const development = !app.isPackaged

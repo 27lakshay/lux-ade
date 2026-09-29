@@ -38,6 +38,7 @@ const adeHost: AdeHost = {
   // The window's vibrancy material follows the native appearance, so the renderer's theme has to
   // reach the main process.
   setTheme: (theme) => send('ade:theme', theme),
+  setKeybindings: (keybindings) => send('ade:keybindings', keybindings),
   setWindowMinimumSize: (width, height) => send('ade:window-minimum-size', width, height),
   // Commands from the native menu (src/shared/app-commands.ts).
   onCommand: (listener) =>

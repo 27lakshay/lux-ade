@@ -20,8 +20,12 @@ export type AppCommand = (typeof APP_COMMANDS)[number]
 export const isAppCommand = (value: unknown): value is AppCommand =>
   typeof value === 'string' && (APP_COMMANDS as readonly string[]).includes(value)
 
+/** Each app command's shortcut as an Electron accelerator, or null when unbound. */
+export type Keybindings = Record<keyof typeof APP_COMMAND_KEYS, string | null>
+
 /**
- * The native menu's shortcut for each app command, as Electron accelerators. The menu binds them
+ * The default shortcut for each app command, as Electron accelerators: shown until the profile's
+ * keybindings setting arrives from the daemon, whose defaults are the same. The menu binds them
  * (src/main/app-menu.ts) and the renderer shows them (components/Shortcut.tsx), so a label can
  * never disagree with the key that works.
  */

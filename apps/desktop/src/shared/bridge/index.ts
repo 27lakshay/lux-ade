@@ -1,5 +1,5 @@
 import type { TerminalBridge } from '@ade/terminal'
-import type { AppCommand } from '../app-commands'
+import type { AppCommand, Keybindings } from '../app-commands'
 import type { ThemePreference } from '../window-chrome'
 import type { BrowserBridge } from './browser'
 import type { ConversationsBridge } from './conversations'
@@ -21,6 +21,8 @@ export interface AdeHost {
   getAppVersion(): Promise<string>
   /** Mirrors the appearance preference to the native window, which remembers it for next launch. */
   setTheme(theme: ThemePreference): void
+  /** The profile's keybindings, so the native menu binds them; the renderer follows the daemon's setting. */
+  setKeybindings(keybindings: Keybindings): void
   /**
    * The smallest the window may be, in pixels: what its pane layout needs with both sidebars
    * closed. Main never goes below its own minimum (720 × 480).

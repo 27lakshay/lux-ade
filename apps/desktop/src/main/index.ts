@@ -44,7 +44,7 @@ import { registerWorkspaceActionIpc } from './workspace-actions'
 import { registerWorkspaceIpc } from './workspaces'
 import { registerLayoutIpc } from './layouts'
 import { markQuitting, onClientState, quitCancelled, reopenWindow, startWindows, trackWindow } from './windows'
-import { installAppMenu } from './app-menu'
+import { installAppMenu, setMenuKeybindings } from './app-menu'
 import { registerAppScheme, serveAppScheme, windowUrl } from './app-protocol'
 import { lockDownAppSession, lockDownAppWindow, refuseWebviews } from './app-security'
 import { enableRemoteDebugging, startDevStateServer } from './dev'
@@ -68,6 +68,7 @@ registerBrowserIpc(selectProfile)
 
 handle('ade:app-version', () => app.getVersion())
 // The renderer owns the appearance preference; main mirrors it to macOS and remembers it.
+listen('ade:keybindings', (_event, keybindings: unknown) => setMenuKeybindings(keybindings))
 listen('ade:theme', (_event, theme: unknown) => {
   if (isThemePreference(theme)) setAppearance(theme)
 })

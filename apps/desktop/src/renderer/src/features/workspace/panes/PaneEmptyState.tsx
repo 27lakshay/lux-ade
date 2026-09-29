@@ -23,7 +23,11 @@ export function PaneEmptyState({ paneId }: { paneId: string }) {
         >
           New conversation
         </Row>
-        <Row leading={<Icon name={TAB_ICON.terminal} tone="muted" />} onClick={() => void newTerminal(paneId)}>
+        <Row
+          leading={<Icon name={TAB_ICON.terminal} tone="muted" />}
+          trailing={<Shortcut appCommand="new-terminal" />}
+          onClick={() => void newTerminal(paneId)}
+        >
           New terminal
         </Row>
         <Row
