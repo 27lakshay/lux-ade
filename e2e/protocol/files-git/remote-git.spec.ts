@@ -43,7 +43,7 @@ test('fetch, pull and push move commits between the workspace and a bare remote 
   const upstreamHead = await mate.push('mate.txt', 'from teammate\n', 'Teammate change')
   const localHead = await repo.head()
   const fetchId = operationId('fetch')
-  const fetched = await profile.cli('git', 'fetch', workspace_id, '--request-id', fetchId)
+  const fetched = await profile.cli('git', 'fetch', workspace_id, '--operation-id', fetchId)
   expect(fetched.code).toBe(0)
   expect(await settled(profile, workspace_id, fetchId)).toMatchObject({
     status: 'succeeded',
@@ -60,7 +60,7 @@ test('fetch, pull and push move commits between the workspace and a bare remote 
 
   // Pull fast-forwards to the upstream.
   const pullId = operationId('pull')
-  const pulled = await profile.cli('git', 'pull', workspace_id, await token(), '--request-id', pullId)
+  const pulled = await profile.cli('git', 'pull', workspace_id, await token(), '--operation-id', pullId)
   expect(pulled.code).toBe(0)
   expect(await settled(profile, workspace_id, pullId)).toMatchObject({
     status: 'succeeded',
@@ -81,7 +81,7 @@ test('fetch, pull and push move commits between the workspace and a bare remote 
   await git(profile, 'review.stage', { workspace_id, path: 'app.txt', revision: state.revision })
   const commit = await git(profile, 'review.commit', { workspace_id, message: 'App v2', index_token: await token() })
   const pushId = operationId('push')
-  const pushedCli = await profile.cli('git', 'push', workspace_id, await token(), '--request-id', pushId)
+  const pushedCli = await profile.cli('git', 'push', workspace_id, await token(), '--operation-id', pushId)
   expect(pushedCli.code).toBe(0)
   const pushed = await settled(profile, workspace_id, pushId)
   expect(pushed).toMatchObject({

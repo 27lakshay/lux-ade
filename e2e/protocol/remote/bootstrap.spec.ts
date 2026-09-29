@@ -92,7 +92,7 @@ test('a changed host key is refused before anything runs on the host, for probe,
   expect(probe.json?.message).toContain('did not present the pinned host key')
   expect(probe.json?.message).toContain(started.registered.host_key_fingerprint)
 
-  const start = await profile.cli('remote', 'start', 'devbox', '--request-id', operationId('rotated'))
+  const start = await profile.cli('remote', 'start', 'devbox', '--operation-id', operationId('rotated'))
   expect(start.code).not.toBe(0)
   expect(start.json).toMatchObject({ code: 'not_applied' })
   expect(start.json?.message).toMatch(/did not present the pinned (host )?key.*nothing ran on it/)
@@ -336,7 +336,7 @@ test("install copies this backend into ADE's own directory only when asked, then
   expect(await readdir(host.home)).not.toContain('.ade')
 
   const id = operationId('install')
-  const installed = await profile.cli('remote', 'install', 'bare', '--request-id', id)
+  const installed = await profile.cli('remote', 'install', 'bare', '--operation-id', id)
   expect(installed.code, installed.stderr).toBe(0)
   const directory = join(host.home, '.ade/backend/ade-application-v1+ade-runtime-v8')
   expect(installed.json).toMatchObject({
@@ -406,12 +406,12 @@ test('install never replaces a backend the user named and needs a pairing', asyn
     expected_fingerprint: host.hostKey.fingerprint,
     backend_path: '/opt/ade/ade-control',
   })
-  const unpaired = await profile.cli('remote', 'install', 'named', '--request-id', operationId('unpaired'))
+  const unpaired = await profile.cli('remote', 'install', 'named', '--operation-id', operationId('unpaired'))
   expect(unpaired.code).not.toBe(0)
   expect(unpaired.json?.message).toContain('named is not paired')
   await profile.call('remote.host.pair', { host_id: 'named', token_reference: { env: 'ADE_NAMED_TOKEN' } })
 
-  const refused = await profile.cli('remote', 'install', 'named', '--request-id', operationId('named'))
+  const refused = await profile.cli('remote', 'install', 'named', '--operation-id', operationId('named'))
   expect(refused.code).not.toBe(0)
   expect(refused.json).toMatchObject({ code: 'not_applied' })
   expect(refused.json?.message).toContain('does not replace a backend the user named')

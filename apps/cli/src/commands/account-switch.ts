@@ -1,12 +1,12 @@
 import { dailyUseCommand } from '@ade/client'
-import { CliError, namedOptions, required, type CommandResult } from '../shared.js'
+import { CliError, namedOptions, required, requiredOperationId, type CommandResult } from '../shared.js'
 
 export const accountSwitchUsage = `  account switch preview CONVERSATION ACCOUNT
                                         Show whether and how the conversation can move to ACCOUNT
   account switch apply CONVERSATION ACCOUNT --from ACCOUNT|ambient --generation N
-      --continuity native_continuation|new_native_session --request-id ID
+      --continuity native_continuation|new_native_session --operation-id ID
                                         Use ACCOUNT for future turns; refused during a turn
-  account switch list CONVERSATION       Show the conversation's recorded account switches
+  account switch list CONVERSATION      Show the conversation's recorded account switches
 `
 
 const continuities = ['native_continuation', 'new_native_session'] as const
@@ -44,17 +44,13 @@ export async function runAccountSwitchCommand(
   }
   if (verb === 'apply') {
     if (words.length < 2) throw new CliError('usage', 'account switch apply requires CONVERSATION ACCOUNT.')
-    const options = namedOptions(
-      words.slice(2),
-      ['--from', '--generation', '--continuity', '--request-id'],
-      'account switch apply',
-    )
+    const options = namedOptions(words.slice(2), ['--from', '--generation', '--continuity'], 'account switch apply')
     const from = required(options['--from'], '--from')
     const continuity = continuities.find((value) => value === options['--continuity'])
     if (!continuity) throw new CliError('usage', `--continuity must be ${continuities.join(' or ')}.`)
     return dailyUseCommand(socketPath, {
       op: 'account.switch',
-      operation_id: required(options['--request-id'], '--request-id'),
+      operation_id: requiredOperationId(),
       conversation_id: required(words[0], 'CONVERSATION'),
       account_id: required(words[1], 'ACCOUNT'),
       expected_account_id: from === 'ambient' ? null : from,

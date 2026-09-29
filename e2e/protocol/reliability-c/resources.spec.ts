@@ -116,7 +116,7 @@ test('a registry corrupted under a live owner blocks new lifecycle work and cann
   // Once the holder has stopped, nothing live depends on the old file: the
   // same explicit recovery moves it aside and starts a new registry.
   await holder.stop()
-  const accepted = await remover.cli('resources', 'accept', registry, '--request-id', 'accept-after-stop')
+  const accepted = await remover.cli('resources', 'accept', registry, '--operation-id', 'accept-after-stop')
   expect(accepted.code, accepted.stderr).toBe(0)
   expect((await remover.call('resources.inspect', {})).registry.state).toBe('ready')
   expect((await readdir(profilesHome)).some((name) => name.startsWith('host-resources.sqlite3.unreadable-'))).toBe(true)

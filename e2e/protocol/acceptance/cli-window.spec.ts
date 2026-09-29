@@ -45,7 +45,7 @@ test('the CLI alone creates a worktree, opens a window on it, splits it and runs
   expect((await layoutOf(profile, window)).root).toMatchObject({ type: 'split', direction: 'row' })
 
   const terminal = (
-    await ade(profile, 'terminal', 'create', workspace, '--request-id', 'acceptance-shell', '--title', 'build')
+    await ade(profile, 'terminal', 'create', workspace, '--operation-id', 'acceptance-shell', '--title', 'build')
   ).terminal_id as string
   await ade(
     profile,

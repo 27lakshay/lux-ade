@@ -248,12 +248,12 @@ test('F132: a global placement goes under the profile HOME through the CLI; Code
   const source = join(ade.root, 'sources', 'lint')
   await writeSkill(source, 'lint', 'Lints.')
   const hash = await install(profile, source, 'install-lint')
-  const cli = await profile.cli('skill', 'place', 'lint', hash, 'codex', '--request-id', 'place-lint-codex')
+  const cli = await profile.cli('skill', 'place', 'lint', hash, 'codex', '--operation-id', 'place-lint-codex')
   expect(cli.code, cli.stderr).toBe(0)
   const target = join(profile.home, '.codex/skills/lint')
   expect(cli.json).toMatchObject({ type: 'skill_placed', outcome: 'created', path: target, scope: 'global' })
   expect(await readFile(join(target, 'SKILL.md'), 'utf8')).toContain('description: Lints.')
-  const again = await profile.cli('skill', 'place', 'lint', hash, 'codex', '--request-id', 'place-lint-codex')
+  const again = await profile.cli('skill', 'place', 'lint', hash, 'codex', '--operation-id', 'place-lint-codex')
   expect(again.json).toEqual(cli.json)
 
   // Codex's adapter rule is explicit: its skill input item is not sent yet, so nothing is queued.

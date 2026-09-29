@@ -7,47 +7,49 @@ import {
   parseWords,
   positionals,
   required,
-  requestIdOption,
+  requiredOperationId,
   withJournals,
   type CommandResult,
 } from '../shared.js'
 import { journalFailure } from './conversations.js'
 
 export const gitUsage = `  git status WORKSPACE_ID                Read fresh Git status and revision tokens
-  git diff WORKSPACE_ID PATH [--staged]  Read a file diff and its preview token
+  git diff WORKSPACE_ID PATH [--staged]
+                                        Read a file diff and its preview token
   git diff-page WORKSPACE_ID PATH SIDE [--cursor CURSOR --expected-token TOKEN]
                                         Page a large diff; SIDE is staged or unstaged
   git feedback-search WORKSPACE_ID [--path PATH] [--query TEXT] [--limit 1..50] [--before CURSOR]
                                         Search saved review notes by file or note text
-  git stage WORKSPACE_ID PATH REVISION --request-id ID
-  git unstage WORKSPACE_ID PATH REVISION --request-id ID
+  git stage WORKSPACE_ID PATH REVISION --operation-id ID
+  git unstage WORKSPACE_ID PATH REVISION --operation-id ID
                                         Change exactly one reviewed file
-  git discard WORKSPACE_ID PATH REVISION DIFF_TOKEN --request-id ID
+  git discard WORKSPACE_ID PATH REVISION DIFF_TOKEN --operation-id ID
                                         Discard one previewed unstaged change
-  git commit WORKSPACE_ID MESSAGE INDEX_TOKEN --request-id ID
+  git commit WORKSPACE_ID MESSAGE INDEX_TOKEN --operation-id ID
                                         Commit the reviewed staged index
-  git operation WORKSPACE_ID REQUEST_ID  Inspect a Git operation receipt
+  git operation WORKSPACE_ID OPERATION_ID
+                                        Inspect a Git operation receipt
   git recovery WORKSPACE_ID             Show the stage, unstage, commit or discard that still needs you:
                                         one held in the client journal, or one the daemon holds
-  git hunk WORKSPACE_ID PATH DIFF_TOKEN HUNK --request-id ID [--unstage]
+  git hunk WORKSPACE_ID PATH DIFF_TOKEN HUNK --operation-id ID [--unstage]
                                         Stage, or with --unstage unstage, one hunk of a previewed diff
   git operations WORKSPACE_ID [--all]   List running and unacknowledged interrupted Git mutations;
                                         --all adds acknowledged ones
-  git acknowledge WORKSPACE_ID REQUEST_ID
+  git acknowledge WORKSPACE_ID OPERATION_ID
                                         Record that you saw an interrupted mutation; it never runs again
-  git branch WORKSPACE_ID NAME INDEX_TOKEN --request-id ID [--create] [--switch]
+  git branch WORKSPACE_ID NAME INDEX_TOKEN --operation-id ID [--create] [--switch]
                                         Create a branch at HEAD, switch to one, or both
-  git stash WORKSPACE_ID push|pop REVISION --request-id ID [--include-untracked] [--message TEXT]
+  git stash WORKSPACE_ID push|pop REVISION --operation-id ID [--include-untracked] [--message TEXT]
                                         Save uncommitted changes, or apply and drop the newest stash
-  git merge WORKSPACE_ID TARGET INDEX_TOKEN --request-id ID
+  git merge WORKSPACE_ID TARGET INDEX_TOKEN --operation-id ID
                                         Merge a branch or commit; conflicts are listed in the receipt
-  git merge-abort WORKSPACE_ID INDEX_TOKEN --request-id ID
+  git merge-abort WORKSPACE_ID INDEX_TOKEN --operation-id ID
                                         Abort a merge that stopped on conflicts
-  git fetch WORKSPACE_ID --request-id ID [--remote NAME]
+  git fetch WORKSPACE_ID --operation-id ID [--remote NAME]
                                         Fetch a configured remote (the upstream's, else origin)
-  git pull WORKSPACE_ID INDEX_TOKEN --request-id ID
+  git pull WORKSPACE_ID INDEX_TOKEN --operation-id ID
                                         Fast-forward the current branch to its upstream
-  git push WORKSPACE_ID INDEX_TOKEN --request-id ID [--remote NAME]
+  git push WORKSPACE_ID INDEX_TOKEN --operation-id ID [--remote NAME]
                                         Push the current branch without force; --remote sets a missing upstream
 `
 
@@ -91,14 +93,8 @@ function gitMutationArgs(
   requestId: string
   diffToken?: string
 } {
-  const flag = rest.length - 2
-  const positionals = rest.slice(0, flag)
-  if (
-    positionals.length !== (action === 'discard' ? 4 : 3) ||
-    rest[flag] !== '--request-id' ||
-    !rest[flag + 1] ||
-    Buffer.byteLength(rest[flag + 1]) > 256
-  ) {
+  const positionals = rest
+  if (positionals.length !== (action === 'discard' ? 4 : 3)) {
     throw new CliError(
       'usage',
       `git ${action} requires WORKSPACE_ID ${
@@ -107,14 +103,14 @@ function gitMutationArgs(
           : action === 'discard'
             ? 'PATH REVISION DIFF_TOKEN'
             : 'PATH REVISION'
-      } --request-id ID.`,
+      } --operation-id ID.`,
     )
   }
   return {
     workspaceId: required(positionals[0], 'WORKSPACE_ID'),
     value: required(positionals[1], action === 'commit' ? 'MESSAGE' : 'PATH'),
     token: required(positionals[2], action === 'commit' ? 'INDEX_TOKEN' : 'REVISION'),
-    requestId: rest[flag + 1],
+    requestId: requiredOperationId(),
     ...(action === 'discard' ? { diffToken: required(positionals[3], 'DIFF_TOKEN') } : {}),
   }
 }
@@ -134,11 +130,11 @@ export async function runGitCommand(
     })
   }
   if (area === 'git' && action === 'operation') {
-    if (rest.length !== 2) throw new CliError('usage', 'git operation requires WORKSPACE_ID REQUEST_ID.')
+    if (rest.length !== 2) throw new CliError('usage', 'git operation requires WORKSPACE_ID OPERATION_ID.')
     return dailyUseCommand<'review.operation'>(socketPath, {
       op: 'review.operation',
       workspace_id: required(rest[0], 'WORKSPACE_ID'),
-      operation_id: required(rest[1], 'REQUEST_ID'),
+      operation_id: required(rest[1], 'OPERATION_ID'),
     })
   }
   if (area === 'git' && action === 'diff') {
@@ -195,13 +191,13 @@ export async function runGitCommand(
     })
   }
   if (area === 'git' && action === 'hunk') {
-    const parsed = parseWords(rest, ['--request-id'], ['--unstage'], 'git hunk')
+    const parsed = parseWords(rest, [], ['--unstage'], 'git hunk')
     const [workspace_id, path, token, hunk] = positionals(
       parsed,
       4,
-      'git hunk requires WORKSPACE_ID PATH DIFF_TOKEN HUNK --request-id ID [--unstage]',
+      'git hunk requires WORKSPACE_ID PATH DIFF_TOKEN HUNK --operation-id ID [--unstage]',
     )
-    const operation_id = requestIdOption(parsed, 'git hunk')
+    const operation_id = requiredOperationId()
     const response = await call(socketPath, 'review.hunk', {
       workspace_id,
       operation_id,
@@ -210,7 +206,7 @@ export async function runGitCommand(
       hunk: boundedInteger(hunk, 'HUNK', 0, Number.MAX_SAFE_INTEGER),
       staged: parsed.flags.has('--unstage'),
     })
-    return { ...response, workspace_id, request_id: operation_id }
+    return { ...response, workspace_id, operation_id }
   }
   if (area === 'git' && action === 'operations') {
     const parsed = parseWords(rest, [], ['--all'], 'git operations')
@@ -224,21 +220,21 @@ export async function runGitCommand(
     const [workspace_id, operation_id] = positionals(
       parseWords(rest, [], [], 'git acknowledge'),
       2,
-      'git acknowledge requires WORKSPACE_ID REQUEST_ID',
+      'git acknowledge requires WORKSPACE_ID OPERATION_ID',
     )
     return call(socketPath, 'review.operation.acknowledge', { workspace_id, operation_id })
   }
   if (area === 'git' && action === 'branch') {
-    const parsed = parseWords(rest, ['--request-id'], ['--create', '--switch'], 'git branch')
+    const parsed = parseWords(rest, [], ['--create', '--switch'], 'git branch')
     const [workspace_id, name, index_token] = positionals(
       parsed,
       3,
-      'git branch requires WORKSPACE_ID NAME INDEX_TOKEN --request-id ID [--create] [--switch]',
+      'git branch requires WORKSPACE_ID NAME INDEX_TOKEN --operation-id ID [--create] [--switch]',
     )
     if (!parsed.flags.has('--create') && !parsed.flags.has('--switch')) {
       throw new CliError('usage', 'git branch requires --create, --switch or both.')
     }
-    const operation_id = requestIdOption(parsed, 'git branch')
+    const operation_id = requiredOperationId()
     const response = await call(socketPath, 'review.branch', {
       workspace_id,
       operation_id,
@@ -247,18 +243,18 @@ export async function runGitCommand(
       ...(parsed.flags.has('--create') ? { create: true } : {}),
       ...(parsed.flags.has('--switch') ? { switch: true } : {}),
     })
-    return { ...response, workspace_id, request_id: operation_id }
+    return { ...response, workspace_id, operation_id }
   }
   if (area === 'git' && action === 'stash') {
-    const parsed = parseWords(rest, ['--request-id', '--message'], ['--include-untracked'], 'git stash')
+    const parsed = parseWords(rest, ['--message'], ['--include-untracked'], 'git stash')
     const [workspace_id, stashAction, revision] = positionals(
       parsed,
       3,
-      'git stash requires WORKSPACE_ID push|pop REVISION --request-id ID',
+      'git stash requires WORKSPACE_ID push|pop REVISION --operation-id ID',
     )
     if (stashAction !== 'push' && stashAction !== 'pop')
       throw new CliError('usage', 'git stash action must be push or pop.')
-    const operation_id = requestIdOption(parsed, 'git stash')
+    const operation_id = requiredOperationId()
     const response = await call(socketPath, 'review.stash', {
       workspace_id,
       operation_id,
@@ -267,20 +263,20 @@ export async function runGitCommand(
       ...(parsed.flags.has('--include-untracked') ? { include_untracked: true } : {}),
       ...(parsed.options['--message'] === undefined ? {} : { message: parsed.options['--message'] }),
     })
-    return { ...response, workspace_id, request_id: operation_id }
+    return { ...response, workspace_id, operation_id }
   }
   if (area === 'git' && (action === 'merge' || action === 'merge-abort')) {
-    const parsed = parseWords(rest, ['--request-id'], [], `git ${action}`)
+    const parsed = parseWords(rest, [], [], `git ${action}`)
     const abort = action === 'merge-abort'
     const words = positionals(
       parsed,
       abort ? 2 : 3,
       abort
-        ? 'git merge-abort requires WORKSPACE_ID INDEX_TOKEN --request-id ID'
-        : 'git merge requires WORKSPACE_ID TARGET INDEX_TOKEN --request-id ID',
+        ? 'git merge-abort requires WORKSPACE_ID INDEX_TOKEN --operation-id ID'
+        : 'git merge requires WORKSPACE_ID TARGET INDEX_TOKEN --operation-id ID',
     )
     const workspace_id = words[0]
-    const operation_id = requestIdOption(parsed, `git ${action}`)
+    const operation_id = requiredOperationId()
     const response = await call(
       socketPath,
       'review.merge',
@@ -288,45 +284,45 @@ export async function runGitCommand(
         ? { workspace_id, operation_id, action: 'abort', index_token: words[1] }
         : { workspace_id, operation_id, action: 'merge', target: words[1], index_token: words[2] },
     )
-    return { ...response, workspace_id, request_id: operation_id }
+    return { ...response, workspace_id, operation_id }
   }
   if (area === 'git' && action === 'fetch') {
-    const parsed = parseWords(rest, ['--request-id', '--remote'], [], 'git fetch')
-    const [workspace_id] = positionals(parsed, 1, 'git fetch requires WORKSPACE_ID --request-id ID [--remote NAME]')
-    const operation_id = requestIdOption(parsed, 'git fetch')
+    const parsed = parseWords(rest, ['--remote'], [], 'git fetch')
+    const [workspace_id] = positionals(parsed, 1, 'git fetch requires WORKSPACE_ID --operation-id ID [--remote NAME]')
+    const operation_id = requiredOperationId()
     const response = await call(socketPath, 'review.fetch', {
       workspace_id,
       operation_id,
       ...(parsed.options['--remote'] === undefined ? {} : { remote: parsed.options['--remote'] }),
     })
-    return { ...response, workspace_id, request_id: operation_id }
+    return { ...response, workspace_id, operation_id }
   }
   if (area === 'git' && action === 'pull') {
-    const parsed = parseWords(rest, ['--request-id'], [], 'git pull')
+    const parsed = parseWords(rest, [], [], 'git pull')
     const [workspace_id, index_token] = positionals(
       parsed,
       2,
-      'git pull requires WORKSPACE_ID INDEX_TOKEN --request-id ID',
+      'git pull requires WORKSPACE_ID INDEX_TOKEN --operation-id ID',
     )
-    const operation_id = requestIdOption(parsed, 'git pull')
+    const operation_id = requiredOperationId()
     const response = await call(socketPath, 'review.pull', { workspace_id, operation_id, index_token })
-    return { ...response, workspace_id, request_id: operation_id }
+    return { ...response, workspace_id, operation_id }
   }
   if (area === 'git' && action === 'push') {
-    const parsed = parseWords(rest, ['--request-id', '--remote'], [], 'git push')
+    const parsed = parseWords(rest, ['--remote'], [], 'git push')
     const [workspace_id, index_token] = positionals(
       parsed,
       2,
-      'git push requires WORKSPACE_ID INDEX_TOKEN --request-id ID [--remote NAME]',
+      'git push requires WORKSPACE_ID INDEX_TOKEN --operation-id ID [--remote NAME]',
     )
-    const operation_id = requestIdOption(parsed, 'git push')
+    const operation_id = requiredOperationId()
     const response = await call(socketPath, 'review.push', {
       workspace_id,
       operation_id,
       index_token,
       ...(parsed.options['--remote'] === undefined ? {} : { remote: parsed.options['--remote'] }),
     })
-    return { ...response, workspace_id, request_id: operation_id }
+    return { ...response, workspace_id, operation_id }
   }
   if (area === 'git' && (action === 'stage' || action === 'unstage' || action === 'commit' || action === 'discard')) {
     const { workspaceId, value, token, requestId, diffToken } = gitMutationArgs(rest, action)
@@ -346,7 +342,7 @@ export async function runGitCommand(
             : { ...owner, op: action === 'stage' ? 'review.stage' : 'review.unstage', path: value, revision: token }
       return gitJournalFailure(() => sendGitMutation(git, socketPath, intent, { oneAtATime: false }))
     })
-    return { ...response, workspace_id: workspaceId, request_id: requestId }
+    return { ...response, workspace_id: workspaceId, operation_id: requestId }
   }
   if (area === 'git' && action === 'recovery') {
     const [workspaceId] = positionals(parseWords(rest, [], [], 'git recovery'), 1, 'git recovery requires WORKSPACE_ID')

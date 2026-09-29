@@ -1,13 +1,13 @@
 import { dailyUseCommand, type DailyUseRequest } from '@ade/client'
-import { CliError, namedOptions, required, type CommandResult } from '../shared.js'
+import { CliError, namedOptions, required, requiredOperationId, type CommandResult } from '../shared.js'
 
 export const resourcesUsage = `  resources inspect [--path PATH] [--kind checkout|port|device]
                                         List host-wide claims on checkouts, service ports and devices
                                         across every profile on this host
-  resources resolve CLAIM_ID CONFIRM --request-id ID
+  resources resolve CLAIM_ID CONFIRM --operation-id ID
                                         Release one quarantined claim after checking the resource yourself;
                                         CONFIRM is the claim's path, tcp:PORT or device ID
-  resources accept REGISTRY_PATH --request-id ID
+  resources accept REGISTRY_PATH --operation-id ID
                                         Bind this profile to a replaced, missing or unreadable registry
   resources device hold DEVICE HOLDER   Hold a simulator or emulator exclusively for one run
   resources device release DEVICE HOLDER
@@ -48,20 +48,20 @@ export async function runResourcesCommand(
     }
     case 'resolve': {
       const [claim, confirm] = positional(rest, 2, 'resolve')
-      const options = namedOptions(rest.slice(2), ['--request-id'], 'resources resolve')
+      namedOptions(rest.slice(2), [], 'resources resolve')
       return dailyUseCommand(socketPath, {
         op: 'resources.claim.resolve',
-        operation_id: required(options['--request-id'], '--request-id'),
+        operation_id: requiredOperationId(),
         claim_id: required(claim, 'CLAIM_ID'),
         confirm_path: required(confirm, 'CONFIRM'),
       })
     }
     case 'accept': {
       const [registry] = positional(rest, 1, 'accept')
-      const options = namedOptions(rest.slice(1), ['--request-id'], 'resources accept')
+      namedOptions(rest.slice(1), [], 'resources accept')
       return dailyUseCommand(socketPath, {
         op: 'resources.registry.accept',
-        operation_id: required(options['--request-id'], '--request-id'),
+        operation_id: requiredOperationId(),
         confirm_registry: required(registry, 'REGISTRY_PATH'),
       })
     }

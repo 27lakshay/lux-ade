@@ -26,7 +26,7 @@ test('pairing is explicit, revocation refuses start, placement and preview, and 
   })
 
   // Unpaired: nothing starts and nothing runs on the host.
-  const unpaired = await profile.cli('remote', 'start', 'devbox', '--request-id', operationId('unpaired'))
+  const unpaired = await profile.cli('remote', 'start', 'devbox', '--operation-id', operationId('unpaired'))
   expect(unpaired.code).not.toBe(0)
   expect(unpaired.json?.message).toContain('devbox is not paired')
   expect((await remote.calls()).some((call) => call.remote_command !== undefined)).toBe(false)
@@ -97,7 +97,7 @@ test('pairing is explicit, revocation refuses start, placement and preview, and 
   })
 
   const commandsBefore = (await remote.calls()).length
-  const refusedStart = await profile.cli('remote', 'start', 'devbox', '--request-id', operationId('revoked'))
+  const refusedStart = await profile.cli('remote', 'start', 'devbox', '--operation-id', operationId('revoked'))
   expect(refusedStart.code).not.toBe(0)
   expect(refusedStart.json?.message).toContain(`Pairing ${pairingId} with devbox was revoked`)
   const check = await profile.call('placement.check', {

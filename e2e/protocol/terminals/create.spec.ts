@@ -12,15 +12,15 @@ test('terminal create returns a receipt that a duplicate, a lookup and a daemon 
   const { workspace } = await profile.call('workspace.open', { path: profile.defaultWorkspaceRoot })
   const shellId = await primaryShell(profile, workspace.id)
 
-  const created = await profile.cli('terminal', 'create', workspace.id, '--request-id', 'create-once')
+  const created = await profile.cli('terminal', 'create', workspace.id, '--operation-id', 'create-once')
   expect(created.code, created.stderr).toBe(0)
-  expect(created.json).toMatchObject({ type: 'ack', request_id: 'create-once' })
+  expect(created.json).toMatchObject({ type: 'ack', operation_id: 'create-once' })
   const terminalId = created.json!.terminal_id as string
   expect(terminalId).toMatch(/^terminal/)
   expect(terminalId).not.toBe(shellId)
 
   // A retry after a lost reply reuses the ID and gets the same terminal, not a second one.
-  const duplicate = await profile.cli('terminal', 'create', workspace.id, '--request-id', 'create-once')
+  const duplicate = await profile.cli('terminal', 'create', workspace.id, '--operation-id', 'create-once')
   expect(duplicate.code, duplicate.stderr).toBe(0)
   expect(duplicate.json!.terminal_id).toBe(terminalId)
   const viaSdk = await profile.call('terminal.create', { workspace_id: workspace.id, operation_id: 'create-once' })
@@ -44,7 +44,7 @@ test('terminal create returns a receipt that a duplicate, a lookup and a daemon 
 
   // The same ID for another workspace is a conflict and creates nothing there.
   const other = (await profile.call('workspace.open', { path: repo.path })).workspace
-  const conflict = await profile.cli('terminal', 'create', other.id, '--request-id', 'create-once')
+  const conflict = await profile.cli('terminal', 'create', other.id, '--operation-id', 'create-once')
   expect(conflict.code).not.toBe(0)
   expect(conflict.stderr).toMatch(/conflicts with another workspace/)
   const otherReceipt = await profile.cli('terminal', 'operation', other.id, 'create-once')
@@ -88,7 +88,7 @@ test('terminal create without an operation ID makes a new terminal each time, an
 
   const usage = await profile.cli('terminal', 'create', workspace.id)
   expect(usage.code).not.toBe(0)
-  expect(usage.stderr).toMatch(/--request-id/)
+  expect(usage.stderr).toMatch(/--operation-id/)
 
   // A null operation ID is refused rather than treated as absent.
   const refused = await profile.rpc({ op: 'terminal.create', workspace_id: workspace.id, operation_id: null }).then(

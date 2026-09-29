@@ -202,11 +202,11 @@ test('terminal create takes a title, refuses a bad one, and refuses a place in a
   profile,
 }) => {
   const { workspace } = await profile.call('workspace.open', { path: profile.defaultWorkspaceRoot })
-  const created = await profile.cli('terminal', 'create', workspace.id, '--request-id', 'titled', '--title', ' Logs ')
+  const created = await profile.cli('terminal', 'create', workspace.id, '--operation-id', 'titled', '--title', ' Logs ')
   expect(created.code, created.stderr).toBe(0)
   expect(await record(profile, created.json!.terminal_id as string)).toMatchObject({ title: 'Logs' })
   // The title is part of the receipt's payload.
-  const conflict = await profile.cli('terminal', 'create', workspace.id, '--request-id', 'titled', '--title', 'Other')
+  const conflict = await profile.cli('terminal', 'create', workspace.id, '--operation-id', 'titled', '--title', 'Other')
   expect(conflict.code).not.toBe(0)
 
   const bad = await refusal(profile.call('terminal.create', { workspace_id: workspace.id, title: 'a\u0007b' }))

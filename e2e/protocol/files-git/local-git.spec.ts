@@ -103,9 +103,17 @@ test('stage, unstage, discard and commit each return a receipt, replay it for th
   state = await status(profile, workspace_id)
   const before = await repo.head()
   const commitId = operationId('commit')
-  const cli = await profile.cli('git', 'commit', workspace_id, 'Update a', state.index_token, '--request-id', commitId)
+  const cli = await profile.cli(
+    'git',
+    'commit',
+    workspace_id,
+    'Update a',
+    state.index_token,
+    '--operation-id',
+    commitId,
+  )
   expect(cli.code).toBe(0)
-  expect(cli.json).toMatchObject({ request_id: commitId, workspace_id })
+  expect(cli.json).toMatchObject({ operation_id: commitId, workspace_id })
   const committed = await settled(profile, workspace_id, commitId)
   expect(committed).toMatchObject({ status: 'succeeded', result: { head: await repo.head() } })
   expect(await repo.git('rev-parse', 'HEAD^')).toBe(before)
@@ -118,7 +126,7 @@ test('stage, unstage, discard and commit each return a receipt, replay it for th
     workspace_id,
     'Update a',
     state.index_token,
-    '--request-id',
+    '--operation-id',
     commitId,
   )
   expect(again.code).toBe(0)
@@ -157,7 +165,7 @@ test('branches, stashes and merges through explicit commands, showing conflicts 
     workspace_id,
     'feature',
     await token(),
-    '--request-id',
+    '--operation-id',
     createId,
     '--create',
     '--switch',
@@ -245,7 +253,7 @@ test('branches, stashes and merges through explicit commands, showing conflicts 
   await repo.git('switch', '--quiet', 'feature')
   const featureHead = await repo.head()
   const mergeId = operationId('merge')
-  const merge = await profile.cli('git', 'merge', workspace_id, 'main', await token(), '--request-id', mergeId)
+  const merge = await profile.cli('git', 'merge', workspace_id, 'main', await token(), '--operation-id', mergeId)
   expect(merge.code).toBe(0)
   const stopped = await settled(profile, workspace_id, mergeId)
   expect(stopped).toMatchObject({
@@ -279,7 +287,7 @@ test('branches, stashes and merges through explicit commands, showing conflicts 
     'merge-abort',
     workspace_id,
     state.index_token,
-    '--request-id',
+    '--operation-id',
     operationId('abort'),
   )
   expect(aborted.code).toBe(0)

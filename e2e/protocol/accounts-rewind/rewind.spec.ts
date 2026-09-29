@@ -270,7 +270,7 @@ test('F039: removing only the last turn asks Claude to check it drops exactly th
     'conversation',
     third.id,
     token.state_token,
-    '--request-id',
+    '--operation-id',
     'rewind-last',
   )
   expect(done.code, done.stderr).toBe(0)

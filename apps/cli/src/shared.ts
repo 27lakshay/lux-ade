@@ -30,8 +30,9 @@ export class CliError extends Error {
 let chosenOperationId: string | undefined
 let sentOperationId: string | undefined
 
-/** Selects the operation ID from the global `--operation-id` option. */
+/** Selects the operation ID from the global `--operation-id` option, given once. */
 export function chooseOperationId(id: string): void {
+  if (chosenOperationId !== undefined) throw new CliError('usage', '--operation-id may be supplied only once.')
   if (!id || id.startsWith('--') || Buffer.byteLength(id) > 256) {
     throw new CliError('usage', '--operation-id requires an ID of 1 to 256 bytes.')
   }
@@ -45,6 +46,21 @@ export function chooseOperationId(id: string): void {
 export function effectOperationId(): string {
   sentOperationId ??= chosenOperationId ?? randomUUID()
   return sentOperationId
+}
+
+/**
+ * The operation ID the caller chose with `--operation-id`, for a command whose
+ * caller must retain it to inspect or retry the operation: a Git or worktree
+ * mutation, for one. A generated ID could not be recovered after a lost reply.
+ */
+export function requiredOperationId(): string {
+  if (chosenOperationId === undefined) {
+    throw new CliError(
+      'usage',
+      'This command requires --operation-id ID (1 to 256 bytes); reuse it only to retry the same request.',
+    )
+  }
+  return effectOperationId()
 }
 
 /** The operation ID this invocation sent, if it sent one. */
@@ -168,7 +184,11 @@ export function positionals(parsed: ParsedWords, count: number, usage: string): 
   return parsed.positionals
 }
 
-/** A caller-owned request ID, retained by the caller and reused only to retry the same request. */
+/**
+ * A caller-owned request ID for an operation whose own field is `request_id`
+ * (a prompt, a queued prompt, an attachment), retained by the caller and
+ * reused only to retry the same request.
+ */
 export function requestIdOption(parsed: ParsedWords, command: string): string {
   const id = parsed.options['--request-id']
   if (!id || Buffer.byteLength(id) > 256) {

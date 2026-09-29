@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { call, dailyUseCommand } from '@ade/client'
-import { CliError, namedOptions, required, type CommandResult } from '../shared.js'
+import { CliError, namedOptions, required, requiredOperationId, type CommandResult } from '../shared.js'
 import { remoteDeadlineMs } from './remote-deadline.js'
 
 export const remoteUsage = `  remote list                           List registered remote hosts and their pairings
@@ -13,9 +13,10 @@ export const remoteUsage = `  remote list                           List registe
                                         Record a pairing; only the token's location is stored
   remote revoke HOST_ID PAIRING_ID      Revoke a pairing here, then on the host, which refuses it
                                         on its paired endpoint; run again if the host was unreachable
-  remote start HOST_ID --request-id ID  Start or attach the remote profile daemon and grant the
+  remote start HOST_ID --operation-id ID
+                                        Start or attach the remote profile daemon and grant the
                                         pairing on it; the token is read from its reference
-  remote install HOST_ID --request-id ID
+  remote install HOST_ID --operation-id ID
                                         Copy this installation's backend into ~/.ade/backend on
                                         the host when it lacks a compatible one; changes nothing else
 `
@@ -117,13 +118,13 @@ export async function runRemoteCommand(
       )
     }
     case 'start': {
-      const { args, options } = split(rest, 1, ['--request-id'], 'start')
+      const { args } = split(rest, 1, [], 'start')
       const reply = await call(
         socketPath,
         'remote.host.start',
         {
           host_id: required(args[0], 'HOST_ID'),
-          operation_id: required(options['--request-id'], '--request-id'),
+          operation_id: requiredOperationId(),
         },
         { timeoutMs: remoteDeadlineMs('remote.host.start') },
       )
@@ -134,13 +135,13 @@ export async function runRemoteCommand(
       return reply
     }
     case 'install': {
-      const { args, options } = split(rest, 1, ['--request-id'], 'install')
+      const { args } = split(rest, 1, [], 'install')
       const reply = await call(
         socketPath,
         'remote.host.install',
         {
           host_id: required(args[0], 'HOST_ID'),
-          operation_id: required(options['--request-id'], '--request-id'),
+          operation_id: requiredOperationId(),
         },
         { timeoutMs: remoteDeadlineMs('remote.host.install') },
       )

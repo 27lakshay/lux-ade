@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import type { DailyUseRequest } from '@ade/client'
-import { CliError, required, type CommandResult } from '../shared.js'
-import { caller, command, newWorktree, operationId } from './orchestration.js'
+import { CliError, effectOperationId, required, type CommandResult } from '../shared.js'
+import { caller, command, newWorktree } from './orchestration.js'
 
 export const runsUsage = `  runs start PARENT_ID TASK --run PROVIDER:inherit|ambient|ACCOUNT_ID [--run ...]
         [--workspace new-worktree|same] [--repository-id ID] [--branch-prefix NAME] [--title TITLE]
@@ -18,15 +18,7 @@ export const runsUsage = `  runs start PARENT_ID TASK --run PROVIDER:inherit|amb
 
 type RunSpec = DailyUseRequest<'orchestration.group.start'>['runs'][number]
 
-const startOptions = [
-  '--run',
-  '--workspace',
-  '--repository-id',
-  '--branch-prefix',
-  '--title',
-  '--as-agent',
-  '--operation-id',
-]
+const startOptions = ['--run', '--workspace', '--repository-id', '--branch-prefix', '--title', '--as-agent']
 
 /** Reads `runs start` flags; only --run may repeat. */
 function startFlags(words: string[]): { runs: string[]; options: Record<string, string> } {
@@ -90,7 +82,7 @@ async function start(socketPath: string, rest: string[]): Promise<CommandResult>
   const parent = required(parentArgument, 'PARENT_ID')
   const task = required(taskArgument, 'TASK')
   const { runs: runWords, options } = startFlags(flags)
-  const id = operationId(options['--operation-id'])
+  const id = effectOperationId()
   const mode = options['--workspace'] ?? 'new-worktree'
   const choices = runWords.map(account)
   let runs: RunSpec[]

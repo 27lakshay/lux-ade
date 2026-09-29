@@ -48,7 +48,7 @@ test("a checkpoint records the tree and index, discloses its coverage and leaves
     'checkpoint',
     'create',
     workspaceId,
-    '--request-id',
+    '--operation-id',
     'cp-create-1',
     '--label',
     'before refactor',
@@ -171,7 +171,7 @@ test('restore refuses to overwrite unsaved changes without confirmation or after
     workspaceId,
     checkpoint.checkpoint_id,
     fresh.state_token,
-    '--request-id',
+    '--operation-id',
     'restore-confirmed',
     '--confirm-overwrite',
   )
@@ -277,7 +277,7 @@ test('delete needs the commit the caller saw and replays a duplicate request', a
     workspaceId,
     checkpoint.checkpoint_id,
     checkpoint.commit,
-    '--request-id',
+    '--operation-id',
     'delete-right',
   )
   expect(deleted.code, deleted.stderr).toBe(0)

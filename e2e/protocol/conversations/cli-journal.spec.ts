@@ -103,15 +103,15 @@ test('a Git request ID is limited to 256 UTF-8 bytes, and a stage refused unsent
   const workspaceId = (await profile.call('workspace.open', { path: repo.path })).workspace.id
   const { revision } = await profile.call('review.status', { workspace_id: workspaceId, force: true })
   // 129 two-byte characters: under 256 characters, over 256 bytes.
-  const tooLong = await profile.cli('git', 'stage', workspaceId, 'a.txt', revision, '--request-id', 'é'.repeat(129))
+  const tooLong = await profile.cli('git', 'stage', workspaceId, 'a.txt', revision, '--operation-id', 'é'.repeat(129))
   expect(tooLong.json).toMatchObject({ code: 'usage' })
   // A stage the daemon never received leaves no record, so the next one goes through.
   await profile.killDaemon()
-  const unsent = await profile.cli('git', 'stage', workspaceId, 'a.txt', revision, '--request-id', 'stage-unsent')
+  const unsent = await profile.cli('git', 'stage', workspaceId, 'a.txt', revision, '--operation-id', 'stage-unsent')
   expect(unsent.json).toMatchObject({ code: 'unavailable' })
   await profile.restartDaemon()
   expect((await profile.cli('git', 'recovery', workspaceId)).json).toMatchObject({ pending: null })
   const fresh = await profile.call('review.status', { workspace_id: workspaceId, force: true })
-  const staged = await profile.cli('git', 'stage', workspaceId, 'a.txt', fresh.revision, '--request-id', 'stage-next')
+  const staged = await profile.cli('git', 'stage', workspaceId, 'a.txt', fresh.revision, '--operation-id', 'stage-next')
   expect(staged.code, staged.stderr).toBe(0)
 })

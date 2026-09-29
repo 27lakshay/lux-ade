@@ -100,13 +100,13 @@ the shared "key" and the "commands" that would share it.
   30 review_prompt_too_long              31 provider_not_found
   32 invalid_keybinding                  33 keybinding_conflict
   16 also: a workspace worktree operation that ended "failed"
-Commands that change state without their own --request-id take the global
---operation-id ID. Without it the CLI generates one, and an error names it as
-"operation_id". Retry a lost reply only with that ID and the same command and
-arguments: the daemon returns the recorded outcome and never runs it twice.
-Choose and retain a unique --request-id for each Git or worktree mutation. If
-the reply is lost, inspect its operation with that ID; retry only with the
-same command and arguments.
+Commands that change state take --operation-id ID, before or after the command.
+Without it the CLI generates one, and an error names it as "operation_id".
+Retry a lost reply only with that ID and the same command and arguments: the
+daemon returns the recorded outcome and never runs it twice. Commands whose
+usage shows --operation-id ID require it: choose and retain a unique ID for
+each, such as a Git or worktree mutation. If the reply is lost, inspect its
+operation with that ID; retry only with the same command and arguments.
 For conversation send, choose a unique --request-id before the first attempt and
 reuse it with the same conversation and text after a lost reply. Omitting it
 generates an ID, but that ID is unavailable if the reply is lost; do not retry
@@ -195,10 +195,10 @@ function parseArgs(argv: string[]): { socketPath: string | undefined; profileId:
     } else if (word.startsWith('--socket=')) {
       socketPath = word.slice('--socket='.length)
       if (!socketPath) throw new CliError('usage', '--socket requires a path.')
-    } else if (word === '--operation-id' && words.length === 0) {
-      // Global only before the command; some commands take their own --operation-id.
+    } else if (word === '--operation-id') {
+      // One global option, before or after the command, like --socket and --profile.
       chooseOperationId(argv[++index] ?? '')
-    } else if (word.startsWith('--operation-id=') && words.length === 0) {
+    } else if (word.startsWith('--operation-id=')) {
       chooseOperationId(word.slice('--operation-id='.length))
     } else if (word === '--profile') {
       if (profileId !== undefined) throw new CliError('usage', '--profile may be supplied only once.')

@@ -69,7 +69,7 @@ test('boot, install, launch and capture one simulator; replays return the receip
     }),
   ).toEqual(launched)
   // The CLI replays the same receipts.
-  const cliLaunch = await profile.cli('device', 'launch', id, iphone, 'com.example.demo', '--request-id', 'launch-1')
+  const cliLaunch = await profile.cli('device', 'launch', id, iphone, 'com.example.demo', '--operation-id', 'launch-1')
   expect(cliLaunch.code).toBe(0)
   expect(cliLaunch.json).toMatchObject({ operation_id: 'launch-1', pid: launched.pid })
   expect(await host.calls('xcrun', 'bootstatus')).toHaveLength(1)
@@ -89,7 +89,7 @@ test('boot, install, launch and capture one simulator; replays return the receip
     app_id: 'com.example.demo',
   })
   expect(again.pid).not.toBe(launched.pid)
-  const rebooted = await profile.cli('device', 'boot', id, iphone, '--request-id', 'boot-2')
+  const rebooted = await profile.cli('device', 'boot', id, iphone, '--operation-id', 'boot-2')
   expect(rebooted.json).toMatchObject({ already_booted: true })
   expect(await host.calls('xcrun', 'bootstatus')).toHaveLength(1)
 

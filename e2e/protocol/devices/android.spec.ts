@@ -74,7 +74,7 @@ test('boot an AVD, install an APK, launch it and capture it; replays never rerun
       app_path: apk,
     }),
   ).toEqual(installed)
-  const cli = await profile.cli('device', 'launch', id, pixel, 'com.example.demo', '--request-id', 'launch-apk')
+  const cli = await profile.cli('device', 'launch', id, pixel, 'com.example.demo', '--operation-id', 'launch-apk')
   expect(cli.json).toMatchObject({ pid: launched.pid })
   expect(await host.calls('emulator')).toHaveLength(1)
   expect(await host.calls('adb', 'install')).toHaveLength(1)
@@ -82,7 +82,7 @@ test('boot an AVD, install an APK, launch it and capture it; replays never rerun
 
   // The CLI installs through the same effect path.
   const update = await host.apk('demo-13', 'com.example.demo', '13')
-  const cliInstall = await profile.cli('device', 'install', id, pixel, update, '--request-id', 'install-13')
+  const cliInstall = await profile.cli('device', 'install', id, pixel, update, '--operation-id', 'install-13')
   expect(cliInstall.json).toMatchObject({ app_id: 'com.example.demo', version: '13' })
   expect(await host.calls('adb', 'install')).toHaveLength(2)
 

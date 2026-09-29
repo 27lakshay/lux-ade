@@ -5,14 +5,14 @@ import {
   requestDaemon,
   type DailyUseRequest,
 } from '@ade/client'
-import { CliError, namedOptions, required, type CommandResult } from '../shared.js'
+import { CliError, namedOptions, required, requiredOperationId, type CommandResult } from '../shared.js'
 
 export const repositoryUsage = `  repository coverage                   Show the Git transports clone and publish support
-  repository clone URL DESTINATION --request-id ID [--branch NAME]
+  repository clone URL DESTINATION --operation-id ID [--branch NAME]
                                         Clone into a new folder and register it as a project
   repository preview FOLDER URL [--remote NAME] [--initial-branch NAME] [--initial-commit]
                                         Show what publish would do, or why it refuses
-  repository publish FOLDER URL --request-id ID [--remote NAME] [--initial-branch NAME]
+  repository publish FOLDER URL --operation-id ID [--remote NAME] [--initial-branch NAME]
                      [--initial-commit] [--message TEXT]
                                         Initialise if needed, add the remote and push without force
                                         A partial result reports outcome not_pushed or
@@ -69,11 +69,11 @@ export async function runRepositoryCommand(
     return dailyUseCommand(socketPath, { op: 'repository.coverage' })
   }
   if (action === 'clone') {
-    const { args, options, initialCommit } = split(rest, 2, ['--request-id', '--branch'], 'clone')
+    const { args, options, initialCommit } = split(rest, 2, ['--branch'], 'clone')
     if (initialCommit) throw new CliError('usage', '--initial-commit applies only to publish.')
     return networkCommand(socketPath, {
       op: 'repository.clone',
-      operation_id: required(options['--request-id'], '--request-id'),
+      operation_id: requiredOperationId(),
       url: required(args[0], 'URL'),
       destination: required(args[1], 'DESTINATION'),
       ...(options['--branch'] ? { branch: options['--branch'] } : {}),
@@ -91,15 +91,10 @@ export async function runRepositoryCommand(
     })
   }
   if (action === 'publish') {
-    const { args, options, initialCommit } = split(
-      rest,
-      2,
-      ['--request-id', '--remote', '--initial-branch', '--message'],
-      'publish',
-    )
+    const { args, options, initialCommit } = split(rest, 2, ['--remote', '--initial-branch', '--message'], 'publish')
     return networkCommand(socketPath, {
       op: 'repository.publish',
-      operation_id: required(options['--request-id'], '--request-id'),
+      operation_id: requiredOperationId(),
       path: required(args[0], 'FOLDER'),
       url: required(args[1], 'URL'),
       ...(options['--remote'] ? { remote: options['--remote'] } : {}),

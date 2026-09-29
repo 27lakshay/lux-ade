@@ -70,7 +70,7 @@ test('the daemon refuses a peer that is not the profile user before any terminal
     expect(hello.frame).toMatchObject({ type: 'error', code: 'unauthenticated' })
     // Every public terminal command fails through the CLI.
     for (const args of [
-      ['terminal', 'create', workspace.id, '--request-id', 'foreign-create'],
+      ['terminal', 'create', workspace.id, '--operation-id', 'foreign-create'],
       ['terminal', 'list'],
       ['terminal', 'send', ...target, 'echo "fo""reign-input"'],
       ['terminal', 'resize', ...target, '50', '12'],

@@ -1,28 +1,29 @@
 import { resolve } from 'node:path'
 import { dailyUseCommand, type DailyUseRequest } from '@ade/client'
-import { CliError, required, type CommandResult } from '../shared.js'
+import { CliError, required, requiredOperationId, type CommandResult } from '../shared.js'
 
 export const pluginUsage = `  plugin list                            List installed plugins with status and activation generation
-  plugin inspect PLUGIN_ID               Show a plugin's manifest, source pin, artifact and registrations
-  plugin install local PATH --request-id ID [--version V]
-  plugin install package ARCHIVE --request-id ID [--sha256 HEX] [--version V]
-  plugin install git URL --request-id ID [--ref REF] [--commit SHA] [--version V]
+  plugin inspect PLUGIN_ID              Show a plugin's manifest, source pin, artifact and registrations
+  plugin install local PATH --operation-id ID [--version V]
+  plugin install package ARCHIVE --operation-id ID [--sha256 HEX] [--version V]
+  plugin install git URL --operation-id ID [--ref REF] [--commit SHA] [--version V]
                                         Install a pinned artifact; replacing one requires it disabled
-  plugin uninstall PLUGIN_ID --request-id ID [--purge-data]
+  plugin uninstall PLUGIN_ID --operation-id ID [--purge-data]
                                         Remove a disabled plugin; records and settings stay unless purged
-  plugin enable PLUGIN_ID                Start a new activation generation
-  plugin disable PLUGIN_ID               End the activation and dispose only its registrations
+  plugin enable PLUGIN_ID               Start a new activation generation
+  plugin disable PLUGIN_ID              End the activation and dispose only its registrations
   plugin record list PLUGIN_ID NAMESPACE
   plugin record get PLUGIN_ID NAMESPACE KEY
   plugin record put PLUGIN_ID NAMESPACE KEY JSON [--expected-revision N]
   plugin record delete PLUGIN_ID NAMESPACE KEY [--expected-revision N]
                                         Read and write the plugin's namespaced records
   plugin setting list PLUGIN_ID
-  plugin setting set PLUGIN_ID KEY JSON  Set a declared setting; null restores the default
-  plugin invoke PLUGIN_ID COMMAND_ID --request-id ID [--args JSON]
+  plugin setting set PLUGIN_ID KEY JSON
+                                        Set a declared setting; null restores the default
+  plugin invoke PLUGIN_ID COMMAND_ID --operation-id ID [--args JSON]
                                         Run a backend command; starts the plugin host on first use
-  plugin host status PLUGIN_ID           Show the backend host's state, crashes, backoff and log tail
-  plugin host restart PLUGIN_ID          Clear the crash count and start a fresh backend host
+  plugin host status PLUGIN_ID          Show the backend host's state, crashes, backoff and log tail
+  plugin host restart PLUGIN_ID         Clear the crash count and start a fresh backend host
 `
 
 type Options = { positionals: string[]; values: Record<string, string>; flags: Set<string> }
@@ -47,17 +48,6 @@ function options(words: string[], valueNames: readonly string[], flagNames: read
     }
   }
   return result
-}
-
-function requestId(parsed: Options, command: string): string {
-  const id = parsed.values['--request-id']
-  if (!id || id.length > 256) {
-    throw new CliError(
-      'usage',
-      `${command} requires --request-id ID (1 to 256 characters); reuse it only to retry the same request.`,
-    )
-  }
-  return id
 }
 
 function revision(value: string | undefined): { expected_revision?: number } {
@@ -85,9 +75,9 @@ function count(parsed: Options, expected: number, usage: string): string[] {
 
 function install(socketPath: string, rest: string[]): Promise<CommandResult> {
   const [kind, ...tail] = rest
-  const parsed = options(tail, ['--request-id', '--version', '--sha256', '--ref', '--commit'])
+  const parsed = options(tail, ['--version', '--sha256', '--ref', '--commit'])
   const [locator] = count(parsed, 1, 'plugin install requires local PATH, package ARCHIVE or git URL')
-  const operation_id = requestId(parsed, 'plugin install')
+  const operation_id = requiredOperationId()
   const version = parsed.values['--version']
   const extra = (allowed: string[]) => {
     for (const name of ['--sha256', '--ref', '--commit']) {
@@ -173,9 +163,9 @@ function setting(socketPath: string, rest: string[]): Promise<CommandResult> {
 }
 
 function invoke(socketPath: string, rest: string[]): Promise<CommandResult> {
-  const parsed = options(rest, ['--request-id', '--args'])
-  const [plugin_id, command_id] = count(parsed, 2, 'plugin invoke requires PLUGIN_ID COMMAND_ID --request-id ID')
-  const operation_id = requestId(parsed, 'plugin invoke')
+  const parsed = options(rest, ['--args'])
+  const [plugin_id, command_id] = count(parsed, 2, 'plugin invoke requires PLUGIN_ID COMMAND_ID --operation-id ID')
+  const operation_id = requiredOperationId()
   const args = parsed.values['--args']
   return dailyUseCommand(socketPath, {
     op: 'plugin.command.invoke',
@@ -217,12 +207,12 @@ export async function runPluginCommand(
     case 'install':
       return install(socketPath, rest)
     case 'uninstall': {
-      const parsed = options(rest, ['--request-id'], ['--purge-data'])
-      const [plugin_id] = count(parsed, 1, 'plugin uninstall requires PLUGIN_ID --request-id ID')
+      const parsed = options(rest, [], ['--purge-data'])
+      const [plugin_id] = count(parsed, 1, 'plugin uninstall requires PLUGIN_ID --operation-id ID')
       return dailyUseCommand(socketPath, {
         op: 'plugin.uninstall',
         plugin_id,
-        operation_id: requestId(parsed, 'plugin uninstall'),
+        operation_id: requiredOperationId(),
         ...(parsed.flags.has('--purge-data') ? { purge_data: true } : {}),
       })
     }

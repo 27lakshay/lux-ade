@@ -148,7 +148,7 @@ test('a pull-request head fetched from a configured remote becomes a new tree; u
 
   // Through the CLI, as a user would: --pr N fetches refs/pull/N/head from origin.
   const id = operationId('create-pr')
-  const cli = await profile.cli('worktree', 'new', repositoryId, '--name', 'pr-7', '--pr', '7', '--request-id', id)
+  const cli = await profile.cli('worktree', 'new', repositoryId, '--name', 'pr-7', '--pr', '7', '--operation-id', id)
   expect(cli.code, cli.stderr).toBe(0)
   const created = await settled(profile, repositoryId, id)
   expect(created, JSON.stringify(created)).toMatchObject({

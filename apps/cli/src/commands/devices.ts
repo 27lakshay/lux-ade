@@ -7,19 +7,19 @@ import {
   type DailyUseOperation,
   type DailyUseRequest,
 } from '@ade/client'
-import { CliError, namedOptions, required, type CommandResult } from '../shared.js'
+import { CliError, namedOptions, required, requiredOperationId, type CommandResult } from '../shared.js'
 
 export const deviceUsage = `  device list [--family computer|ios_simulator|android]
                                         List host devices, their capabilities and why any are unavailable
   device screenshot HOST DEVICE --out FILE
                                         Save a PNG of one exact device or display; FILE must not exist
-  device boot HOST DEVICE --request-id ID [--timeout-ms N]
+  device boot HOST DEVICE --operation-id ID [--timeout-ms N]
                                         Boot one simulator or AVD and wait until it is usable
-  device install HOST DEVICE APP_PATH --request-id ID
+  device install HOST DEVICE APP_PATH --operation-id ID
                                         Install a .app (simulator) or .apk (Android) and confirm its version
-  device launch HOST DEVICE APP_ID --request-id ID
+  device launch HOST DEVICE APP_ID --operation-id ID
                                         Launch an installed app and report its process ID
-  device input HOST DEVICE --request-id ID (--tap X,Y | --swipe X1,Y1,X2,Y2 [--duration-ms N]
+  device input HOST DEVICE --operation-id ID (--tap X,Y | --swipe X1,Y1,X2,Y2 [--duration-ms N]
                         | --text TEXT | --key home|back|enter|delete|tab|escape) [--agent CONVERSATION]
                                         Send one input event to one exact booted device, attributed
                                         to the user or to the Agent of CONVERSATION
@@ -136,7 +136,7 @@ export async function runDeviceCommand(
     return { ...summary, path: out }
   }
   if (action === 'boot') {
-    const { args, options } = split(rest, 2, ['--request-id', '--timeout-ms'], 'boot')
+    const { args, options } = split(rest, 2, ['--timeout-ms'], 'boot')
     const raw = options['--timeout-ms']
     if (raw !== undefined && !/^\d{1,7}$/.test(raw)) throw new CliError('usage', '--timeout-ms must be a whole number.')
     const timeout = raw === undefined ? undefined : Number(raw)
@@ -144,7 +144,7 @@ export async function runDeviceCommand(
       socketPath,
       {
         op: 'device.boot',
-        operation_id: required(options['--request-id'], '--request-id'),
+        operation_id: requiredOperationId(),
         host_id: required(args[0], 'HOST'),
         device_id: required(args[1], 'DEVICE'),
         ...(timeout === undefined ? {} : { timeout_ms: timeout }),
@@ -153,12 +153,12 @@ export async function runDeviceCommand(
     )
   }
   if (action === 'install') {
-    const { args, options } = split(rest, 3, ['--request-id'], 'install')
+    const { args } = split(rest, 3, [], 'install')
     return call(
       socketPath,
       {
         op: 'device.app.install',
-        operation_id: required(options['--request-id'], '--request-id'),
+        operation_id: requiredOperationId(),
         host_id: required(args[0], 'HOST'),
         device_id: required(args[1], 'DEVICE'),
         app_path: resolve(required(args[2], 'APP_PATH')),
@@ -167,12 +167,12 @@ export async function runDeviceCommand(
     )
   }
   if (action === 'launch') {
-    const { args, options } = split(rest, 3, ['--request-id'], 'launch')
+    const { args } = split(rest, 3, [], 'launch')
     return call(
       socketPath,
       {
         op: 'device.app.launch',
-        operation_id: required(options['--request-id'], '--request-id'),
+        operation_id: requiredOperationId(),
         host_id: required(args[0], 'HOST'),
         device_id: required(args[1], 'DEVICE'),
         app_id: required(args[2], 'APP_ID'),
@@ -184,7 +184,7 @@ export async function runDeviceCommand(
     const { args, options } = split(
       rest,
       2,
-      ['--request-id', '--tap', '--swipe', '--duration-ms', '--text', '--key', '--agent'],
+      ['--tap', '--swipe', '--duration-ms', '--text', '--key', '--agent'],
       'input',
     )
     const agent = options['--agent']
@@ -192,7 +192,7 @@ export async function runDeviceCommand(
       socketPath,
       {
         op: 'device.input',
-        operation_id: required(options['--request-id'], '--request-id'),
+        operation_id: requiredOperationId(),
         host_id: required(args[0], 'HOST'),
         device_id: required(args[1], 'DEVICE'),
         caller: agent === undefined ? { kind: 'user' } : { kind: 'agent', conversation_id: agent },

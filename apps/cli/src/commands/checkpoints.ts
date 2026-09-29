@@ -1,14 +1,14 @@
 import { dailyUseCommand } from '@ade/client'
-import { CliError, namedOptions, required, type CommandResult } from '../shared.js'
+import { CliError, namedOptions, required, requiredOperationId, type CommandResult } from '../shared.js'
 
 export const checkpointUsage = `  checkpoint list WORKSPACE             List a workspace's checkpoints, newest first
-  checkpoint create WORKSPACE --request-id ID [--label TEXT]
+  checkpoint create WORKSPACE --operation-id ID [--label TEXT]
                                         Record the working tree and index under a private Git ref
   checkpoint preview WORKSPACE CHECKPOINT
                                         Show what a restore would change and its state token
-  checkpoint restore WORKSPACE CHECKPOINT STATE_TOKEN --request-id ID [--confirm-overwrite]
+  checkpoint restore WORKSPACE CHECKPOINT STATE_TOKEN --operation-id ID [--confirm-overwrite]
                                         Restore a checkpoint; saves a safety checkpoint first
-  checkpoint delete WORKSPACE CHECKPOINT COMMIT --request-id ID
+  checkpoint delete WORKSPACE CHECKPOINT COMMIT --operation-id ID
                                         Remove a checkpoint's ref
 `
 
@@ -39,10 +39,10 @@ export async function runCheckpointCommand(
     return dailyUseCommand(socketPath, { op: 'checkpoint.list', workspace_id: required(args[0], 'WORKSPACE') })
   }
   if (action === 'create') {
-    const { args, options } = split(rest, 1, ['--request-id', '--label'], 'create')
+    const { args, options } = split(rest, 1, ['--label'], 'create')
     return dailyUseCommand(socketPath, {
       op: 'checkpoint.create',
-      operation_id: required(options['--request-id'], '--request-id'),
+      operation_id: requiredOperationId(),
       workspace_id: required(args[0], 'WORKSPACE'),
       ...(options['--label'] ? { label: options['--label'] } : {}),
     })
@@ -57,10 +57,10 @@ export async function runCheckpointCommand(
   }
   if (action === 'restore') {
     const confirm = rest.includes('--confirm-overwrite')
-    const { args, options } = split(
+    const { args } = split(
       rest.filter((word) => word !== '--confirm-overwrite'),
       3,
-      ['--request-id'],
+      [],
       'restore',
     )
     if (rest.filter((word) => word === '--confirm-overwrite').length > 1) {
@@ -68,7 +68,7 @@ export async function runCheckpointCommand(
     }
     return dailyUseCommand(socketPath, {
       op: 'checkpoint.restore',
-      operation_id: required(options['--request-id'], '--request-id'),
+      operation_id: requiredOperationId(),
       workspace_id: required(args[0], 'WORKSPACE'),
       checkpoint_id: required(args[1], 'CHECKPOINT'),
       expected_state: required(args[2], 'STATE_TOKEN'),
@@ -76,10 +76,10 @@ export async function runCheckpointCommand(
     })
   }
   if (action === 'delete') {
-    const { args, options } = split(rest, 3, ['--request-id'], 'delete')
+    const { args } = split(rest, 3, [], 'delete')
     return dailyUseCommand(socketPath, {
       op: 'checkpoint.delete',
-      operation_id: required(options['--request-id'], '--request-id'),
+      operation_id: requiredOperationId(),
       workspace_id: required(args[0], 'WORKSPACE'),
       checkpoint_id: required(args[1], 'CHECKPOINT'),
       expected_commit: required(args[2], 'COMMIT'),

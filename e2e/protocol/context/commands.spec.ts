@@ -99,7 +99,7 @@ test('F037: Claude lists project commands and skills with provenance and runs on
     conversationId,
     'skill',
     'lint',
-    '--request-id',
+    '--operation-id',
     'invoke-lint',
   )
   expect(cliInvoke.code, cliInvoke.stderr).toBe(0)
@@ -140,7 +140,7 @@ test('F037: an entry the provider does not load, an ambiguous name and a missing
     queue_id: null,
     reason: expect.stringContaining('without the project setting source'),
   })
-  const cli = await profile.cli('command', 'invoke', closed, 'command', 'review', '--request-id', 'invoke-closed-cli')
+  const cli = await profile.cli('command', 'invoke', closed, 'command', 'review', '--operation-id', 'invoke-closed-cli')
   expect(cli.code).not.toBe(0)
   expect(cli.stderr).toContain('without the project setting source')
 

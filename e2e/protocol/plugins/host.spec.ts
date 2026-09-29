@@ -88,7 +88,7 @@ test('runs backend commands in a headless host with settings, replays by operati
     'invoke',
     pluginId,
     echo,
-    '--request-id',
+    '--operation-id',
     'cli-echo',
     '--args',
     '{"via":"cli"}',

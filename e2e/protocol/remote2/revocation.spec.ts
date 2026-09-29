@@ -211,7 +211,7 @@ test('a revocation the host cannot receive is refused here, reported pending, an
   expect(pending).toMatchObject({ enforcement: 'local_profile', pairing: { state: 'revoked' } })
   expect(pending.detail).toContain('Revoke again when the host is reachable')
   // This profile already refuses the pairing: nothing is started or placed on the host.
-  const refused = await profile.cli('remote', 'start', 'devbox', '--request-id', operationId('pending'))
+  const refused = await profile.cli('remote', 'start', 'devbox', '--operation-id', operationId('pending'))
   expect(refused.code).not.toBe(0)
   expect(refused.json?.message).toContain('was revoked')
   const check = await profile.call('placement.check', {

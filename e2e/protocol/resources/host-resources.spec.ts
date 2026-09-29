@@ -237,7 +237,7 @@ test('an escaped descendant keeps the checkout quarantined after its profile die
   expect(wrongPath.type).toBe('error')
   expect(await claimsOn(remover, tree)).toHaveLength(1)
 
-  const resolved = await remover.cli('resources', 'resolve', claimId, tree, '--request-id', 'resolve-escaped')
+  const resolved = await remover.cli('resources', 'resolve', claimId, tree, '--operation-id', 'resolve-escaped')
   expect(resolved.code, resolved.stderr).toBe(0)
   expect(await claimsOn(remover, tree)).toEqual([])
   // A duplicate request replays; the same ID with other parameters conflicts.
@@ -342,7 +342,7 @@ test('a lost or unreadable registry blocks lifecycle commands until the profile 
   expect(wrong.type).toBe('error')
   expect((await remover.call('resources.inspect', {})).registry.state).toBe('blocked')
 
-  const accepted = await remover.cli('resources', 'accept', registry, '--request-id', 'accept-registry')
+  const accepted = await remover.cli('resources', 'accept', registry, '--operation-id', 'accept-registry')
   expect(accepted.code, accepted.stderr).toBe(0)
   expect((await remover.call('resources.inspect', {})).registry.state).toBe('ready')
   // The unreadable file was moved aside, never deleted.

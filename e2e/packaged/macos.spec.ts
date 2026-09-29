@@ -113,7 +113,7 @@ test('installed CLI uses bundled Node and targets GUI profiles without switching
       'open',
       browserOwnerId,
       'http://127.0.0.1:65534/cli',
-      '--request-id',
+      '--operation-id',
       'installed-browser-open',
     )
     const cliTabId = cliTab.tab_id as string
@@ -126,7 +126,7 @@ test('installed CLI uses bundled Node and targets GUI profiles without switching
           'open',
           browserOwnerId,
           'http://127.0.0.1:65534/cli',
-          '--request-id',
+          '--operation-id',
           'installed-browser-open',
         )
       ).tab_id,
@@ -144,7 +144,7 @@ test('installed CLI uses bundled Node and targets GUI profiles without switching
           browserOwnerId,
           cliTabId,
           'http://127.0.0.1:65534/cli-next',
-          '--request-id',
+          '--operation-id',
           'installed-browser-navigate',
         )
       ).tab_id,
@@ -158,7 +158,7 @@ test('installed CLI uses bundled Node and targets GUI profiles without switching
           'close',
           browserOwnerId,
           cliTabId,
-          '--request-id',
+          '--operation-id',
           'installed-browser-close',
         )
       ).tab_id,
@@ -185,7 +185,7 @@ test('installed CLI uses bundled Node and targets GUI profiles without switching
       'terminal',
       'create',
       workspaceId,
-      '--request-id',
+      '--operation-id',
       'installed-cli-terminal',
     )
     const terminalId = createdTerminal.terminal_id as string
@@ -197,7 +197,7 @@ test('installed CLI uses bundled Node and targets GUI profiles without switching
           'terminal',
           'create',
           workspaceId,
-          '--request-id',
+          '--operation-id',
           'installed-cli-terminal',
         )
       ).terminal_id,

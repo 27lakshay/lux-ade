@@ -83,10 +83,10 @@ test('discard restores only reviewed tracked worktree bytes and refuses changed 
     'tracked.txt',
     cliStatus.json!.revision as string,
     cliDiff.json!.token as string,
-    '--request-id',
+    '--operation-id',
     'discard-cli',
   )
-  expect(cliResult.json).toMatchObject({ request_id: 'discard-cli', workspace_id })
+  expect(cliResult.json).toMatchObject({ operation_id: 'discard-cli', workspace_id })
   expect((await settled(profile, workspace_id, 'discard-cli')).status).toBe('succeeded')
   expect(await read('tracked.txt')).toBe('staged\n')
   expect(await repo.git('rev-parse', ':tracked.txt')).toBe(indexBefore)

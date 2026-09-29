@@ -1,9 +1,9 @@
 import { dailyUseCommand } from '@ade/client'
-import { CliError, namedOptions, required, type CommandResult } from '../shared.js'
+import { CliError, namedOptions, required, requiredOperationId, type CommandResult } from '../shared.js'
 
-export const browserAutomationUsage = `  browser click OWNER_ID TAB_ID --selector CSS --request-id ID [--timeout-ms MS]
+export const browserAutomationUsage = `  browser click OWNER_ID TAB_ID --selector CSS --operation-id ID [--timeout-ms MS]
                                         Click an element of one exact tab (an effect; inspect with browser operation)
-  browser type OWNER_ID TAB_ID --selector CSS --text TEXT --request-id ID [--replace yes|no] [--timeout-ms MS]
+  browser type OWNER_ID TAB_ID --selector CSS --text TEXT --operation-id ID [--replace yes|no] [--timeout-ms MS]
                                         Type into an editable element of one exact tab
   browser evaluate OWNER_ID TAB_ID EXPRESSION [--timeout-ms MS]
                                         Evaluate a read-only expression; side effects are refused
@@ -47,13 +47,11 @@ export async function runBrowserAutomationCommand(
   }
   if (action === 'click' || action === 'type') {
     const flags =
-      action === 'click'
-        ? ['--selector', '--request-id', '--timeout-ms']
-        : ['--selector', '--text', '--request-id', '--replace', '--timeout-ms']
+      action === 'click' ? ['--selector', '--timeout-ms'] : ['--selector', '--text', '--replace', '--timeout-ms']
     const options = namedOptions(words, flags, command)
-    const operationId = required(options['--request-id'], '--request-id')
+    const operationId = requiredOperationId()
     if (!/^[A-Za-z0-9_-]{1,256}$/.test(operationId))
-      throw new CliError('usage', '--request-id takes 1 to 256 letters, digits, - or _.')
+      throw new CliError('usage', '--operation-id takes 1 to 256 letters, digits, - or _.')
     const selector = required(options['--selector'], '--selector')
     if (action === 'click') {
       return dailyUseCommand(socketPath, {

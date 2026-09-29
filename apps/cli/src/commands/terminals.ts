@@ -6,17 +6,17 @@ import {
   parseWords,
   positionals,
   required,
-  requestIdOption,
+  requiredOperationId,
   type CommandResult,
   type ErrorCode,
 } from '../shared.js'
 
 export const terminalUsage = `  terminal list [WORKSPACE_ID]          List terminals: kind, title, status, exit code, busy and its command
-  terminal create WORKSPACE_ID --request-id ID [--title TITLE]
+  terminal create WORKSPACE_ID --operation-id ID [--title TITLE]
                                         Create another shell; reuse ID after a lost reply
   terminal close TERMINAL_ID [--force]  Stop a shell and remove it; refused as terminal_busy while
                                         a command runs, unless --force
-  terminal operation WORKSPACE_ID REQUEST_ID
+  terminal operation WORKSPACE_ID OPERATION_ID
                                         Inspect a terminal creation receipt
   terminal inspect WORKSPACE_ID TERMINAL_ID
   terminal attach WORKSPACE_ID TERMINAL_ID
@@ -307,9 +307,9 @@ export async function runTerminalCommand(
     }
   }
   if (area === 'terminal' && action === 'create') {
-    const parsed = parseWords(rest, ['--request-id', '--title'], [], 'terminal create')
-    const [workspaceId] = positionals(parsed, 1, 'terminal create requires WORKSPACE_ID --request-id ID')
-    const requestId = requestIdOption(parsed, 'terminal create')
+    const parsed = parseWords(rest, ['--title'], [], 'terminal create')
+    const [workspaceId] = positionals(parsed, 1, 'terminal create requires WORKSPACE_ID --operation-id ID')
+    const requestId = requiredOperationId()
     const title = parsed.options['--title']
     const response = await dailyUseCommand(socketPath, {
       op: 'terminal.create',
@@ -317,7 +317,7 @@ export async function runTerminalCommand(
       operation_id: requestId,
       ...(title === undefined ? {} : { title }),
     })
-    return { ...response, request_id: requestId }
+    return { ...response, operation_id: requestId }
   }
   if (area === 'terminal' && action === 'close') {
     const parsed = parseWords(rest, [], ['--force'], 'terminal close')
@@ -330,11 +330,11 @@ export async function runTerminalCommand(
     })
   }
   if (area === 'terminal' && action === 'operation') {
-    if (rest.length !== 2) throw new CliError('usage', 'terminal operation requires WORKSPACE_ID REQUEST_ID.')
+    if (rest.length !== 2) throw new CliError('usage', 'terminal operation requires WORKSPACE_ID OPERATION_ID.')
     return dailyUseCommand(socketPath, {
       op: 'terminal.operation',
       workspace_id: required(rest[0], 'WORKSPACE_ID'),
-      operation_id: required(rest[1], 'REQUEST_ID'),
+      operation_id: required(rest[1], 'OPERATION_ID'),
     })
   }
   if (area === 'terminal' && (action === 'stop' || action === 'retire')) {

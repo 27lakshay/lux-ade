@@ -73,7 +73,7 @@ test('R001 and R002: a file rewind whose reply was lost restores once and a retr
     'files',
     checkpoint.checkpoint_id,
     state,
-    '--request-id',
+    '--operation-id',
     'rewind-files',
     '--confirm-overwrite',
   )

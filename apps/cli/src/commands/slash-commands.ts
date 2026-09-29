@@ -1,8 +1,8 @@
 import { dailyUseCommand } from '@ade/client'
-import { CliError, namedOptions, required, type CommandResult } from '../shared.js'
+import { CliError, namedOptions, required, requiredOperationId, type CommandResult } from '../shared.js'
 
 export const slashCommandUsage = `  command list ID                        List a conversation's slash commands and skills, with provenance
-  command invoke ID command|skill NAME --request-id ID [--arguments TEXT]
+  command invoke ID command|skill NAME --operation-id ID [--arguments TEXT]
                                         Queue a listed command or skill in the provider's native form
 `
 
@@ -23,10 +23,10 @@ export async function runSlashCommand(
     }
     const [conversation, kind, name] = rest
     if (kind !== 'command' && kind !== 'skill') throw new CliError('usage', 'Kind must be command or skill.')
-    const options = namedOptions(rest.slice(3), ['--request-id', '--arguments'], 'command invoke')
+    const options = namedOptions(rest.slice(3), ['--arguments'], 'command invoke')
     const reply = await dailyUseCommand<'command.invoke'>(socketPath, {
       op: 'command.invoke',
-      operation_id: required(options['--request-id'], '--request-id'),
+      operation_id: requiredOperationId(),
       conversation_id: conversation,
       kind,
       name,

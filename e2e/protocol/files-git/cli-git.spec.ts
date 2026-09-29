@@ -45,8 +45,8 @@ test('named CLI Git commands use reviewed revisions, preserve receipts and expos
   // A stage against a stale revision is admitted, then fails without staging.
   await repo.write('tracked.txt', 'newer change\n')
   const staleId = 'git-cli-stale-stage'
-  const stale = await profile.cli('git', 'stage', workspaceId, 'tracked.txt', oldRevision, '--request-id', staleId)
-  expect(stale).toMatchObject({ code: 0, json: { request_id: staleId, workspace_id: workspaceId } })
+  const stale = await profile.cli('git', 'stage', workspaceId, 'tracked.txt', oldRevision, '--operation-id', staleId)
+  expect(stale).toMatchObject({ code: 0, json: { operation_id: staleId, workspace_id: workspaceId } })
   expect(await receipt(profile, workspaceId, staleId)).toMatchObject({ status: 'failed' })
   expect(await cached()).toBe('')
 
@@ -54,12 +54,12 @@ test('named CLI Git commands use reviewed revisions, preserve receipts and expos
   const revision = fresh.json!.revision as string
   expect(revision).not.toBe(oldRevision)
   const stageId = 'git-cli-stage'
-  const staged = await profile.cli('git', 'stage', workspaceId, 'tracked.txt', revision, '--request-id', stageId)
-  expect(staged.json).toMatchObject({ request_id: stageId, workspace_id: workspaceId })
+  const staged = await profile.cli('git', 'stage', workspaceId, 'tracked.txt', revision, '--operation-id', stageId)
+  expect(staged.json).toMatchObject({ operation_id: stageId, workspace_id: workspaceId })
   expect(await receipt(profile, workspaceId, stageId)).toMatchObject({ status: 'succeeded' })
-  const repeated = await profile.cli('git', 'stage', workspaceId, 'tracked.txt', revision, '--request-id', stageId)
+  const repeated = await profile.cli('git', 'stage', workspaceId, 'tracked.txt', revision, '--operation-id', stageId)
   expect(repeated.json!.operation).toMatchObject({ id: stageId, status: 'succeeded' })
-  const changed = await profile.cli('git', 'stage', workspaceId, 'another.txt', revision, '--request-id', stageId)
+  const changed = await profile.cli('git', 'stage', workspaceId, 'another.txt', revision, '--operation-id', stageId)
   expect(changed).toMatchObject({ code: 7, json: { code: 'daemon' } })
   expect(await cached()).toBe('tracked.txt')
 
@@ -70,7 +70,7 @@ test('named CLI Git commands use reviewed revisions, preserve receipts and expos
     workspaceId,
     'tracked.txt',
     stagedStatus.json!.revision as string,
-    '--request-id',
+    '--operation-id',
     'git-cli-unstage',
   )
   expect(await receipt(profile, workspaceId, 'git-cli-unstage')).toMatchObject({ status: 'succeeded' })
@@ -82,7 +82,7 @@ test('named CLI Git commands use reviewed revisions, preserve receipts and expos
     workspaceId,
     'tracked.txt',
     unstagedStatus.json!.revision as string,
-    '--request-id',
+    '--operation-id',
     'git-cli-restage',
   )
   expect(await receipt(profile, workspaceId, 'git-cli-restage')).toMatchObject({ status: 'succeeded' })
@@ -98,7 +98,7 @@ test('named CLI Git commands use reviewed revisions, preserve receipts and expos
     workspaceId,
     'change',
     beforeCommit.json!.index_token as string,
-    '--request-id',
+    '--operation-id',
     'git-cli-hook-failure',
   )
   expect(await receipt(profile, workspaceId, 'git-cli-hook-failure')).toMatchObject({ status: 'failed' })
@@ -115,7 +115,7 @@ test('named CLI Git commands use reviewed revisions, preserve receipts and expos
     workspaceId,
     'change',
     afterHook.json!.index_token as string,
-    '--request-id',
+    '--operation-id',
     'git-cli-stale-index',
   )
   expect(await receipt(profile, workspaceId, 'git-cli-stale-index')).toMatchObject({ status: 'failed' })
@@ -126,13 +126,13 @@ test('named CLI Git commands use reviewed revisions, preserve receipts and expos
   const current = await profile.cli('git', 'status', workspaceId)
   const commitId = 'git-cli-commit'
   const token = current.json!.index_token as string
-  await profile.cli('git', 'commit', workspaceId, 'change', token, '--request-id', commitId)
+  await profile.cli('git', 'commit', workspaceId, 'change', token, '--operation-id', commitId)
   const committed = await receipt(profile, workspaceId, commitId)
   expect(committed).toMatchObject({ status: 'succeeded', result: { head: expect.any(String) } })
   const newHead = await repo.head()
   expect(newHead).not.toBe(oldHead)
   expect((committed.result as { head: string }).head).toBe(newHead)
-  const retry = await profile.cli('git', 'commit', workspaceId, 'change', token, '--request-id', commitId)
+  const retry = await profile.cli('git', 'commit', workspaceId, 'change', token, '--operation-id', commitId)
   expect(retry.json!.operation).toEqual(committed)
   expect(await repo.git('rev-list', '--count', 'HEAD')).toBe('2')
 })
@@ -224,13 +224,13 @@ test('the CLI reconciles a Git mutation when its admission reply is lost', async
       workspaceId,
       'new.txt',
       revision,
-      '--request-id',
+      '--operation-id',
       requestId,
     )
     expect(lost.code).not.toBe(0)
     const result = await receipt(profile, workspaceId, requestId)
     expect(result).toMatchObject({ id: requestId, status: 'succeeded' })
-    const same = await profile.cli('git', 'stage', workspaceId, 'new.txt', revision, '--request-id', requestId)
+    const same = await profile.cli('git', 'stage', workspaceId, 'new.txt', revision, '--operation-id', requestId)
     expect(same.json!.operation).toEqual(result)
     expect(await repo.git('diff', '--cached', '--name-only')).toBe('new.txt')
   } finally {

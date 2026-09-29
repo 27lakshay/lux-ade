@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto'
 import { setTimeout as sleep } from 'node:timers/promises'
 import {
   dailyUseCommand,
@@ -7,7 +6,7 @@ import {
   type DailyUseRequest,
   type DailyUseResponse,
 } from '@ade/client'
-import { CliError, jsonObject, namedOptions, required, type CommandResult } from '../shared.js'
+import { CliError, effectOperationId, jsonObject, namedOptions, required, type CommandResult } from '../shared.js'
 
 export const orchestrationUsage = `  child delegate PARENT_ID PROVIDER TASK --workspace same|new-worktree --account inherit|ambient|ACCOUNT_ID
         [--repository-id ID --branch NAME] [--title TITLE] [--as-agent CONVERSATION_ID] [--operation-id ID]
@@ -34,13 +33,6 @@ type Caller = DailyUseRequest<'orchestration.delegate'>['caller']
 
 const POLL_MS = 500
 const WORKTREE_TIMEOUT_MS = 300_000
-
-export function operationId(value: string | undefined): string {
-  if (value === undefined) return randomUUID()
-  if (value.length < 1 || value.length > 256)
-    throw new CliError('usage', '--operation-id requires 1 to 256 characters.')
-  return value
-}
 
 export function caller(agent: string | undefined): Caller {
   return agent === undefined ? { kind: 'user' } : { kind: 'agent', conversation_id: agent }
@@ -113,10 +105,10 @@ async function delegate(socketPath: string, rest: string[]): Promise<CommandResu
   const [parent, provider, task, ...flags] = rest
   const options = namedOptions(
     flags,
-    ['--workspace', '--account', '--repository-id', '--branch', '--title', '--as-agent', '--operation-id', '--context'],
+    ['--workspace', '--account', '--repository-id', '--branch', '--title', '--as-agent', '--context'],
     'child delegate',
   )
-  const id = operationId(options['--operation-id'])
+  const id = effectOperationId()
   const accountOption = required(options['--account'], '--account')
   const account: DailyUseRequest<'orchestration.delegate'>['account'] =
     accountOption === 'inherit' || accountOption === 'ambient'
@@ -227,9 +219,9 @@ export async function runOrchestrationCommand(
   }
   if (action === 'send') {
     const [child, text, ...flags] = rest
-    const options = namedOptions(flags, ['--as-agent', '--operation-id'], 'child send')
+    const options = namedOptions(flags, ['--as-agent'], 'child send')
     return command(socketPath, 'orchestration.child.send', {
-      operation_id: operationId(options['--operation-id']),
+      operation_id: effectOperationId(),
       child_conversation_id: required(child, 'CHILD_ID'),
       caller: caller(options['--as-agent']),
       text: required(text, 'TEXT'),
@@ -239,9 +231,9 @@ export async function runOrchestrationCommand(
   if (action === 'answer') return answer(socketPath, rest)
   if (action === 'reply') {
     const [child, text, ...flags] = rest
-    const options = namedOptions(flags, ['--as-agent', '--operation-id'], 'child reply')
+    const options = namedOptions(flags, ['--as-agent'], 'child reply')
     return command(socketPath, 'orchestration.parent.send', {
-      operation_id: operationId(options['--operation-id']),
+      operation_id: effectOperationId(),
       child_conversation_id: required(child, 'CHILD_ID'),
       caller: caller(options['--as-agent']),
       text: required(text, 'TEXT'),

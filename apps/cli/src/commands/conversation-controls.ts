@@ -1,17 +1,24 @@
 import { dailyUseCommand } from '@ade/client'
-import { CliError, effectOperationId, namedOptions, required, type CommandResult } from '../shared.js'
+import {
+  CliError,
+  effectOperationId,
+  namedOptions,
+  required,
+  requiredOperationId,
+  type CommandResult,
+} from '../shared.js'
 import { parseWakeTime } from './wake-time.js'
 
 export const conversationControlUsage = `  conversation controls ID               Show which steer, compact and rewind controls the provider supports now
-  conversation steer ID TURN_ID TEXT --request-id ID
+  conversation steer ID TURN_ID TEXT --operation-id ID
                                         Add input to the running turn natively; never queues it
-  conversation compact ID --request-id ID
+  conversation compact ID --operation-id ID
                                         Ask the provider to compact its context
   conversation rewind-preview ID files CHECKPOINT | ID conversation [MESSAGE_ID]
                                         Show whether a rewind may run and what it would change
-  conversation rewind ID files CHECKPOINT STATE_TOKEN --request-id ID [--confirm-overwrite]
+  conversation rewind ID files CHECKPOINT STATE_TOKEN --operation-id ID [--confirm-overwrite]
                                         Restore the workspace files from a checkpoint
-  conversation rewind ID conversation MESSAGE_ID STATE_TOKEN --request-id ID
+  conversation rewind ID conversation MESSAGE_ID STATE_TOKEN --operation-id ID
                                         Remove MESSAGE_ID's turn and every later one from the provider and ADE
   conversation snooze ID WHEN           Defer attention until WHEN: +30m, +2h, +1d, an ISO time
                                         with a zone, or epoch milliseconds; agent work continues
@@ -57,11 +64,11 @@ export async function runConversationControlCommand(
     return dailyUseCommand(socketPath, { op: 'conversation.controls', conversation_id: required(args[0], 'ID') })
   }
   if (action === 'steer') {
-    const { args, options } = split(rest, 3, ['--request-id'], 'steer')
+    const { args } = split(rest, 3, [], 'steer')
     return settled(
       await dailyUseCommand<'conversation.steer'>(socketPath, {
         op: 'conversation.steer',
-        operation_id: required(options['--request-id'], '--request-id'),
+        operation_id: requiredOperationId(),
         conversation_id: args[0],
         turn_id: args[1],
         text: required(args[2], 'TEXT'),
@@ -69,11 +76,11 @@ export async function runConversationControlCommand(
     )
   }
   if (action === 'compact') {
-    const { args, options } = split(rest, 1, ['--request-id'], 'compact')
+    const { args } = split(rest, 1, [], 'compact')
     return settled(
       await dailyUseCommand<'conversation.compact'>(socketPath, {
         op: 'conversation.compact',
-        operation_id: required(options['--request-id'], '--request-id'),
+        operation_id: requiredOperationId(),
         conversation_id: args[0],
       }),
     )
@@ -103,11 +110,11 @@ export async function runConversationControlCommand(
     const words = rest.filter((word) => word !== '--confirm-overwrite')
     if (words[1] === 'conversation') {
       const positional = words.length > 2 && !words[2].startsWith('--') ? 4 : 2
-      const { args, options } = split(words, positional, ['--request-id'], 'rewind')
+      const { args } = split(words, positional, [], 'rewind')
       return settled(
         await dailyUseCommand<'conversation.rewind'>(socketPath, {
           op: 'conversation.rewind',
-          operation_id: required(options['--request-id'], '--request-id'),
+          operation_id: requiredOperationId(),
           conversation_id: args[0],
           scope: 'conversation',
           confirm_overwrite: false,
@@ -115,12 +122,12 @@ export async function runConversationControlCommand(
         }),
       )
     }
-    const { args, options } = split(words, 4, ['--request-id'], 'rewind')
+    const { args } = split(words, 4, [], 'rewind')
     if (args[1] !== 'files') throw new CliError('usage', 'Rewind scope must be files or conversation.')
     return settled(
       await dailyUseCommand<'conversation.rewind'>(socketPath, {
         op: 'conversation.rewind',
-        operation_id: required(options['--request-id'], '--request-id'),
+        operation_id: requiredOperationId(),
         conversation_id: args[0],
         scope: 'files',
         checkpoint_id: args[2],

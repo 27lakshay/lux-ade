@@ -113,7 +113,7 @@ test('F100: input reaches only the selected Android device, attributed to its ca
     'back',
     '--agent',
     conversationId,
-    '--request-id',
+    '--operation-id',
     'key-1',
   )
   expect(cli.code).toBe(0)
@@ -129,9 +129,9 @@ test('F100: input reaches only the selected Android device, attributed to its ca
   expect(await profile.call('device.input', fields(id, tablet, 'tap-1', { kind: 'tap', x: 540, y: 1200 }))).toEqual(
     tapped,
   )
-  expect((await profile.cli('device', 'input', id, tablet, '--tap', '540,1200', '--request-id', 'tap-1')).json).toEqual(
-    tapped,
-  )
+  expect(
+    (await profile.cli('device', 'input', id, tablet, '--tap', '540,1200', '--operation-id', 'tap-1')).json,
+  ).toEqual(tapped)
   const conflict = await send(profile, input(id, tablet, 'tap-1', { kind: 'tap', x: 1, y: 1 }))
   expect(conflict.message).toContain('already used for different parameters')
   expect(await host.calls('adb', 'input')).toHaveLength(before)
@@ -284,7 +284,7 @@ test('F099: input reaches only the selected simulator through idb, with its host
   expect(
     await profile.call('device.input', fields(id, ipad.toLowerCase(), 'sim-tap', { kind: 'tap', x: 200, y: 400 })),
   ).toEqual(tapped)
-  const cli = await profile.cli('device', 'input', id, ipad, '--swipe', '10,600,10,100', '--request-id', 'sim-swipe')
+  const cli = await profile.cli('device', 'input', id, ipad, '--swipe', '10,600,10,100', '--operation-id', 'sim-swipe')
   expect(cli.json).toMatchObject({ action: { kind: 'swipe', from_x: 10, from_y: 600, to_x: 10, to_y: 100 } })
   const calls = await host.calls('idb')
   expect(calls.map((call) => call.udid)).toEqual([samples.ipad, samples.ipad, samples.ipad, samples.ipad])

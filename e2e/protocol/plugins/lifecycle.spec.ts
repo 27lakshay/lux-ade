@@ -65,7 +65,7 @@ test('installs a local plugin, enables, disables and uninstalls it with visible 
   const cliInspect = await profile.cli('plugin', 'inspect', backend)
   expect(cliInspect.json).toMatchObject({ plugin: { status: 'disabled' } })
 
-  const removed = await profile.cli('plugin', 'uninstall', backend, '--request-id', 'uninstall-2')
+  const removed = await profile.cli('plugin', 'uninstall', backend, '--operation-id', 'uninstall-2')
   expect(removed.code).toBe(0)
   expect(removed.json).toMatchObject({ plugin_id: backend, data_purged: false })
   expect((await profile.call('plugin.list', {})).plugins).toEqual([])

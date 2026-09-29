@@ -1,16 +1,17 @@
 import { resolve } from 'node:path'
 import { dailyUseCommand } from '@ade/client'
-import { CliError, namedOptions, required, type CommandResult } from '../shared.js'
+import { CliError, namedOptions, required, requiredOperationId, type CommandResult } from '../shared.js'
 
 export const skillUsage = `  skill list                             List catalog skills and discovered provider skills
-  skill discover [--workspace ID]        Scan provider skill paths; reads only
-  skill inspect NAME [--workspace ID]    Show a skill's files, provenance and provider projection
-  skill install PATH --request-id ID [--pin HASH] [--replace HASH]
+  skill discover [--workspace ID]       Scan provider skill paths; reads only
+  skill inspect NAME [--workspace ID]   Show a skill's files, provenance and provider projection
+  skill install PATH --operation-id ID [--pin HASH] [--replace HASH]
                                         Copy a local skill directory into the catalog
-  skill adopt PATH HASH --request-id ID [--workspace ID]
+  skill adopt PATH HASH --operation-id ID [--workspace ID]
                                         Take ownership of a discovered provider skill
-  skill remove NAME HASH --request-id ID Remove a catalog skill; provider files stay
-  skill place NAME HASH PROVIDER --request-id ID [--workspace ID]
+  skill remove NAME HASH --operation-id ID
+                                        Remove a catalog skill; provider files stay
+  skill place NAME HASH PROVIDER --operation-id ID [--workspace ID]
                                         Write a catalog skill where PROVIDER reads it; never over another owner's skill
 `
 
@@ -52,40 +53,40 @@ export async function runSkillCommand(
     })
   }
   if (action === 'install') {
-    const { args, options } = split(rest, 1, ['--request-id', '--pin', '--replace'], 'install')
+    const { args, options } = split(rest, 1, ['--pin', '--replace'], 'install')
     return dailyUseCommand(socketPath, {
       op: 'skill.install',
-      operation_id: required(options['--request-id'], '--request-id'),
+      operation_id: requiredOperationId(),
       source_path: resolve(required(args[0], 'PATH')),
       ...(options['--pin'] ? { expected_content_hash: options['--pin'] } : {}),
       ...(options['--replace'] ? { replace_content_hash: options['--replace'] } : {}),
     })
   }
   if (action === 'adopt') {
-    const { args, options } = split(rest, 2, ['--request-id', '--workspace'], 'adopt')
+    const { args, options } = split(rest, 2, ['--workspace'], 'adopt')
     return dailyUseCommand(socketPath, {
       op: 'skill.adopt',
-      operation_id: required(options['--request-id'], '--request-id'),
+      operation_id: requiredOperationId(),
       path: resolve(required(args[0], 'PATH')),
       expected_content_hash: required(args[1], 'HASH'),
       ...(options['--workspace'] ? { workspace_id: options['--workspace'] } : {}),
     })
   }
   if (action === 'remove') {
-    const { args, options } = split(rest, 2, ['--request-id'], 'remove')
+    const { args } = split(rest, 2, [], 'remove')
     return dailyUseCommand(socketPath, {
       op: 'skill.remove',
-      operation_id: required(options['--request-id'], '--request-id'),
+      operation_id: requiredOperationId(),
       name: required(args[0], 'NAME'),
       expected_content_hash: required(args[1], 'HASH'),
     })
   }
   if (action === 'place') {
-    const { args, options } = split(rest, 3, ['--request-id', '--workspace'], 'place')
+    const { args, options } = split(rest, 3, ['--workspace'], 'place')
     const workspace = options['--workspace']
     return dailyUseCommand(socketPath, {
       op: 'skill.place',
-      operation_id: required(options['--request-id'], '--request-id'),
+      operation_id: requiredOperationId(),
       name: required(args[0], 'NAME'),
       expected_content_hash: required(args[1], 'HASH'),
       provider: required(args[2], 'PROVIDER'),

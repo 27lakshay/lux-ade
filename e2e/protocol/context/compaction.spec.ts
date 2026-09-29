@@ -71,7 +71,7 @@ test('F040: a Codex compaction keeps its native provenance and the earlier histo
   expect(resumed.conversation.provider_thread_id).toBe(before.conversation.provider_thread_id)
 
   // Through the CLI, compaction is the same effect command.
-  const cli = await profile.cli('conversation', 'compact', conversationId, '--request-id', 'compact-cli')
+  const cli = await profile.cli('conversation', 'compact', conversationId, '--operation-id', 'compact-cli')
   expect(cli.code, cli.stderr).toBe(0)
   expect(cli.json).toMatchObject({ outcome: 'acknowledged' })
   await expect
@@ -118,7 +118,7 @@ test('F040: an unsupported provider or a busy Conversation reports why and recor
     outcome: 'unavailable',
     reason: "ADE's Claude adapter does not issue Claude Code's compaction command yet",
   })
-  const cli = await profile.cli('conversation', 'compact', claude, '--request-id', 'compact-claude-cli')
+  const cli = await profile.cli('conversation', 'compact', claude, '--operation-id', 'compact-claude-cli')
   expect(cli.code).not.toBe(0)
   expect(cli.stderr).toContain('compaction command')
 

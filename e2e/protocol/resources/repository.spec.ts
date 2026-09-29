@@ -81,7 +81,7 @@ test('clone from a local bare repository registers the project and never writes 
 
   const destination = join(ade.root, 'clones', 'project')
   await mkdir(join(ade.root, 'clones'), { recursive: true })
-  const cloned = await profile.cli('repository', 'clone', remote.url, destination, '--request-id', 'clone-1')
+  const cloned = await profile.cli('repository', 'clone', remote.url, destination, '--operation-id', 'clone-1')
   expect(cloned.code, cloned.stderr).toBe(0)
   const reply = cloned.json as {
     outcome: string
@@ -168,7 +168,7 @@ test('publish initialises a folder, commits only when asked, adds the remote and
     'publish',
     folder,
     remote.url,
-    '--request-id',
+    '--operation-id',
     'publish-1',
     '--initial-commit',
     '--message',

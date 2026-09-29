@@ -45,7 +45,7 @@ test('R002: the same compaction converges on its reply after reconnects and a cr
   await waitForIdle(profile, conversationId)
 
   expect(await profile.call('conversation.compact', compact)).toEqual(reply)
-  const cli = await profile.cli('conversation', 'compact', conversationId, '--request-id', 'compact-r002')
+  const cli = await profile.cli('conversation', 'compact', conversationId, '--operation-id', 'compact-r002')
   expect(cli.code, cli.stderr).toBe(0)
   expect(cli.json).toMatchObject({ outcome: 'acknowledged', operation_id: 'compact-r002' })
   await profile.restartDaemon('kill')
@@ -56,7 +56,7 @@ test('R002: the same compaction converges on its reply after reconnects and a cr
   await expect(
     profile.call('conversation.compact', { operation_id: 'compact-r002', conversation_id: other }),
   ).rejects.toThrow(/already used for a different request/)
-  const conflict = await profile.cli('conversation', 'compact', other, '--request-id', 'compact-r002')
+  const conflict = await profile.cli('conversation', 'compact', other, '--operation-id', 'compact-r002')
   expect(conflict.code).not.toBe(0)
   expect(await compactions(profile)).toBe(1)
   expect(await compactionRecords(profile, conversationId)).toBe(1)
@@ -119,7 +119,7 @@ test('R001: a compaction whose run was lost with the runtime is reported unknown
 
   const unknown = await profile.call('conversation.compact', compact)
   expect(unknown).toMatchObject({ outcome: 'unknown', reason: expect.stringContaining('will not run it again') })
-  const cli = await profile.cli('conversation', 'compact', conversationId, '--request-id', 'compact-unknown')
+  const cli = await profile.cli('conversation', 'compact', conversationId, '--operation-id', 'compact-unknown')
   expect(cli.code).not.toBe(0)
   expect(JSON.stringify(cli.json)).toContain('outcome_unknown')
   // The unknown outcome is stable once the Conversation runs again.
