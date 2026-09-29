@@ -46,9 +46,13 @@ claiming a UI change works.
     real sizes for 200ms, so content reflows smoothly instead of sliding or scaling; any pointer or
     key on the cards ends that at once. Splits and closes are instant. Only moves that keep sizes
     use Motion layout animations: swapping sidebars and reordering tabs.
-  - `model/`: the layout is data (`layout.ts`), changed only by the reducer (`layout.logic.ts`),
-    stored per workspace in each window and saved under the window's name (`layout-store.ts`,
-    `app/window-name.ts`; checked on load by `layout-schema.ts`). Native-menu and palette commands
+  - `model/`: the layout is the daemon's: each window is a daemon window record, and each of its
+    workspaces has a layout record the daemon changes (`layout.apply`, `tab.close`, `pane.close`).
+    The renderer holds those records by revision (`layout-store.ts`, `layout-sync.ts`), draws them,
+    and sends one command when a gesture ends; it keeps no reducer and saves no layout. Old
+    localStorage layouts are imported once (`layout-import.ts`). The TS reducer survives only as a
+    test and `?bench` double (`dev/layout-double/`, kept faithful by lane A's shared vectors; the
+    `ade/no-layout-double` lint rule keeps it out of the app). Native-menu and palette commands
     live in `layout-commands.ts`.
   - Limits keep every layout tidy, and are enforced, not advised:
     - A pane is never smaller than its content needs (`PANE_MIN`). A split, drop, dock or move
@@ -119,8 +123,10 @@ claiming a UI change works.
   are mounted once at the root. Show a toast with `toast.add()` from `components/ui/toast`.
 - Server state fetched with TanStack Query uses `queryClient` (`app/query-client.ts`), which is
   cleared when another profile is selected.
-- Theme: light, dark or system (`app/theme.ts`), saved in localStorage. `public/theme-boot.js`
-  applies it before the first paint. Main mirrors it to the native window and paints the window
+- Theme: light, dark or system (`app/theme.ts`), and reduced motion (`app/motion-preference.ts`),
+  are the profile's settings in the daemon (`app/profile-settings.ts` follows every change). A copy
+  stays in localStorage only so `public/theme-boot.js` paints the right theme before the daemon
+  answers. Main mirrors it to the native window and paints the window
   `WINDOW_BACKGROUND` (`src/shared/window-chrome.ts`, kept equal to the theme's `--background` by
   a test). There is no vibrancy.
 - Window chrome: title-bar height and traffic-light position live in `src/shared/window-chrome.ts`
