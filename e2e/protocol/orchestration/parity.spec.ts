@@ -17,7 +17,7 @@ import {
 } from '../fixtures'
 import { binaries } from '../fixtures/environment'
 import { subscribeFeed } from '../fixtures/feed'
-import { repositoryId } from '../fixtures/worktrees'
+import { projectId } from '../fixtures/worktrees'
 
 type Context = { workspace: string; conversation: string; repository: string }
 type Sample = {
@@ -166,7 +166,7 @@ test('every operation family is reachable through both the SDK and the CLI, with
   const context = {
     workspace: workspaceId,
     conversation: conversationId,
-    repository: await repositoryId(profile, repo.path),
+    repository: await projectId(profile, repo.path),
   }
   const mismatches: string[] = []
   for (const [domain, sample] of Object.entries(samples)) {

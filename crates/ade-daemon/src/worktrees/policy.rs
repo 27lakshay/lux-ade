@@ -275,7 +275,7 @@ pub fn authority_of(
         (Some(device), Some(inode)) => found.is_some_and(|(d, i)| d == device && i == inode),
         _ => false,
     };
-    if owner["repository_id"] == repository
+    if owner["project_id"] == repository
         && same_tree
         && marker.is_some()
         && marker == owner["token"].as_str()
@@ -464,7 +464,7 @@ mod tests {
 
     #[test]
     fn removal_needs_the_recorded_identity_not_just_the_marker() {
-        let owner = serde_json::json!({"repository_id": "repo", "marker": "/admin/marker",
+        let owner = serde_json::json!({"project_id": "repo", "marker": "/admin/marker",
             "token": "t", "device": "1", "inode": "42"});
         let same = || Some(("1".to_owned(), "42".to_owned()));
         let verified = authority_of(Some(&owner), "repo", same(), Some("t"));
@@ -496,7 +496,7 @@ mod tests {
             authority_of(None, "repo", same(), Some("t")),
             Authority::None
         );
-        let unidentified = serde_json::json!({"repository_id": "repo", "marker": "/admin/marker",
+        let unidentified = serde_json::json!({"project_id": "repo", "marker": "/admin/marker",
             "token": "t"});
         assert_eq!(
             authority_of(Some(&unidentified), "repo", same(), Some("t")),

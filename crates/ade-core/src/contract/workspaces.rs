@@ -259,7 +259,7 @@ pub struct WorkspaceRebindRequest {
 /// `repository.rebind`: bind a restored Git repository to a verified checkout.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct RepositoryRebindRequest {
-    pub repository_id: String,
+    pub project_id: String,
     pub path: String,
 }
 
@@ -471,7 +471,7 @@ mod tests {
         );
         request::<RepositoryRebindRequest>(
             "repository.rebind",
-            json!({"repository_id": "repo_1", "path": "/tmp/project"}),
+            json!({"project_id": "repo_1", "path": "/tmp/project"}),
         );
     }
 

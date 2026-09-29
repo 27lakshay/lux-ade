@@ -123,7 +123,7 @@ impl Event {
     pub fn worktree(
         op: &str,
         operation_id: &str,
-        repository_id: &str,
+        project_id: &str,
         path: Option<&str>,
     ) -> Option<Self> {
         let (kind, name) = match op {
@@ -134,7 +134,7 @@ impl Event {
         Some(Self {
             kind,
             source_key: format!("worktree:{operation_id}:{name}"),
-            payload: json!({"operation_id": operation_id, "repository_id": repository_id,
+            payload: json!({"operation_id": operation_id, "project_id": project_id,
                 "path": path}),
         })
     }

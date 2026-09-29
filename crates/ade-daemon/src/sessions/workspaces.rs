@@ -144,21 +144,21 @@ impl Sessions {
                 let common_identity = binding
                     .common_identity
                     .context("Git common directory is unavailable")?;
-                let repository_id = non_empty("repository_id", &rebind.repository_id)?;
-                let saved = self.data.lock().unwrap().store.repository(repository_id)?;
+                let project_id = non_empty("project_id", &rebind.project_id)?;
+                let saved = self.data.lock().unwrap().store.repository(project_id)?;
                 let source_identity = self
                     .data
                     .lock()
                     .unwrap()
                     .store
-                    .repository_source_identity(repository_id)?;
+                    .repository_source_identity(project_id)?;
                 ensure!(
                     !self
                         .data
                         .lock()
                         .unwrap()
                         .store
-                        .repository_bound(repository_id)?,
+                        .repository_bound(project_id)?,
                     "Repository is already bound"
                 );
                 self.worktrees
@@ -170,12 +170,12 @@ impl Sessions {
                     "Selected repository changed during rebind"
                 );
                 ensure!(
-                    d.store.repository(repository_id)?.root == saved.root,
+                    d.store.repository(project_id)?.root == saved.root,
                     "Repository binding changed during rebind"
                 );
-                let repository =
-                    d.store
-                        .rebind_repository(repository_id, common, common_identity)?;
+                let repository = d
+                    .store
+                    .rebind_repository(project_id, common, common_identity)?;
                 self.catalog_changed(&mut d)?;
                 drop(d);
                 self.release_restore_fence_if_bound()?;

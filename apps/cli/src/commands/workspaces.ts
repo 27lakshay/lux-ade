@@ -24,7 +24,7 @@ export const workspaceUsage = `  workspace list                        List regi
   rebind list                           List what a restored profile needs bound again: lifecycle
                                         repositories, Git repositories, then workspaces
   workspace rebind WORKSPACE_ID PATH    Bind a restored workspace to a verified directory
-  repository rebind REPOSITORY_ID PATH  Bind a restored Git repository before its workspaces
+  repository rebind PROJECT_ID PATH     Bind a restored Git repository before its workspaces
   worktree register PATH                Register a Git repository lifecycle
   worktree list PROJECT_ID              Inspect linked trees and removal authority
   worktree refresh PROJECT_ID --operation-id ID
@@ -152,10 +152,10 @@ export async function runWorkspaceCommand(
     })
   }
   if (area === 'repository' && action === 'rebind') {
-    if (rest.length !== 2) throw new CliError('usage', 'repository rebind requires REPOSITORY_ID PATH.')
+    if (rest.length !== 2) throw new CliError('usage', 'repository rebind requires PROJECT_ID PATH.')
     return dailyUseCommand(socketPath, {
       op: 'repository.rebind',
-      repository_id: required(rest[0], 'REPOSITORY_ID'),
+      project_id: required(rest[0], 'PROJECT_ID'),
       path: required(rest[1], 'PATH'),
     })
   }

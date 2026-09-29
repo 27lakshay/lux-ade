@@ -3,14 +3,14 @@ use super::*;
 /// The profile database schema this build creates and reads. Nothing upgrades
 /// an older database until ADE launches (decision D19): a database at any
 /// other version is refused, and the person deletes it to start again.
-pub const SCHEMA_VERSION: i64 = 21;
+pub const SCHEMA_VERSION: i64 = 22;
 
 /// The whole profile schema, created in one transaction for a new database.
 /// Stores that create their own tables on first use (drafts, activity,
 /// runtime recovery, receipts and others) add them with `IF NOT EXISTS`.
 const SCHEMA: &str = "
     CREATE TABLE repositories(id TEXT PRIMARY KEY, root TEXT NOT NULL UNIQUE, data TEXT NOT NULL);
-    CREATE TABLE workspaces(id TEXT PRIMARY KEY, repository_id TEXT REFERENCES repositories(id), root TEXT NOT NULL UNIQUE, data TEXT NOT NULL);
+    CREATE TABLE workspaces(id TEXT PRIMARY KEY, project_id TEXT NOT NULL, root TEXT NOT NULL UNIQUE, data TEXT NOT NULL);
     CREATE TABLE conversations(id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id), data TEXT NOT NULL);
     CREATE TABLE messages(id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES conversations(id), provider_item_id TEXT, sequence INTEGER NOT NULL CHECK(sequence>0), data TEXT NOT NULL, UNIQUE(conversation_id,sequence), UNIQUE(conversation_id,provider_item_id));
     CREATE TABLE requests(id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES conversations(id), status TEXT NOT NULL, data TEXT NOT NULL);

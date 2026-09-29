@@ -196,7 +196,7 @@ test('a repeated group operation ID deduplicates, a changed payload conflicts, a
         workspace: {
           mode: 'new_worktree' as const,
           workspace_id: tree.workspaceId,
-          repository_id: tree.repositoryId,
+          project_id: tree.projectId,
           worktree_operation_id: tree.operationId,
         },
       })),

@@ -188,13 +188,13 @@ impl Sessions {
                 WorkspaceChoice::Same => (parent.workspace_id.clone(), "same", None),
                 WorkspaceChoice::NewWorktree {
                     workspace_id,
-                    repository_id,
+                    project_id,
                     worktree_operation_id,
                 } => {
                     self.verify_new_worktree(
                         &parent.workspace_id,
                         non_empty("workspace_id", workspace_id)?,
-                        non_empty("repository_id", repository_id)?,
+                        non_empty("project_id", project_id)?,
                         non_empty("worktree_operation_id", worktree_operation_id)?,
                     )?;
                     (

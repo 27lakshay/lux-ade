@@ -244,7 +244,7 @@ test('refuses a forged Agent caller, an inherited account across providers and a
       workspace: {
         mode: 'new_worktree',
         workspace_id: unrelated.workspace.id,
-        repository_id: 'repository_missing',
+        project_id: 'repository_missing',
         worktree_operation_id: 'missing',
       },
     }),
@@ -282,7 +282,7 @@ test('delegates into a new worktree the lifecycle ledger created, with an explic
     workspace: {
       mode: 'new_worktree',
       workspace_id: tree.workspaceId,
-      repository_id: tree.repositoryId,
+      project_id: tree.projectId,
       worktree_operation_id: tree.operationId,
     },
     task: prompts.hold,
@@ -310,7 +310,7 @@ test('delegates into a new worktree the lifecycle ledger created, with an explic
       workspace: {
         mode: 'new_worktree',
         workspace_id: workspace.id,
-        repository_id: tree.repositoryId,
+        project_id: tree.projectId,
         worktree_operation_id: tree.operationId,
       },
       task: prompts.turn,

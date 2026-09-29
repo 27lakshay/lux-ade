@@ -114,7 +114,7 @@ impl Repository {
 const LEDGER: &str = "jobs";
 /// The lifecycle database schema this build creates and reads. Nothing
 /// upgrades an older one until ADE launches (decision D19).
-pub const LIFECYCLE_SCHEMA_VERSION: i64 = 5;
+pub const LIFECYCLE_SCHEMA_VERSION: i64 = 6;
 /// The lifecycle tables: registered repositories, ADE-owned trees, tree
 /// phases, archive records and the operation ledger (`LEDGER`). The shared
 /// receipt table is added by `receipts::ensure`.
@@ -244,7 +244,7 @@ struct Admitted {
 /// table. Only trees ADE created or ran hooks in have one.
 #[derive(Clone, Serialize, Deserialize)]
 struct TreeRecord {
-    repository_id: String,
+    project_id: String,
     binding_generation: i64,
     branch: Option<String>,
     phase: WorktreePhase,
@@ -281,7 +281,7 @@ fn tree_phase(
 ) -> Result<Option<WorktreePhase>> {
     Ok(read_tree(db, path)?
         .filter(|tree| {
-            tree.repository_id == repository && tree.binding_generation == binding_generation
+            tree.project_id == repository && tree.binding_generation == binding_generation
         })
         .map(|tree| tree.phase))
 }
@@ -957,7 +957,7 @@ fn admin_dir(path: &str) -> Result<String> {
 /// [`admin_dir`] read. Touches only the filesystem and `db`.
 fn claim_worktree(
     db: &Connection,
-    repository_id: &str,
+    project_id: &str,
     path: &str,
     admin: &str,
     adopted: bool,
@@ -976,7 +976,7 @@ fn claim_worktree(
         db,
         "owned",
         path,
-        &json!({"repository_id":repository_id,
+        &json!({"project_id":project_id,
         "marker":marker,"token":token,"adopted":adopted,
         "device":device,"inode":inode}),
     )?;
@@ -1434,7 +1434,7 @@ impl Worktrees {
         self.put_tree(
             path,
             &TreeRecord {
-                repository_id: repo.id.clone(),
+                project_id: repo.id.clone(),
                 binding_generation: repo.binding_generation,
                 branch: branch.map(str::to_owned),
                 phase,
@@ -1575,7 +1575,7 @@ impl Worktrees {
                         owner
                             .as_deref()
                             .and_then(|v| serde_json::from_str::<Value>(v).ok())
-                            .is_some_and(|v| v["repository_id"] == id
+                            .is_some_and(|v| v["project_id"] == id
                                 && std::fs::read_to_string(v["marker"].as_str().unwrap_or(""))
                                     .ok()
                                     .as_deref()
@@ -1820,12 +1820,12 @@ impl Worktrees {
             rusqlite::Transaction::new_unchecked(&d.db, rusqlite::TransactionBehavior::Immediate)?;
         put(&tx, "repositories", id, &repository)?;
         tx.execute(
-            "DELETE FROM owned WHERE json_extract(data,'$.repository_id')=?1",
+            "DELETE FROM owned WHERE json_extract(data,'$.project_id')=?1",
             [id],
         )?;
         // Phases describe the old binding's trees, not the new checkout's.
         tx.execute(
-            "DELETE FROM trees WHERE json_extract(data,'$.repository_id')=?1",
+            "DELETE FROM trees WHERE json_extract(data,'$.project_id')=?1",
             [id],
         )?;
         tx.commit()?;
@@ -2109,7 +2109,7 @@ impl Worktrees {
     /// reused with different parameters.
     fn start(self: &Arc<Self>, op: &str, request: &Value) -> Result<Value> {
         let effect = Effect::decode(op, request)?;
-        let id = valid("repository_id", effect.project_id())?;
+        let id = valid("project_id", effect.project_id())?;
         let operation_id = valid("operation_id", effect.operation_id())?;
         ensure!(operation_id.len() <= 256, "Operation ID too long");
         let payload = effect.payload()?;
@@ -2980,7 +2980,7 @@ impl Worktrees {
     }
     /// Drops ADE's authority and phase for a removed tree and keeps its
     /// archive record, in one transaction.
-    fn retire(&self, repository_id: &str, entry: &WorktreeArchiveEntry) -> Result<()> {
+    fn retire(&self, project_id: &str, entry: &WorktreeArchiveEntry) -> Result<()> {
         let d = self.data.lock().unwrap();
         let tx = Transaction::new_unchecked(&d.db, TransactionBehavior::Immediate)?;
         tx.execute("DELETE FROM owned WHERE id=?1", [&entry.path])?;
@@ -2989,7 +2989,7 @@ impl Worktrees {
             &tx,
             "archived",
             &format!("{}\0{}", entry.operation_id, entry.path),
-            &json!({"repository_id": repository_id, "entry": entry}),
+            &json!({"project_id": project_id, "entry": entry}),
         )?;
         tx.commit()?;
         Ok(())
@@ -3001,7 +3001,7 @@ impl Worktrees {
         let entries = d
             .db
             .prepare(
-                "SELECT data FROM archived WHERE json_extract(data,'$.repository_id')=?1 ORDER BY json_extract(data,'$.entry.archived_at') DESC, rowid DESC LIMIT 200",
+                "SELECT data FROM archived WHERE json_extract(data,'$.project_id')=?1 ORDER BY json_extract(data,'$.entry.archived_at') DESC, rowid DESC LIMIT 200",
             )?
             .query_map([id], |row| row.get::<_, String>(0))?
             .map(|row| {

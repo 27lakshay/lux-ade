@@ -313,7 +313,7 @@ pub fn workspace_removed(tx: &Connection, workspace_id: &str) -> Result<Workspac
 /// by project name, then workspace name.
 fn replacement_workspace(db: &Connection, removed: &str) -> Result<Option<String>> {
     let mut statement = db.prepare(
-        "SELECT w.id,w.data,r.root FROM workspaces w LEFT JOIN repositories r ON r.id=w.repository_id WHERE w.id<>?1 AND w.id NOT IN (SELECT workspace_id FROM workspace_tombstones)",
+        "SELECT w.id,w.data,r.root FROM workspaces w LEFT JOIN repositories r ON r.id=w.project_id WHERE w.id<>?1 AND w.id NOT IN (SELECT workspace_id FROM workspace_tombstones)",
     )?;
     let mut candidates = statement
         .query_map([removed], |row| {

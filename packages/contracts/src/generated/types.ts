@@ -1403,7 +1403,7 @@ export type WorkspaceChoice =
     }
   | {
       mode: 'new_worktree'
-      repository_id: string
+      project_id: string
       workspace_id: string
       worktree_operation_id: string
       [k: string]: unknown
@@ -1913,7 +1913,7 @@ export type Scope =
     }
   | {
       kind: 'repositories'
-      repository_ids: string[]
+      project_ids: string[]
     }
 /**
  * A value set in a server's environment or HTTP headers. Secrets are never
@@ -4619,7 +4619,7 @@ export interface Conversation {
 /**
  * A project as the catalog lists it. Every workspace names its project in
  * `WorkspaceRecord::project_id`, and the worktree lifecycle takes a
- * repository project's ID as its `repository_id`.
+ * repository project's ID as its `project_id`.
  */
 export interface CatalogProject {
   id: string
@@ -7853,7 +7853,7 @@ export interface RunSpec {
       }
     | {
         mode: 'new_worktree'
-        repository_id: string
+        project_id: string
         workspace_id: string
         worktree_operation_id: string
         [k: string]: unknown
@@ -11205,7 +11205,7 @@ export interface RepositoryPublished {
 export interface RepositoryRebindRequest {
   op: 'repository.rebind'
   path: string
-  repository_id: string
+  project_id: string
 }
 /**
  * `resources.claim.resolve`: release one quarantined claim after the caller

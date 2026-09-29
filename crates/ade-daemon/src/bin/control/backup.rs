@@ -1227,17 +1227,23 @@ fn remap_private(
     let mut db = Connection::open(data.join("sessions.sqlite"))?;
     let tx = db.transaction()?;
     let metadata = fs::metadata(staged_target)?;
-    let mut query = tx.prepare("SELECT id,data FROM workspaces WHERE root=?1")?;
+    let mut query = tx.prepare(
+        "SELECT id,data,project_id IN (SELECT id FROM repositories) FROM workspaces WHERE root=?1",
+    )?;
     let rows = query
         .query_map([source.to_string_lossy().as_ref()], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, bool>(2)?,
+            ))
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     drop(query);
-    for (id, data) in rows {
+    for (id, data, in_repository) in rows {
         let mut record: Value = serde_json::from_str(&data)?;
         ensure!(
-            record["repository_id"].is_null(),
+            !in_repository,
             "Private workspace is linked to a repository"
         );
         record["root"] = json!(final_target);

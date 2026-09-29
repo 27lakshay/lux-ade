@@ -103,7 +103,7 @@ pub enum WorkspaceChoice {
     /// `create`, then opened as `workspace_id`. The daemon verifies both.
     NewWorktree {
         workspace_id: String,
-        repository_id: String,
+        project_id: String,
         worktree_operation_id: String,
     },
 }
@@ -753,7 +753,7 @@ mod tests {
                 "parent_conversation_id": "c1", "caller": {"kind": "user"},
                 "provider": "claude", "account": {"mode": "managed", "account_id": "a"},
                 "workspace": {"mode": "new_worktree", "workspace_id": "w2",
-                    "repository_id": "r", "worktree_operation_id": "wop"},
+                    "project_id": "r", "worktree_operation_id": "wop"},
                 "task": "do it", "title": "Child", "provider_config": {},
                 "context_attachments": [{"id": "a1", "name": "notes.txt",
                     "media_type": "text/plain", "size": 4}]}),
@@ -899,7 +899,7 @@ mod tests {
                 "runs": [
                     {"provider": "codex", "account": {"mode": "ambient"},
                         "workspace": {"mode": "new_worktree", "workspace_id": "w2",
-                            "repository_id": "r", "worktree_operation_id": "wop"}},
+                            "project_id": "r", "worktree_operation_id": "wop"}},
                     {"provider": "claude", "account": {"mode": "managed", "account_id": "a"},
                         "workspace": {"mode": "same"}, "provider_config": {}}]}),
         );

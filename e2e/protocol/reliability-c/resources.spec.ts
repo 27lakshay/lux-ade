@@ -37,23 +37,23 @@ test('a checkout moved away keeps its claim, and a new checkout at the old path 
 
   // The remover takes removal authority over both checkouts. Removing the
   // moved one is refused while the holder works in it.
-  const repositoryId = await adopt(remover, repo.path, moved)
+  const projectId = await adopt(remover, repo.path, moved)
   await adopt(remover, repo.path, tree)
-  const refused = await removeTree(remover, repositoryId, 'remove-moved', moved)
+  const refused = await removeTree(remover, projectId, 'remove-moved', moved)
   expect(refused).toMatchObject({ type: 'error', code: 'host_resource_conflict', recovery: 'inspect_host_resources' })
   expect(refused.message).toContain(claim.id)
   expect(await exists(moved)).toBe(true)
   expect(await isRunning(launch.shellPid)).toBe(true)
 
   // The replacement at the old path is another resource: nobody holds it, so it can be removed.
-  expect((await removeTree(remover, repositoryId, 'remove-replacement', tree)).type).toBe('worktree_state')
-  expect(await settledOperation(remover, repositoryId, 'remove-replacement')).toBe('succeeded')
+  expect((await removeTree(remover, projectId, 'remove-replacement', tree)).type).toBe('worktree_state')
+  expect(await settledOperation(remover, projectId, 'remove-replacement')).toBe('succeeded')
   expect(await exists(tree)).toBe(false)
   // The holder's checkout and shell are untouched.
   expect(await exists(moved)).toBe(true)
   expect(await isRunning(launch.shellPid)).toBe(true)
   expect((await claimsOn(remover, moved)).map((entry) => entry.id)).toEqual([claim.id])
-  expect(await removeTree(remover, repositoryId, 'remove-moved', moved)).toMatchObject({
+  expect(await removeTree(remover, projectId, 'remove-moved', moved)).toMatchObject({
     type: 'error',
     code: 'host_resource_conflict',
   })
@@ -68,7 +68,7 @@ test('a registry corrupted under a live owner blocks new lifecycle work and cann
     profiles: [holder, remover],
   } = await startHostProfiles(ade, 2)
   const tree = await externalTree(ade, repo, 'corrupt')
-  const repositoryId = await adopt(remover, repo.path, tree)
+  const projectId = await adopt(remover, repo.path, tree)
   const launch = await launchShell(holder, tree)
   const registry = join(profilesHome, 'host-resources.sqlite3')
   expect(await claimsOn(remover, tree)).toHaveLength(1)
@@ -86,7 +86,7 @@ test('a registry corrupted under a live owner blocks new lifecycle work and cann
   expect(blocked.registry.reason).toMatch(/unreadable/)
 
   // New lifecycle work fails closed with a typed refusal and a recovery hint.
-  const refused = await removeTree(remover, repositoryId, 'remove-corrupt', tree)
+  const refused = await removeTree(remover, projectId, 'remove-corrupt', tree)
   expect(refused).toMatchObject({
     type: 'error',
     code: 'host_resources_unavailable',
@@ -107,7 +107,7 @@ test('a registry corrupted under a live owner blocks new lifecycle work and cann
   expect(await readFile(registry)).toEqual(garbage)
   expect((await readdir(profilesHome)).some((name) => name.includes('.unreadable-'))).toBe(false)
   expect((await remover.call('resources.inspect', {})).registry.state).toBe('blocked')
-  expect(await removeTree(remover, repositoryId, 'remove-corrupt', tree)).toMatchObject({
+  expect(await removeTree(remover, projectId, 'remove-corrupt', tree)).toMatchObject({
     type: 'error',
     code: 'host_resources_unavailable',
   })
@@ -121,8 +121,8 @@ test('a registry corrupted under a live owner blocks new lifecycle work and cann
   expect((await remover.call('resources.inspect', {})).registry.state).toBe('ready')
   expect((await readdir(profilesHome)).some((name) => name.startsWith('host-resources.sqlite3.unreadable-'))).toBe(true)
   // The refusals left no receipt, so the same operation ID is admitted now.
-  expect((await removeTree(remover, repositoryId, 'remove-corrupt', tree)).type).toBe('worktree_state')
-  expect(await settledOperation(remover, repositoryId, 'remove-corrupt')).toBe('succeeded')
+  expect((await removeTree(remover, projectId, 'remove-corrupt', tree)).type).toBe('worktree_state')
+  expect(await settledOperation(remover, projectId, 'remove-corrupt')).toBe('succeeded')
 })
 
 test('a registry migrated to a newer format under a live owner blocks new work and keeps every claim', async ({
@@ -134,7 +134,7 @@ test('a registry migrated to a newer format under a live owner blocks new work a
     profiles: [holder, remover],
   } = await startHostProfiles(ade, 2)
   const tree = await externalTree(ade, repo, 'migrated')
-  const repositoryId = await adopt(remover, repo.path, tree)
+  const projectId = await adopt(remover, repo.path, tree)
   const launch = await launchShell(holder, tree)
   const registry = join(profilesHome, 'host-resources.sqlite3')
   const [claim] = await claimsOn(remover, tree)
@@ -164,7 +164,7 @@ test('a registry migrated to a newer format under a live owner blocks new work a
   const blocked = await remover.call('resources.inspect', {})
   expect(blocked.registry).toMatchObject({ state: 'blocked', path: registry })
   expect(blocked.registry.reason).toMatch(/format 2.*update ADE/)
-  expect(await removeTree(remover, repositoryId, 'remove-migrated', tree)).toMatchObject({
+  expect(await removeTree(remover, projectId, 'remove-migrated', tree)).toMatchObject({
     type: 'error',
     code: 'host_resources_unavailable',
     recovery: 'recover_host_resources',
@@ -191,7 +191,7 @@ test('a registry migrated to a newer format under a live owner blocks new work a
   expect(await claimsOn(remover, tree)).toEqual([
     expect.objectContaining({ id: claim.id, state: 'active', owner_live: true }),
   ])
-  expect(await removeTree(remover, repositoryId, 'remove-migrated', tree)).toMatchObject({
+  expect(await removeTree(remover, projectId, 'remove-migrated', tree)).toMatchObject({
     type: 'error',
     code: 'host_resource_conflict',
   })

@@ -38,7 +38,6 @@ test('a main checkout, a linked worktree and a folder each name their project, k
   expect(main).toMatchObject({ kind: 'primary_checkout', branch: 'main', default: false, ade_owned: false })
   expect(linked).toMatchObject({ kind: 'linked_worktree', branch: 'feature', ade_owned: false })
   expect(notes).toMatchObject({ kind: 'folder', branch: null })
-  expect(notes).not.toHaveProperty('repository_id')
 
   // One project for the repository, one for the folder.
   expect(linked.project_id).toBe(main.project_id)

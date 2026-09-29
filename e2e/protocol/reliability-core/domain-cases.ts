@@ -90,15 +90,15 @@ async function withRemote(context: Context, teammateCommit: boolean): Promise<st
 
 // --- Worktree lifecycle: jobs settled by a worker ---------------------------
 
-type Lifecycle = { repositoryId: string; path: string; other: string; marker?: string; log?: string }
+type Lifecycle = { projectId: string; path: string; other: string; marker?: string; log?: string }
 
-async function lifecycleOutcome(context: Context, state: { repositoryId: string }, id: string) {
+async function lifecycleOutcome(context: Context, state: { projectId: string }, id: string) {
   let operation: Record<string, unknown> = {}
   await expect
     .poll(
       async () => {
         const reply = await context.profile.call('worktree.operation', {
-          project_id: state.repositoryId,
+          project_id: state.projectId,
           operation_id: id,
         })
         operation = reply.operation
@@ -112,17 +112,17 @@ async function lifecycleOutcome(context: Context, state: { repositoryId: string 
 
 const lifecycleBase = {
   pause: 'worktree' as const,
-  outcome: (context: Context, state: { repositoryId: string }, id: string) => lifecycleOutcome(context, state, id),
+  outcome: (context: Context, state: { projectId: string }, id: string) => lifecycleOutcome(context, state, id),
   unknown: (outcome: Record<string, unknown>) => outcome.status === 'interrupted',
 }
 
 let treeNumber = 0
 async function trees(context: Context): Promise<Lifecycle> {
-  const repositoryId = await register(context.profile, context.repo)
+  const projectId = await register(context.profile, context.repo)
   return {
-    repositoryId,
-    path: await createReady(context.profile, repositoryId, { name: `core-${++treeNumber}` }),
-    other: await createReady(context.profile, repositoryId, { name: `core-${++treeNumber}` }),
+    projectId,
+    path: await createReady(context.profile, projectId, { name: `core-${++treeNumber}` }),
+    other: await createReady(context.profile, projectId, { name: `core-${++treeNumber}` }),
   }
 }
 
@@ -227,7 +227,7 @@ export const domainCases: EffectCase[] = [
     op: 'worktree.cleanup',
     setup: trees,
     request: (state: Lifecycle, id, altered) => ({
-      project_id: state.repositoryId,
+      project_id: state.projectId,
       operation_id: id,
       paths: [altered ? state.other : state.path],
     }),
@@ -241,13 +241,13 @@ export const domainCases: EffectCase[] = [
       await context.repo.write('.env', 'SECRET=primary\n')
       const state = await trees(context)
       await context.profile.call('worktree.configure', {
-        project_id: state.repositoryId,
+        project_id: state.projectId,
         config: { resources: [{ path: '.env', mode: 'copy' }] },
       })
       return state
     },
     request: (state: Lifecycle, id, altered) => ({
-      project_id: state.repositoryId,
+      project_id: state.projectId,
       operation_id: id,
       path: altered ? state.other : state.path,
     }),
@@ -257,11 +257,11 @@ export const domainCases: EffectCase[] = [
     ...lifecycleBase,
     op: 'worktree.setup',
     setup: async (context) => {
-      const repositoryId = await register(context.profile, context.repo)
+      const projectId = await register(context.profile, context.repo)
       const marker = join(context.ade.root, 'setup-allowed')
       const log = join(context.ade.root, 'setup.log')
       await context.profile.call('worktree.configure', {
-        project_id: repositoryId,
+        project_id: projectId,
         config: {
           setup: [sh('gate', `test -f '${marker}' || exit 3`), sh('count', `echo "$ADE_OPERATION_ID" >> '${log}'`)],
         },
@@ -270,20 +270,20 @@ export const domainCases: EffectCase[] = [
       const failed = async () => {
         const id = `core-create-${++treeNumber}`
         await context.profile.call('worktree.create', {
-          project_id: repositoryId,
+          project_id: projectId,
           operation_id: id,
           name: `core-${treeNumber}`,
         })
-        const row = await lifecycleSettled(context.profile, repositoryId, id)
+        const row = await lifecycleSettled(context.profile, projectId, id)
         expect(row, JSON.stringify(row)).toMatchObject({ status: 'failed', code: 'setup_hook_failed' })
         return row.worktree_path!
       }
-      const state = { repositoryId, path: await failed(), other: await failed(), marker, log }
+      const state = { projectId, path: await failed(), other: await failed(), marker, log }
       await writeFile(marker, '')
       return state
     },
     request: (state: Lifecycle, id, altered) => ({
-      project_id: state.repositoryId,
+      project_id: state.projectId,
       operation_id: id,
       path: altered ? state.other : state.path,
     }),
@@ -298,7 +298,7 @@ export const domainCases: EffectCase[] = [
       return { ...state, head: await context.repo.head(), source: context.repo.path }
     },
     request: (state: Lifecycle & { head: string; source: string }, id, altered) => ({
-      project_id: state.repositoryId,
+      project_id: state.projectId,
       operation_id: id,
       source: state.source,
       target: state.path,
@@ -313,19 +313,19 @@ export const domainCases: EffectCase[] = [
     ...lifecycleBase,
     op: 'worktree.refresh',
     setup: async (context) => {
-      const repositoryId = await register(context.profile, context.repo)
+      const projectId = await register(context.profile, context.repo)
       const other = await register(context.profile, await context.ade.repo({ name: 'other' }))
       // A tree made outside ADE: the lifecycle lists it only after a refresh.
       const path = join(dirname(context.repo.path), 'outside')
       await context.repo.git('worktree', 'add', '--quiet', '-b', 'outside', path)
-      return { repositoryId, path, other }
+      return { projectId, path, other }
     },
     request: (state: Lifecycle, id, altered) => ({
-      project_id: altered ? state.other : state.repositoryId,
+      project_id: altered ? state.other : state.projectId,
       operation_id: id,
     }),
     effect: async (context, state: Lifecycle) =>
-      (await context.profile.call('worktree.get', { project_id: state.repositoryId })).worktrees.filter(
+      (await context.profile.call('worktree.get', { project_id: state.projectId })).worktrees.filter(
         (tree) => tree.path === state.path,
       ).length,
   },
@@ -719,21 +719,21 @@ type Claim = { path: string; claimId: string }
 
 /** A tree whose creation was interrupted by a daemon crash mid-setup: its create claim is quarantined. */
 async function quarantinedClaim(context: Context): Promise<Claim> {
-  const repositoryId = await register(context.profile, context.repo)
+  const projectId = await register(context.profile, context.repo)
   const started = join(context.ade.root, 'setup-started')
   const release = join(context.ade.root, 'setup-release')
   await context.profile.call('worktree.configure', {
-    project_id: repositoryId,
+    project_id: projectId,
     config: { setup: [sh('wait', `: > '${started}'; while [ ! -f '${release}' ]; do sleep 0.05; done`)] },
   })
   await context.profile.call('worktree.create', {
-    project_id: repositoryId,
+    project_id: projectId,
     operation_id: 'core-setup-create',
     name: 'core-claimed',
   })
   await expect.poll(() => existsSync(started), { timeout: 20_000 }).toBe(true)
   const running = await context.profile.call('worktree.operation', {
-    project_id: repositoryId,
+    project_id: projectId,
     operation_id: 'core-setup-create',
   })
   const path = (running.operation as unknown as { worktree_path: string }).worktree_path
@@ -743,7 +743,7 @@ async function quarantinedClaim(context: Context): Promise<Claim> {
     await writeFile(release, '')
   }
   await context.profile.restartDaemon()
-  await lifecycleSettled(context.profile, repositoryId, 'core-setup-create')
+  await lifecycleSettled(context.profile, projectId, 'core-setup-create')
   let claimId = ''
   await expect
     .poll(async () => {

@@ -26,15 +26,15 @@ export async function register(profile: ScratchProfile, repo: ScratchRepo): Prom
   return state.repository.id
 }
 
-export async function operation(profile: ScratchProfile, repositoryId: string, id: string): Promise<Operation> {
-  const reply = await profile.call('worktree.operation', { project_id: repositoryId, operation_id: id })
+export async function operation(profile: ScratchProfile, projectId: string, id: string): Promise<Operation> {
+  const reply = await profile.call('worktree.operation', { project_id: projectId, operation_id: id })
   return reply.operation as unknown as Operation
 }
 
 /** Wait until the operation has settled and return its full ledger row. */
 export async function settled(
   profile: ScratchProfile,
-  repositoryId: string,
+  projectId: string,
   id: string,
   timeout = 30_000,
 ): Promise<Operation> {
@@ -42,7 +42,7 @@ export async function settled(
   await expect
     .poll(
       async () => {
-        row = await operation(profile, repositoryId, id)
+        row = await operation(profile, projectId, id)
         return row.status
       },
       { timeout },
@@ -54,7 +54,7 @@ export async function settled(
 /** Create a tree with `worktree.create`, wait for it, and return the settled operation. */
 export async function create(
   profile: ScratchProfile,
-  repositoryId: string,
+  projectId: string,
   request: {
     name?: string
     branch?: string
@@ -64,24 +64,24 @@ export async function create(
   } = {},
   id = operationId('create'),
 ): Promise<Operation> {
-  await profile.call('worktree.create', { project_id: repositoryId, operation_id: id, ...request })
-  return settled(profile, repositoryId, id)
+  await profile.call('worktree.create', { project_id: projectId, operation_id: id, ...request })
+  return settled(profile, projectId, id)
 }
 
 /** Create a tree that must succeed, and return its path. */
 export async function createReady(
   profile: ScratchProfile,
-  repositoryId: string,
+  projectId: string,
   request: Parameters<typeof create>[2] = {},
 ): Promise<string> {
-  const row = await create(profile, repositoryId, request)
+  const row = await create(profile, projectId, request)
   expect(row, JSON.stringify(row)).toMatchObject({ status: 'succeeded' })
   expect(row.worktree_path).toBeTruthy()
   return row.worktree_path!
 }
 
 /** The listed tree at `path`, or undefined. */
-export async function item(profile: ScratchProfile, repositoryId: string, path: string) {
-  const state = await profile.call('worktree.get', { project_id: repositoryId })
+export async function item(profile: ScratchProfile, projectId: string, path: string) {
+  const state = await profile.call('worktree.get', { project_id: projectId })
   return state.worktrees.find((tree) => tree.path === path)
 }

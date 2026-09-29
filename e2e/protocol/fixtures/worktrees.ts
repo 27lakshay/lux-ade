@@ -6,7 +6,7 @@ import { expect } from '@playwright/test'
 import type { ScratchProfile } from './profile'
 
 export type LinkedWorktree = {
-  repositoryId: string
+  projectId: string
   /** The `worktree.switch` operation that created the tree. */
   operationId: string
   path: string
@@ -14,7 +14,7 @@ export type LinkedWorktree = {
 }
 
 /** The lifecycle repository ID of the Git repository at `path`. */
-export async function repositoryId(profile: ScratchProfile, path: string): Promise<string> {
+export async function projectId(profile: ScratchProfile, path: string): Promise<string> {
   return (await profile.call('worktree.repository', { path })).repository.id
 }
 
@@ -25,7 +25,7 @@ export async function createWorktree(
   branch: string,
   operationId = `e2e-worktree-${branch.replace(/[^A-Za-z0-9]/g, '-')}`,
 ): Promise<LinkedWorktree> {
-  const repository = await repositoryId(profile, repoPath)
+  const repository = await projectId(profile, repoPath)
   await profile.call('worktree.switch', {
     project_id: repository,
     operation_id: operationId,
@@ -47,5 +47,5 @@ export async function createWorktree(
     )
     .toBe('succeeded')
   const { workspace } = await profile.call('workspace.open', { path })
-  return { repositoryId: repository, operationId, path: workspace.root, workspaceId: workspace.id }
+  return { projectId: repository, operationId, path: workspace.root, workspaceId: workspace.id }
 }

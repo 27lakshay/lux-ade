@@ -261,7 +261,7 @@ pub enum ProjectKind {
 }
 /// A project as the catalog lists it. Every workspace names its project in
 /// `WorkspaceRecord::project_id`, and the worktree lifecycle takes a
-/// repository project's ID as its `repository_id`.
+/// repository project's ID as its `project_id`.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
 pub struct CatalogProject {
     pub id: String,

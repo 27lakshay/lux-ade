@@ -22,12 +22,12 @@ export async function externalTree(ade: AdeHarness, repo: ScratchRepo, branch: s
 }
 
 /** Wait for a worktree lifecycle operation to leave `running` and return it. */
-export async function settledOperation(profile: ScratchProfile, repositoryId: string, operationId: string) {
+export async function settledOperation(profile: ScratchProfile, projectId: string, operationId: string) {
   let status = 'running'
   await expect
     .poll(
       async () => {
-        status = (await profile.call('worktree.operation', { project_id: repositoryId, operation_id: operationId }))
+        status = (await profile.call('worktree.operation', { project_id: projectId, operation_id: operationId }))
           .operation.status
         return status
       },
@@ -38,20 +38,20 @@ export async function settledOperation(profile: ScratchProfile, repositoryId: st
 }
 
 /** Refresh the repository listing and wait for it. */
-export async function refresh(profile: ScratchProfile, repositoryId: string): Promise<void> {
+export async function refresh(profile: ScratchProfile, projectId: string): Promise<void> {
   const operationId = `refresh-${process.pid}-${++refreshes}`
-  await profile.call('worktree.refresh', { project_id: repositoryId, operation_id: operationId })
-  expect(await settledOperation(profile, repositoryId, operationId)).toBe('succeeded')
+  await profile.call('worktree.refresh', { project_id: projectId, operation_id: operationId })
+  expect(await settledOperation(profile, projectId, operationId)).toBe('succeeded')
 }
 
 /** Register the repository in `profile` and adopt `tree` there, giving that profile removal authority. */
 export async function adopt(profile: ScratchProfile, repoPath: string, tree: string): Promise<string> {
-  const repositoryId = (await profile.call('worktree.repository', { path: repoPath })).repository.id
-  await profile.call('worktree.adopt', { project_id: repositoryId, path: tree, confirm_path: tree })
-  await refresh(profile, repositoryId)
-  const state = await profile.call('worktree.get', { project_id: repositoryId })
+  const projectId = (await profile.call('worktree.repository', { path: repoPath })).repository.id
+  await profile.call('worktree.adopt', { project_id: projectId, path: tree, confirm_path: tree })
+  await refresh(profile, projectId)
+  const state = await profile.call('worktree.get', { project_id: projectId })
   expect(state.worktrees.find((item) => item.path === tree)?.ade_owned).toBe(true)
-  return repositoryId
+  return projectId
 }
 
 /** Open `tree` as a workspace and start its terminal shell through the CLI. Returns the shell's PID. */
@@ -66,10 +66,10 @@ export async function launchShell(profile: ScratchProfile, tree: string) {
 }
 
 /** `worktree.remove` over the raw protocol, so the typed error code is visible. */
-export function removeTree(profile: ScratchProfile, repositoryId: string, operationId: string, tree: string) {
+export function removeTree(profile: ScratchProfile, projectId: string, operationId: string, tree: string) {
   return rawReply(profile, {
     op: 'worktree.remove',
-    project_id: repositoryId,
+    project_id: projectId,
     operation_id: operationId,
     path: tree,
     confirm_path: tree,

@@ -41,9 +41,9 @@ export async function externalTree(ade: AdeHarness, repo: ScratchRepo, branch: s
 
 /** Register `repoPath` in `profile` and adopt `tree` there, so that profile may remove it. */
 export async function adopt(profile: ScratchProfile, repoPath: string, tree: string): Promise<string> {
-  const repositoryId = (await profile.call('worktree.repository', { path: repoPath })).repository.id
-  await profile.call('worktree.adopt', { project_id: repositoryId, path: tree, confirm_path: tree })
-  return repositoryId
+  const projectId = (await profile.call('worktree.repository', { path: repoPath })).repository.id
+  await profile.call('worktree.adopt', { project_id: projectId, path: tree, confirm_path: tree })
+  return projectId
 }
 
 /** Open `tree` as a workspace in `profile` and start its shell, which claims the checkout for use. */

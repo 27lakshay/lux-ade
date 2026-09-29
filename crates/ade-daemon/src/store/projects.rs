@@ -421,7 +421,7 @@ impl Store {
         let root: Option<String> = self
             .connection
             .query_row(
-                "SELECT root FROM workspaces WHERE json_extract(data,'$.project_id')=?1 AND repository_id IS NULL",
+                "SELECT root FROM workspaces WHERE project_id=?1 AND project_id NOT IN (SELECT id FROM repositories)",
                 [id],
                 |row| row.get(0),
             )
@@ -436,12 +436,13 @@ impl Store {
         }
     }
 
-    /// The roots of a project's workspaces, those in the catalog first.
+    /// The roots of a repository project's workspaces, those in the catalog
+    /// first. A folder project has none: it has no checkout to register.
     pub fn project_roots(&self, id: &str) -> Result<Vec<String>> {
         Ok(self
             .connection
             .prepare(
-                "SELECT root FROM workspaces WHERE repository_id=?1 ORDER BY id IN (SELECT workspace_id FROM workspace_tombstones), rowid",
+                "SELECT root FROM workspaces WHERE project_id=?1 AND project_id IN (SELECT id FROM repositories) ORDER BY id IN (SELECT workspace_id FROM workspace_tombstones), rowid",
             )?
             .query_map([id], |row| row.get(0))?
             .collect::<rusqlite::Result<_>>()?)

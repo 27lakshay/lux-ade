@@ -89,7 +89,7 @@ test('restored repository and shared workspaces rebind explicitly without source
   const first = (await source.call('workspace.open', { path: sourceCheckout })).workspace
   const second = (await source.call('workspace.open', { path: sourceSecond })).workspace
   expect(second.project_id).toBe(first.project_id)
-  const repositoryId = first.project_id
+  const projectId = first.project_id
   const conversation = (
     await source.call('conversation.create', { workspace_id: first.id, provider: 'codex', title: 'Preserved history' })
   ).conversation
@@ -129,7 +129,7 @@ test('restored repository and shared workspaces rebind explicitly without source
     type: 'rebind_catalog',
     repositories: expect.arrayContaining([
       expect.objectContaining({
-        id: repositoryId,
+        id: projectId,
         root: await realpath(join(sourceCheckout, '.git')),
         needs_rebind: true,
         rebindable: true,
@@ -156,15 +156,15 @@ test('restored repository and shared workspaces rebind explicitly without source
   ).toMatchObject(refused('ordinary workspace'))
   expect(await createTerminal(restored, privateSource.id)).toMatchObject(fenced)
   expect(
-    await rawReply(restored, { op: 'repository.rebind', repository_id: repositoryId, path: otherCheckout }),
+    await rawReply(restored, { op: 'repository.rebind', project_id: projectId, path: otherCheckout }),
   ).toMatchObject(refused('lifecycle binding'))
   expect(
-    (await restored.call('repository.rebind', { repository_id: repositoryId, path: targetCheckout })).repository,
-  ).toMatchObject({ id: repositoryId, root: await realpath(join(targetCheckout, '.git')), needs_rebind: false })
+    (await restored.call('repository.rebind', { project_id: projectId, path: targetCheckout })).repository,
+  ).toMatchObject({ id: projectId, root: await realpath(join(targetCheckout, '.git')), needs_rebind: false })
   expect((await restored.call('rebind.list', {})).repositories).toEqual(
     expect.arrayContaining([
       expect.objectContaining({
-        id: repositoryId,
+        id: projectId,
         root: await realpath(join(targetCheckout, '.git')),
         needs_rebind: false,
       }),
@@ -273,7 +273,7 @@ test('renamed source directories retain their saved physical identity and cannot
   expect(
     await rawReply(restored, {
       op: 'repository.rebind',
-      repository_id: repositoryWorkspace.project_id,
+      project_id: repositoryWorkspace.project_id,
       path: join(outside, 'git-renamed'),
     }),
   ).toMatchObject(refused('different physical repository'))
@@ -287,7 +287,7 @@ test('renamed source directories retain their saved physical identity and cannot
   expect(
     await rawReply(restored, { op: 'workspace.rebind', workspace_id: missing.id, path: missingIdentityTarget }),
   ).toMatchObject(refused('physical identity is unavailable'))
-  await restored.call('repository.rebind', { repository_id: repositoryWorkspace.project_id, path: gitTarget })
+  await restored.call('repository.rebind', { project_id: repositoryWorkspace.project_id, path: gitTarget })
   // The rebound repository's Git directory is replaced before its workspace is rebound.
   await rename(join(gitTarget, '.git'), join(gitTarget, '.git-saved'))
   await git(ade, 'init', '-q', gitTarget)
@@ -318,7 +318,7 @@ test('second rebind and another workspace cannot recover authority over saved so
 
   const restored = await restoreSharingRoot(ade, source)
   await restored.call('worktree.rebind', { project_id: lifecycle.id, path: targetLife })
-  await restored.call('repository.rebind', { repository_id: gitWorkspace.project_id, path: targetGit })
+  await restored.call('repository.rebind', { project_id: gitWorkspace.project_id, path: targetGit })
   await restored.call('workspace.rebind', { workspace_id: gitWorkspace.id, path: targetGit })
   await restored.call('workspace.rebind', { workspace_id: plainWorkspace.id, path: targetPlain })
   // The rebound targets are replaced, and a source folder is renamed.
@@ -330,7 +330,7 @@ test('second rebind and another workspace cannot recover authority over saved so
   expect(
     await rawReply(restored, {
       op: 'repository.rebind',
-      repository_id: gitWorkspace.project_id,
+      project_id: gitWorkspace.project_id,
       path: sourceGit,
     }),
   ).toMatchObject(refused('different physical repository'))
@@ -373,15 +373,15 @@ test('core rebind follows the same lifecycle repository after a second lifecycle
   const lifecycle = (await source.call('worktree.repository', { path: sourceGit })).repository
   const restored = await restoreSharingRoot(ade, source)
   await restored.call('worktree.rebind', { project_id: lifecycle.id, path: cloneA })
-  await restored.call('repository.rebind', { repository_id: workspace.project_id, path: cloneA })
+  await restored.call('repository.rebind', { project_id: workspace.project_id, path: cloneA })
   await rename(cloneA, join(outside, 'clone-a-moved'))
   await git(ade, 'init', '-q', '-b', 'main', cloneA)
   await restored.call('worktree.rebind', { project_id: lifecycle.id, path: cloneB })
   expect(
-    await rawReply(restored, { op: 'repository.rebind', repository_id: workspace.project_id, path: cloneC }),
+    await rawReply(restored, { op: 'repository.rebind', project_id: workspace.project_id, path: cloneC }),
   ).toMatchObject(refused('differs from the lifecycle binding'))
   expect(
-    (await restored.call('repository.rebind', { repository_id: workspace.project_id, path: cloneB })).repository,
+    (await restored.call('repository.rebind', { project_id: workspace.project_id, path: cloneB })).repository,
   ).toMatchObject({ id: workspace.project_id, root: await realpath(join(cloneB, '.git')) })
 })
 
@@ -399,9 +399,9 @@ test('core and lifecycle rebinds reject each other’s unrelated source checkout
   const restored = await restoreSharingRoot(ade, source)
   await restored.call('worktree.rebind', { project_id: lifecycle.id, path: targetLife })
   expect(
-    await rawReply(restored, { op: 'repository.rebind', repository_id: workspace.project_id, path: sourceLife }),
+    await rawReply(restored, { op: 'repository.rebind', project_id: workspace.project_id, path: sourceLife }),
   ).toMatchObject(refused('saved source Git lifecycle repository'))
-  await restored.call('repository.rebind', { repository_id: workspace.project_id, path: targetCore })
+  await restored.call('repository.rebind', { project_id: workspace.project_id, path: targetCore })
   await rename(targetLife, join(outside, 'target-life-moved'))
   await git(ade, 'init', '-q', '-b', 'main', targetLife)
   expect(await rawReply(restored, { op: 'worktree.rebind', project_id: lifecycle.id, path: sourceCore })).toMatchObject(
@@ -500,7 +500,7 @@ test('a linked workspace is fenced when its Git common directory diverges from t
   for (const target of [targetA, targetB, unrelated]) await git(ade, 'clone', '-q', sourceCheckout, target)
   const workspace = (await source.call('workspace.open', { path: sourceCheckout })).workspace
   const restored = await restoreSharingRoot(ade, source)
-  await restored.call('repository.rebind', { repository_id: workspace.project_id, path: targetA })
+  await restored.call('repository.rebind', { project_id: workspace.project_id, path: targetA })
   await restored.call('workspace.rebind', { workspace_id: workspace.id, path: targetA })
   expect((await restored.call('terminal.create', { workspace_id: workspace.id })).terminal_id).toEqual(
     expect.any(String),
@@ -510,7 +510,7 @@ test('a linked workspace is fenced when its Git common directory diverges from t
   // different common directory before rebinding the core repository.
   await rename(join(targetA, '.git'), join(targetA, '.git-saved'))
   await symlink(join(unrelated, '.git'), join(targetA, '.git'))
-  await restored.call('repository.rebind', { repository_id: workspace.project_id, path: targetB })
+  await restored.call('repository.rebind', { project_id: workspace.project_id, path: targetB })
   expect(await createTerminal(restored, workspace.id)).toMatchObject(fenced)
   expect((await restored.call('rebind.list', {})).workspaces).toEqual(
     expect.arrayContaining([

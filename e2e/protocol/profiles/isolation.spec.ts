@@ -210,7 +210,7 @@ test('a checkout one profile works in stays a visible conflict for the other pro
   expect((await worker.cli('status')).code).toBe(0)
   expect((await remover.cli('status')).code).toBe(0)
   const tree = await externalTree(ade, repo, 'shared')
-  const repositoryId = await adopt(remover.asScratch(), repo.path, tree)
+  const projectId = await adopt(remover.asScratch(), repo.path, tree)
 
   const launch = await launchShell(worker.asScratch(), tree)
   expect(launch.launched).toBe(true)
@@ -229,7 +229,7 @@ test('a checkout one profile works in stays a visible conflict for the other pro
   const seenByWorker = await claimsOn(worker.asScratch(), tree)
   expect(seenByWorker.map((claim) => [claim.id, claim.mine])).toEqual([[seenByRemover[0].id, true]])
 
-  const refused = await removeTree(remover.asScratch(), repositoryId, 'remove-shared', tree)
+  const refused = await removeTree(remover.asScratch(), projectId, 'remove-shared', tree)
   expect(refused).toMatchObject({ type: 'error', code: 'host_resource_conflict', recovery: 'inspect_host_resources' })
   expect(await isRunning(launch.shellPid!)).toBe(true)
 
@@ -240,7 +240,7 @@ test('a checkout one profile works in stays a visible conflict for the other pro
   expect(afterRestart.map((claim) => [claim.id, claim.owner_profile, claim.state, claim.mine])).toEqual([
     [seenByRemover[0].id, worker.id, 'active', false],
   ])
-  const refusedAgain = await removeTree(remover.asScratch(), repositoryId, 'remove-shared-2', tree)
+  const refusedAgain = await removeTree(remover.asScratch(), projectId, 'remove-shared-2', tree)
   expect(refusedAgain).toMatchObject({ type: 'error', code: 'host_resource_conflict' })
   expect(await isRunning(launch.shellPid!)).toBe(true)
   expect(await exists(tree)).toBe(true)

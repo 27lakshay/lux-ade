@@ -18,11 +18,11 @@ test('a host_resource_conflict keeps its code and recovery through the SDK and t
     profiles: [worker, remover],
   } = await startHostProfiles(ade, 2)
   const tree = await externalTree(ade, repo, 'shared')
-  const repositoryId = await adopt(remover, repo.path, tree)
+  const projectId = await adopt(remover, repo.path, tree)
   const { workspace, shellId, shellPid } = await occupy(worker, tree)
   await waitForClaim(remover, tree)
   const remove = (operationId: string) => ({
-    project_id: repositoryId,
+    project_id: projectId,
     operation_id: operationId,
     path: tree,
     confirm_path: tree,
@@ -184,7 +184,7 @@ test('a host_resources_unavailable keeps its code and recovery through the SDK a
     profiles: [holder, remover],
   } = await startHostProfiles(ade, 2)
   const tree = await externalTree(ade, repo, 'registry')
-  const repositoryId = await adopt(remover, repo.path, tree)
+  const projectId = await adopt(remover, repo.path, tree)
   await occupy(holder, tree)
   await waitForClaim(remover, tree)
   const registry = join(profilesHome, 'host-resources.sqlite3')
@@ -193,7 +193,7 @@ test('a host_resources_unavailable keeps its code and recovery through the SDK a
   // The registry goes missing while another profile still holds a claim in it.
   await rename(registry, `${registry}.lost`)
   await remover.restartDaemon()
-  const request = { project_id: repositoryId, operation_id: 'remove-blocked', path: tree, confirm_path: tree }
+  const request = { project_id: projectId, operation_id: 'remove-blocked', path: tree, confirm_path: tree }
   const frame = await rawReply(remover, { op: 'worktree.remove', ...request })
   expect(frame).toMatchObject({ type: 'error', code: 'host_resources_unavailable', recovery: 'recover_host_resources' })
 

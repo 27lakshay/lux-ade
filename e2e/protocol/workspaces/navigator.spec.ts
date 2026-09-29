@@ -217,20 +217,20 @@ test('a removed ADE-made worktree can then be removed by worktree.remove without
   profile,
 }) => {
   const repo = await ade.repo()
-  const repositoryId = await register(profile, repo)
-  const tree = await createReady(profile, repositoryId, { name: 'navigator' })
+  const projectId = await register(profile, repo)
+  const tree = await createReady(profile, projectId, { name: 'navigator' })
   const { workspace } = await profile.call('workspace.open', { path: tree })
   await profile.call('terminal.restart', { workspace_id: workspace.id })
-  const plan = await profile.call('worktree.cleanup.plan', { project_id: repositoryId })
+  const plan = await profile.call('worktree.cleanup.plan', { project_id: projectId })
   expect(plan.trees.find((candidate) => candidate.path === tree)?.blockers).toContain('active_work')
 
   await profile.call('workspace.remove', { workspace_id: workspace.id })
-  const cleared = await profile.call('worktree.cleanup.plan', { project_id: repositoryId })
+  const cleared = await profile.call('worktree.cleanup.plan', { project_id: projectId })
   expect(cleared.trees.find((candidate) => candidate.path === tree)?.blockers).toEqual([])
 
   const id = operationId('remove-tree')
-  await profile.call('worktree.remove', { project_id: repositoryId, operation_id: id, path: tree })
-  const row = await settled(profile, repositoryId, id)
+  await profile.call('worktree.remove', { project_id: projectId, operation_id: id, path: tree })
+  const row = await settled(profile, projectId, id)
   expect(row, JSON.stringify(row)).toMatchObject({ status: 'succeeded' })
   expect(existsSync(tree)).toBe(false)
   // The removed workspace's missing folder does not fence the profile.

@@ -112,7 +112,7 @@ pub enum Scope {
     },
     /// Every workspace checked out from these repositories.
     Repositories {
-        repository_ids: Vec<String>,
+        project_ids: Vec<String>,
     },
 }
 
@@ -149,7 +149,7 @@ pub struct Server {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Target<'a> {
     pub workspace_id: &'a str,
-    pub repository_id: Option<&'a str>,
+    pub project_id: Option<&'a str>,
     pub provider: &'a str,
 }
 
@@ -264,10 +264,9 @@ pub fn validate(definition: &Definition, providers: &[&str]) -> Result<()> {
     }
     match &definition.scope {
         Scope::Profile => {}
-        Scope::Workspaces { workspace_ids: ids }
-        | Scope::Repositories {
-            repository_ids: ids,
-        } => identifiers("Scope", ids)?,
+        Scope::Workspaces { workspace_ids: ids } | Scope::Repositories { project_ids: ids } => {
+            identifiers("Scope", ids)?
+        }
     }
     if let ProviderSelection::Only { provider_ids } = &definition.providers {
         identifiers("Provider selection", provider_ids)?;
@@ -462,9 +461,9 @@ pub fn applies(definition: &Definition, target: &Target<'_>) -> Result<(), (Excl
         Scope::Workspaces { workspace_ids } => {
             workspace_ids.iter().any(|id| id == target.workspace_id)
         }
-        Scope::Repositories { repository_ids } => target
-            .repository_id
-            .is_some_and(|repository| repository_ids.iter().any(|id| id == repository)),
+        Scope::Repositories { project_ids } => target
+            .project_id
+            .is_some_and(|repository| project_ids.iter().any(|id| id == repository)),
     };
     if !in_scope {
         return Err((
@@ -768,7 +767,7 @@ mod tests {
     ) -> Target<'a> {
         Target {
             workspace_id: workspace,
-            repository_id: repository,
+            project_id: repository,
             provider,
         }
     }
@@ -906,7 +905,7 @@ mod tests {
         };
         let mut repo = stdio(&[]);
         repo.scope = Scope::Repositories {
-            repository_ids: vec!["r1".into()],
+            project_ids: vec!["r1".into()],
         };
         let mut codex_only = stdio(&[]);
         codex_only.providers = ProviderSelection::Only {

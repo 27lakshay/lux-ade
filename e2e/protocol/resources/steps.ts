@@ -18,12 +18,12 @@ export async function exists(path: string): Promise<boolean> {
 }
 
 /** Wait for a worktree lifecycle operation to leave `running` and return it. */
-export async function settledOperation(profile: Profile, repositoryId: string, operationId: string, timeout = 30_000) {
+export async function settledOperation(profile: Profile, projectId: string, operationId: string, timeout = 30_000) {
   let operation: Awaited<ReturnType<typeof readOperation>> | undefined
   await expect
     .poll(
       async () => {
-        operation = await readOperation(profile, repositoryId, operationId)
+        operation = await readOperation(profile, projectId, operationId)
         return operation.status
       },
       { timeout },
@@ -32,8 +32,8 @@ export async function settledOperation(profile: Profile, repositoryId: string, o
   return operation!
 }
 
-async function readOperation(profile: Profile, repositoryId: string, operationId: string) {
-  return (await profile.call('worktree.operation', { project_id: repositoryId, operation_id: operationId })).operation
+async function readOperation(profile: Profile, projectId: string, operationId: string) {
+  return (await profile.call('worktree.operation', { project_id: projectId, operation_id: operationId })).operation
 }
 
 /** A linked tree made with plain Git, outside ADE, on a new branch. Returns its canonical path. */
@@ -45,15 +45,15 @@ export async function externalTree(ade: AdeHarness, repo: ScratchRepo, branch: s
 
 /** Register the repository in `profile` and adopt `tree` there, giving that profile removal authority. */
 export async function adopt(profile: Profile, repoPath: string, tree: string): Promise<string> {
-  const repositoryId = (await profile.call('worktree.repository', { path: repoPath })).repository.id
-  await profile.call('worktree.adopt', { project_id: repositoryId, path: tree, confirm_path: tree })
+  const projectId = (await profile.call('worktree.repository', { path: repoPath })).repository.id
+  await profile.call('worktree.adopt', { project_id: projectId, path: tree, confirm_path: tree })
   // The adopt reply carries the cached listing; refresh it to read the authority back.
   const refresh = `refresh-${++refreshes}`
-  await profile.call('worktree.refresh', { project_id: repositoryId, operation_id: refresh })
-  expect((await settledOperation(profile, repositoryId, refresh)).status).toBe('succeeded')
-  const state = await profile.call('worktree.get', { project_id: repositoryId })
+  await profile.call('worktree.refresh', { project_id: projectId, operation_id: refresh })
+  expect((await settledOperation(profile, projectId, refresh)).status).toBe('succeeded')
+  const state = await profile.call('worktree.get', { project_id: projectId })
   expect(state.worktrees.find((item) => item.path === tree)?.ade_owned).toBe(true)
-  return repositoryId
+  return projectId
 }
 
 /**
@@ -80,10 +80,10 @@ export async function startShell(profile: Profile, workspace: { id: string }) {
 }
 
 /** `worktree.remove` over the raw protocol, so the typed error code is visible. */
-export function removeTree(profile: Profile, repositoryId: string, operationId: string, tree: string) {
+export function removeTree(profile: Profile, projectId: string, operationId: string, tree: string) {
   return rawReply(profile, {
     op: 'worktree.remove',
-    project_id: repositoryId,
+    project_id: projectId,
     operation_id: operationId,
     path: tree,
     confirm_path: tree,

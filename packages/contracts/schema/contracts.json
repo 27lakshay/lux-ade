@@ -4704,7 +4704,7 @@
       "type": "object"
     },
     "CatalogProject": {
-      "description": "A project as the catalog lists it. Every workspace names its project in\n`WorkspaceRecord::project_id`, and the worktree lifecycle takes a\nrepository project's ID as its `repository_id`.",
+      "description": "A project as the catalog lists it. Every workspace names its project in\n`WorkspaceRecord::project_id`, and the worktree lifecycle takes a\nrepository project's ID as its `project_id`.",
       "properties": {
         "id": {
           "type": "string"
@@ -21380,13 +21380,13 @@
         "path": {
           "type": "string"
         },
-        "repository_id": {
+        "project_id": {
           "type": "string"
         }
       },
       "required": [
         "op",
-        "repository_id",
+        "project_id",
         "path"
       ],
       "type": "object"
@@ -23970,7 +23970,7 @@
               "const": "repositories",
               "type": "string"
             },
-            "repository_ids": {
+            "project_ids": {
               "items": {
                 "type": "string"
               },
@@ -23979,7 +23979,7 @@
           },
           "required": [
             "kind",
-            "repository_ids"
+            "project_ids"
           ],
           "type": "object"
         }
@@ -29513,7 +29513,7 @@
               "const": "new_worktree",
               "type": "string"
             },
-            "repository_id": {
+            "project_id": {
               "type": "string"
             },
             "workspace_id": {
@@ -29526,7 +29526,7 @@
           "required": [
             "mode",
             "workspace_id",
-            "repository_id",
+            "project_id",
             "worktree_operation_id"
           ],
           "type": "object"

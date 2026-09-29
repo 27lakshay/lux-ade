@@ -27,9 +27,9 @@ test('rules copy, link and skip ignored resources, report tracked and missing pa
   await repo.write('deps/lib.js', 'lib\n')
   await repo.write('cache/blob', 'cached\n')
   await repo.write('unlisted.env', 'never copied\n')
-  const repositoryId = await register(profile, repo)
+  const projectId = await register(profile, repo)
   await profile.call('worktree.configure', {
-    project_id: repositoryId,
+    project_id: projectId,
     config: {
       resources: [
         { path: '.env', mode: 'copy' },
@@ -42,7 +42,7 @@ test('rules copy, link and skip ignored resources, report tracked and missing pa
     },
   })
 
-  const created = await create(profile, repositoryId, { name: 'resources' })
+  const created = await create(profile, projectId, { name: 'resources' })
   expect(created, JSON.stringify(created)).toMatchObject({ status: 'succeeded' })
   const tree = created.worktree_path!
   expect(outcomesOf(created.result!.resources)).toEqual({
@@ -73,8 +73,8 @@ test('rules copy, link and skip ignored resources, report tracked and missing pa
   // Applying again never replaces what the tree now holds.
   await writeFile(join(tree, '.env'), 'SECRET=tree\n')
   const again = operationId('resources-again')
-  await profile.call('worktree.resources.apply', { project_id: repositoryId, operation_id: again, path: tree })
-  const reapplied = await settled(profile, repositoryId, again)
+  await profile.call('worktree.resources.apply', { project_id: projectId, operation_id: again, path: tree })
+  const reapplied = await settled(profile, projectId, again)
   expect(reapplied, JSON.stringify(reapplied)).toMatchObject({ status: 'succeeded' })
   expect(outcomesOf(reapplied.result!.resources)).toMatchObject({ '.env': 'conflict', node_modules: 'conflict' })
   expect(await readFile(join(tree, '.env'), 'utf8')).toBe('SECRET=tree\n')
@@ -83,8 +83,8 @@ test('rules copy, link and skip ignored resources, report tracked and missing pa
   // Ignored resources do not make the tree dirty; cleanup removes the copy
   // and the link, and the linked resource in the primary checkout survives.
   const id = operationId('cleanup')
-  await profile.call('worktree.cleanup', { project_id: repositoryId, operation_id: id, paths: [tree] })
-  const cleaned = await settled(profile, repositoryId, id)
+  await profile.call('worktree.cleanup', { project_id: projectId, operation_id: id, paths: [tree] })
+  const cleaned = await settled(profile, projectId, id)
   expect(cleaned, JSON.stringify(cleaned)).toMatchObject({ status: 'succeeded' })
   expect(existsSync(tree)).toBe(false)
   expect(await readFile(join(repo.path, 'node_modules/pkg/index.js'), 'utf8')).toBe('module.exports = 1\n')
@@ -101,10 +101,10 @@ test('an unsafe source stops creation before setup and keeps the tree; a path be
   await writeFile(join(outside, 'secret.env'), 'outside\n')
   await symlink(outside, join(repo.path, 'linked'))
   await execFileAsync('mkfifo', [join(repo.path, 'pipe')])
-  const repositoryId = await register(profile, repo)
+  const projectId = await register(profile, repo)
   const setupRan = join(ade.root, 'setup-ran')
   await profile.call('worktree.configure', {
-    project_id: repositoryId,
+    project_id: projectId,
     config: {
       resources: [
         { path: 'linked/secret.env', mode: 'copy' },
@@ -114,7 +114,7 @@ test('an unsafe source stops creation before setup and keeps the tree; a path be
     },
   })
 
-  const created = await create(profile, repositoryId, { name: 'unsafe' })
+  const created = await create(profile, projectId, { name: 'unsafe' })
   expect(created, JSON.stringify(created)).toMatchObject({ status: 'failed', code: 'resource_failed' })
   // Git will not answer for a path beyond a symbolic link, so it is not treated as ignored.
   expect(outcomesOf(created.result!.resources)).toEqual({ 'linked/secret.env': 'not_ignored', pipe: 'unsafe' })
@@ -125,14 +125,14 @@ test('an unsafe source stops creation before setup and keeps the tree; a path be
   // Setup hooks never ran; the tree is kept and marked failed.
   expect(existsSync(setupRan)).toBe(false)
   const refreshed = operationId('refresh')
-  await profile.call('worktree.refresh', { project_id: repositoryId, operation_id: refreshed })
-  await settled(profile, repositoryId, refreshed)
-  expect(await item(profile, repositoryId, tree)).toMatchObject({ phase: 'setup_failed' })
+  await profile.call('worktree.refresh', { project_id: projectId, operation_id: refreshed })
+  await settled(profile, projectId, refreshed)
+  expect(await item(profile, projectId, tree)).toMatchObject({ phase: 'setup_failed' })
 })
 
 test('configuration refuses globs, parent paths, .git and overlapping rules', async ({ ade, profile }) => {
   const repo = await ade.repo()
-  const repositoryId = await register(profile, repo)
+  const projectId = await register(profile, repo)
   for (const resources of [
     [{ path: '*.env', mode: 'copy' as const }],
     [{ path: '../outside', mode: 'copy' as const }],
@@ -143,11 +143,11 @@ test('configuration refuses globs, parent paths, .git and overlapping rules', as
     ],
   ]) {
     await expect(
-      profile.call('worktree.configure', { project_id: repositoryId, config: { resources } }),
+      profile.call('worktree.configure', { project_id: projectId, config: { resources } }),
       JSON.stringify(resources),
     ).rejects.toThrow()
   }
-  const state = await profile.call('worktree.get', { project_id: repositoryId })
+  const state = await profile.call('worktree.get', { project_id: projectId })
   expect(state.repository.config.resources ?? []).toEqual([])
-  await createReady(profile, repositoryId, { name: 'plain' })
+  await createReady(profile, projectId, { name: 'plain' })
 })

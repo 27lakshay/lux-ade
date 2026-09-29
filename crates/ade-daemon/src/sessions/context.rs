@@ -369,7 +369,7 @@ impl Sessions {
                 .store
                 .workspace_repository(workspace_id)?
                 .as_deref()
-                .map(|repository_id| data.store.repository_binding_identity(repository_id))
+                .map(|project_id| data.store.repository_binding_identity(project_id))
                 .transpose()?;
             (
                 workspace,

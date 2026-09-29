@@ -249,11 +249,11 @@ test('an effect interrupted by a daemon crash is an unknown receipt with its ope
   profile,
 }) => {
   const repo = await ade.repo()
-  const repositoryId = await register(profile, repo)
+  const projectId = await register(profile, repo)
   const started = join(ade.root, 'setup-started')
   const release = join(ade.root, 'setup-release')
   await profile.call('worktree.configure', {
-    project_id: repositoryId,
+    project_id: projectId,
     config: {
       setup: [
         {
@@ -265,16 +265,16 @@ test('an effect interrupted by a daemon crash is an unknown receipt with its ope
     },
   })
   const id = operationId('diagnostics-interrupted')
-  await profile.call('worktree.create', { project_id: repositoryId, operation_id: id, name: 'interrupted' })
+  await profile.call('worktree.create', { project_id: projectId, operation_id: id, name: 'interrupted' })
   await expect.poll(() => existsSync(started), { timeout: 20_000 }).toBe(true)
-  expect((await operation(profile, repositoryId, id)).status).toBe('running')
+  expect((await operation(profile, projectId, id)).status).toBe('running')
   try {
     await profile.killDaemon()
   } finally {
     await writeFile(release, '')
   }
   await profile.restartDaemon()
-  expect((await settled(profile, repositoryId, id)).status).toBe('interrupted')
+  expect((await settled(profile, projectId, id)).status).toBe('interrupted')
 
   const report = await status(profile)
   const lifecycle = report.receipts.find((store) => store.store === 'lifecycle')!

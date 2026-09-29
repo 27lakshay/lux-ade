@@ -9,7 +9,7 @@ import {
 import { CliError, effectOperationId, jsonObject, namedOptions, required, type CommandResult } from '../shared.js'
 
 export const orchestrationUsage = `  child delegate PARENT_ID PROVIDER TASK --workspace same|new-worktree --account inherit|ambient|ACCOUNT_ID
-        [--repository-id ID --branch NAME] [--title TITLE] [--as-agent CONVERSATION_ID] [--operation-id ID]
+        [--project-id ID --branch NAME] [--title TITLE] [--as-agent CONVERSATION_ID] [--operation-id ID]
         [--context ATTACHMENT_ID,...]
                                         Start a child conversation; its task is queued, not completed.
                                         new-worktree first creates BRANCH in a new worktree and opens it.
@@ -59,12 +59,12 @@ export async function command<O extends DailyUseOperation>(
 /** Create BRANCH in a new worktree, wait for the lifecycle operation, and open it as a workspace. */
 export async function newWorktree(
   socketPath: string,
-  repositoryId: string,
+  projectId: string,
   branch: string,
   worktreeOperationId: string,
-): Promise<{ workspace_id: string; repository_id: string; worktree_operation_id: string }> {
+): Promise<{ workspace_id: string; project_id: string; worktree_operation_id: string }> {
   await command(socketPath, 'worktree.switch', {
-    project_id: repositoryId,
+    project_id: projectId,
     operation_id: worktreeOperationId,
     target: branch,
     create: true,
@@ -72,14 +72,14 @@ export async function newWorktree(
   const deadline = Date.now() + WORKTREE_TIMEOUT_MS
   for (;;) {
     const { operation } = await command(socketPath, 'worktree.operation', {
-      project_id: repositoryId,
+      project_id: projectId,
       operation_id: worktreeOperationId,
     })
     if (operation.status === 'succeeded' && operation.worktree_path) {
       const opened = await command(socketPath, 'workspace.open', { path: operation.worktree_path })
       return {
         workspace_id: opened.workspace.id,
-        repository_id: repositoryId,
+        project_id: projectId,
         worktree_operation_id: worktreeOperationId,
       }
     }
@@ -105,7 +105,7 @@ async function delegate(socketPath: string, rest: string[]): Promise<CommandResu
   const [parent, provider, task, ...flags] = rest
   const options = namedOptions(
     flags,
-    ['--workspace', '--account', '--repository-id', '--branch', '--title', '--as-agent', '--context'],
+    ['--workspace', '--account', '--project-id', '--branch', '--title', '--as-agent', '--context'],
     'child delegate',
   )
   const id = effectOperationId()
@@ -117,8 +117,8 @@ async function delegate(socketPath: string, rest: string[]): Promise<CommandResu
   const mode = required(options['--workspace'], '--workspace')
   let workspace: DailyUseRequest<'orchestration.delegate'>['workspace']
   if (mode === 'same') {
-    if (options['--repository-id'] || options['--branch']) {
-      throw new CliError('usage', '--repository-id and --branch apply only to --workspace new-worktree.')
+    if (options['--project-id'] || options['--branch']) {
+      throw new CliError('usage', '--project-id and --branch apply only to --workspace new-worktree.')
     }
     workspace = { mode: 'same' }
   } else if (mode === 'new-worktree') {
@@ -127,7 +127,7 @@ async function delegate(socketPath: string, rest: string[]): Promise<CommandResu
       mode: 'new_worktree',
       ...(await newWorktree(
         socketPath,
-        required(options['--repository-id'], '--repository-id'),
+        required(options['--project-id'], '--project-id'),
         required(options['--branch'], '--branch'),
         `${id}:worktree`,
       )),

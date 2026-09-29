@@ -90,7 +90,7 @@ const reviewBase = {
 
 // --- Worktree lifecycle: jobs settled by a worker ---------------------------
 
-type Lifecycle = { repositoryId: string; path?: string }
+type Lifecycle = { projectId: string; path?: string }
 
 async function lifecycleOutcome(context: Context, state: Lifecycle, id: string) {
   let operation: Record<string, unknown> = {}
@@ -98,7 +98,7 @@ async function lifecycleOutcome(context: Context, state: Lifecycle, id: string) 
     .poll(
       async () => {
         const reply = await context.profile.call('worktree.operation', {
-          project_id: state.repositoryId,
+          project_id: state.projectId,
           operation_id: id,
         })
         operation = reply.operation
@@ -212,10 +212,10 @@ export const effectCases: EffectCase[] = [
     ...lifecycleBase,
     op: 'worktree.create',
     setup: async (context) => ({
-      repositoryId: (await context.profile.call('worktree.repository', { path: context.repo.path })).repository.id,
+      projectId: (await context.profile.call('worktree.repository', { path: context.repo.path })).repository.id,
     }),
     request: (state: Lifecycle, id, altered) => ({
-      project_id: state.repositoryId,
+      project_id: state.projectId,
       operation_id: id,
       branch: altered ? 'reliability-other' : 'reliability-tree',
     }),
@@ -225,20 +225,19 @@ export const effectCases: EffectCase[] = [
     ...lifecycleBase,
     op: 'worktree.remove',
     setup: async (context) => {
-      const repositoryId = (await context.profile.call('worktree.repository', { path: context.repo.path })).repository
-        .id
-      const state: Lifecycle = { repositoryId }
+      const projectId = (await context.profile.call('worktree.repository', { path: context.repo.path })).repository.id
+      const state: Lifecycle = { projectId }
       await context.profile.call('worktree.create', {
-        project_id: repositoryId,
+        project_id: projectId,
         operation_id: 'setup-create',
         branch: 'reliability-removed',
       })
       const created = await lifecycleOutcome(context, state, 'setup-create')
       expect(created, JSON.stringify(created)).toMatchObject({ status: 'succeeded' })
-      return { repositoryId, path: created.worktree_path as string }
+      return { projectId, path: created.worktree_path as string }
     },
     request: (state: Lifecycle, id, altered) => ({
-      project_id: state.repositoryId,
+      project_id: state.projectId,
       operation_id: id,
       path: state.path,
       ...(altered ? { delete_branch: 'merged' } : {}),
@@ -249,10 +248,10 @@ export const effectCases: EffectCase[] = [
     ...lifecycleBase,
     op: 'worktree.switch',
     setup: async (context) => ({
-      repositoryId: (await context.profile.call('worktree.repository', { path: context.repo.path })).repository.id,
+      projectId: (await context.profile.call('worktree.repository', { path: context.repo.path })).repository.id,
     }),
     request: (state: Lifecycle, id, altered) => ({
-      project_id: state.repositoryId,
+      project_id: state.projectId,
       operation_id: id,
       target: altered ? 'reliability-other' : 'reliability-switched',
       create: true,

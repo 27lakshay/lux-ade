@@ -116,7 +116,7 @@ pub(super) fn launch_servers(
         &servers,
         &Target {
             workspace_id: &workspace.id,
-            repository_id: repository.as_deref(),
+            project_id: repository.as_deref(),
             provider,
         },
     );
@@ -274,7 +274,7 @@ fn mcp_command(store: &Store, request: &Value) -> Result<Value> {
                 &servers,
                 &Target {
                     workspace_id,
-                    repository_id: repository.as_deref(),
+                    project_id: repository.as_deref(),
                     provider,
                 },
             );
@@ -312,9 +312,7 @@ fn check_scope(
 ) -> Result<()> {
     let known = |scope: Option<&Scope>, id: &str| match scope {
         Some(Scope::Workspaces { workspace_ids }) => workspace_ids.iter().any(|known| known == id),
-        Some(Scope::Repositories { repository_ids }) => {
-            repository_ids.iter().any(|known| known == id)
-        }
+        Some(Scope::Repositories { project_ids }) => project_ids.iter().any(|known| known == id),
         _ => false,
     };
     let previous = previous.map(|definition| &definition.scope);
@@ -328,8 +326,8 @@ fn check_scope(
                 }
             }
         }
-        Scope::Repositories { repository_ids } => {
-            for id in repository_ids {
+        Scope::Repositories { project_ids } => {
+            for id in project_ids {
                 let same_kind = matches!(previous, Some(Scope::Repositories { .. }));
                 if !(same_kind && known(previous, id)) {
                     store.repository(id)?;

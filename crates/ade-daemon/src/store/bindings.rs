@@ -224,12 +224,11 @@ fn verify_binding_identity(root: &str, identity: (u64, u64)) -> Result<()> {
 pub(crate) fn repository_of(db: &Connection, workspace_id: &str) -> Result<Option<String>> {
     Ok(db
         .query_row(
-            "SELECT repository_id FROM workspaces WHERE id=?1",
+            "SELECT r.id FROM workspaces w JOIN repositories r ON r.id=w.project_id WHERE w.id=?1",
             [workspace_id],
             |row| row.get(0),
         )
-        .optional()?
-        .flatten())
+        .optional()?)
 }
 
 impl Store {
@@ -346,15 +345,10 @@ impl Store {
         if !binding_matches(&self.connection, "workspace", id, &workspace.root)? {
             return Err(ade_core::error::NeedsRebind.into());
         }
-        if let Some(repository_id) = &repository_of(&self.connection, id)? {
-            let repository: Repository = one(&self.connection, "repositories", repository_id)?;
+        if let Some(project_id) = &repository_of(&self.connection, id)? {
+            let repository: Repository = one(&self.connection, "repositories", project_id)?;
             if repository.needs_rebind
-                || !binding_matches(
-                    &self.connection,
-                    "repository",
-                    repository_id,
-                    &repository.root,
-                )?
+                || !binding_matches(&self.connection, "repository", project_id, &repository.root)?
                 || !linked_common_matches(&workspace.root, &repository.root)
             {
                 return Err(ade_core::error::NeedsRebind.into());
@@ -377,7 +371,7 @@ impl Store {
             concat!(
                 "SELECT EXISTS(SELECT 1 FROM workspaces WHERE (json_extract(data,'$.needs_rebind')=1 OR json_extract(data,'$.worktree_lifecycle_needs_rebind')=1) AND ",
                 visible!("id"),
-                " UNION ALL SELECT 1 FROM repositories WHERE (json_extract(data,'$.needs_rebind')=1 OR json_extract(data,'$.worktree_lifecycle_needs_rebind')=1) AND id IN (SELECT repository_id FROM workspaces WHERE ",
+                " UNION ALL SELECT 1 FROM repositories WHERE (json_extract(data,'$.needs_rebind')=1 OR json_extract(data,'$.worktree_lifecycle_needs_rebind')=1) AND id IN (SELECT project_id FROM workspaces WHERE ",
                 visible!("id"),
                 "))"
             ),
@@ -399,8 +393,8 @@ impl Store {
             )? {
                 return Ok(true);
             }
-            if let Some(repository_id) = &repository_of(&self.connection, &workspace.id)? {
-                let repository: Repository = one(&self.connection, "repositories", repository_id)?;
+            if let Some(project_id) = &repository_of(&self.connection, &workspace.id)? {
+                let repository: Repository = one(&self.connection, "repositories", project_id)?;
                 if !linked_common_matches(&workspace.root, &repository.root) {
                     return Ok(true);
                 }
@@ -500,15 +494,15 @@ impl Store {
             source_identity != identity,
             "Select a different physical directory from the saved workspace"
         );
-        let repository_id = repository_of(&tx, id)?;
+        let project_id = repository_of(&tx, id)?;
         ensure!(
-            repository_id.is_some() || common.is_none(),
+            project_id.is_some() || common.is_none(),
             "An ordinary workspace cannot rebind to a Git checkout; bind a repository first"
         );
         ensure_not_source_directory(&tx, root)?;
-        let linked_repository = repository_id
+        let linked_repository = project_id
             .as_ref()
-            .map(|repository_id| one::<Repository>(&tx, "repositories", repository_id))
+            .map(|project_id| one::<Repository>(&tx, "repositories", project_id))
             .transpose()?;
         let linked_common_changed = linked_repository
             .as_ref()
@@ -537,10 +531,10 @@ impl Store {
             "Workspace path belongs to another identity"
         );
         if let Some(repository) = linked_repository {
-            let repository_id = &repository.id;
+            let project_id = &repository.id;
             ensure!(
                 !repository.needs_rebind
-                    && binding_matches(&tx, "repository", repository_id, &repository.root)?,
+                    && binding_matches(&tx, "repository", project_id, &repository.root)?,
                 "Rebind the repository first"
             );
             ensure!(
@@ -685,15 +679,14 @@ impl Store {
                 "DELETE FROM workspace_tombstones WHERE workspace_id=?1",
                 [&workspace.id],
             )?;
-            let repository_changed =
-                if let Some(repository_id) = &repository_of(&tx, &workspace.id)? {
-                    let repository: Repository = one(&tx, "repositories", repository_id)?;
-                    repository.needs_rebind
-                        || !binding_matches(&tx, "repository", repository_id, &repository.root)?
-                        || !linked_common_matches(&workspace.root, &repository.root)
-                } else {
-                    false
-                };
+            let repository_changed = if let Some(project_id) = &repository_of(&tx, &workspace.id)? {
+                let repository: Repository = one(&tx, "repositories", project_id)?;
+                repository.needs_rebind
+                    || !binding_matches(&tx, "repository", project_id, &repository.root)?
+                    || !linked_common_matches(&workspace.root, &repository.root)
+            } else {
+                false
+            };
             if !workspace.needs_rebind
                 && (repository_changed
                     || !binding_matches(&tx, "workspace", &workspace.id, &workspace.root)?)
@@ -711,7 +704,7 @@ impl Store {
         // restored claim is unresolved would give it a fenced, unbindable ID
         // and could also block the original workspace from selecting it.
         ensure!(!needs_rebind, ade_core::error::NeedsRebind);
-        let repository_id = if let Some(repository_root) = repository_root {
+        let repository_project = if let Some(repository_root) = repository_root {
             ensure!(!repository_root.is_empty(), "Repository root is empty");
             // The worktree lifecycle may have created the repository from its
             // canonical common directory; the same directory is one project.
@@ -747,7 +740,7 @@ impl Store {
         } else {
             None
         };
-        if let Some(id) = &repository_id {
+        if let Some(id) = &repository_project {
             let repository: Repository = one(&tx, "repositories", id)?;
             needs_rebind |= repository.needs_rebind
                 || !binding_matches(&tx, "repository", id, &repository.root)?;
@@ -764,7 +757,7 @@ impl Store {
                 .into(),
             // A repository workspace's project is its repository; a plain
             // folder is a project of its own.
-            project_id: repository_id.clone().unwrap_or_else(|| new_id("project")),
+            project_id: repository_project.unwrap_or_else(|| new_id("project")),
             kind: Default::default(),
             branch: None,
             default: false,
@@ -774,7 +767,7 @@ impl Store {
             "INSERT INTO workspaces VALUES(?1,?2,?3,?4)",
             params![
                 workspace.id,
-                repository_id,
+                workspace.project_id,
                 workspace.root,
                 encode(&workspace)?
             ],
@@ -797,7 +790,7 @@ impl Store {
 
 /// Repositories that a workspace still in the catalog uses, in registration order.
 const VISIBLE_REPOSITORIES: &str = concat!(
-    "SELECT data FROM repositories WHERE id IN (SELECT repository_id FROM workspaces WHERE ",
+    "SELECT data FROM repositories WHERE id IN (SELECT project_id FROM workspaces WHERE ",
     visible!("id"),
     ") ORDER BY rowid"
 );

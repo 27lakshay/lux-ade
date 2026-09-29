@@ -48,7 +48,7 @@ test('a closed view, a daemon kill and a graceful restart leave the run, its too
   } = await startHostProfiles(ade, 2)
   // The observer may remove the checkout; the worker works in it.
   const tree = await externalTree(ade, repo, 'kept')
-  const repositoryId = await adopt(observer, repo.path, tree)
+  const projectId = await adopt(observer, repo.path, tree)
   const launch = await launchShell(worker, tree)
   expect(launch.launched).toBe(true)
   const { workspace, shellId } = launch
@@ -86,7 +86,7 @@ test('a closed view, a daemon kill and a graceful restart leave the run, its too
           owner_live: false,
         }),
       ])
-      expect(await removeTree(observer, repositoryId, 'remove-while-down', tree)).toMatchObject({
+      expect(await removeTree(observer, projectId, 'remove-while-down', tree)).toMatchObject({
         type: 'error',
         code: 'host_resource_conflict',
       })
@@ -114,7 +114,7 @@ test('a closed view, a daemon kill and a graceful restart leave the run, its too
         owner_pid: after.pid,
       }),
     ])
-    expect(await removeTree(observer, repositoryId, `remove-${mode}`, tree), mode).toMatchObject({
+    expect(await removeTree(observer, projectId, `remove-${mode}`, tree), mode).toMatchObject({
       type: 'error',
       code: 'host_resource_conflict',
     })

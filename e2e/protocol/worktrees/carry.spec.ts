@@ -14,8 +14,8 @@ test('an exact carry moves only the selected changes, saves them under a ref and
   profile,
 }) => {
   const repo = await ade.repo({ initialFiles: files })
-  const repositoryId = await register(profile, repo)
-  const target = await createReady(profile, repositoryId, { name: 'exact' })
+  const projectId = await register(profile, repo)
+  const target = await createReady(profile, projectId, { name: 'exact' })
   const base = await repo.head()
 
   await repo.write('a.txt', 'alpha carried\n')
@@ -24,7 +24,7 @@ test('an exact carry moves only the selected changes, saves them under a ref and
   await repo.write('keep.txt', 'keep, not selected\n')
 
   const preview = await profile.call('worktree.carry.preview', {
-    project_id: repositoryId,
+    project_id: projectId,
     source: repo.path,
     paths: ['a.txt', 'b.txt', 'new'],
   })
@@ -39,7 +39,7 @@ test('an exact carry moves only the selected changes, saves them under a ref and
 
   const id = operationId('carry-exact')
   const request = {
-    project_id: repositoryId,
+    project_id: projectId,
     operation_id: id,
     source: repo.path,
     target,
@@ -48,7 +48,7 @@ test('an exact carry moves only the selected changes, saves them under a ref and
     clean_source: true,
   }
   await profile.call('worktree.carry', request)
-  const row = await settled(profile, repositoryId, id)
+  const row = await settled(profile, projectId, id)
   expect(row, JSON.stringify(row)).toMatchObject({ status: 'succeeded', worktree_path: target })
   const carry = row.result!.carry
   expect(carry).toMatchObject({
@@ -88,7 +88,7 @@ test('an exact carry moves only the selected changes, saves them under a ref and
 
   // A duplicate request replays the receipt: nothing runs twice.
   await profile.call('worktree.carry', request)
-  expect(await operation(profile, repositoryId, id)).toMatchObject({ status: 'succeeded', result: { carry } })
+  expect(await operation(profile, projectId, id)).toMatchObject({ status: 'succeeded', result: { carry } })
   expect(await repo.status()).toEqual([' M keep.txt'])
   // The same operation ID with different parameters is a conflict.
   await expect(profile.call('worktree.carry', { ...request, clean_source: false })).rejects.toThrow(
@@ -96,14 +96,14 @@ test('an exact carry moves only the selected changes, saves them under a ref and
   )
 
   // Both claims were released: the target is an ordinary dirty tree again.
-  const plan = await profile.call('worktree.cleanup.plan', { project_id: repositoryId })
+  const plan = await profile.call('worktree.cleanup.plan', { project_id: projectId })
   expect(plan.trees.find((tree) => tree.path === target)?.blockers).toEqual(['dirty'])
 })
 
 test('a carry into a tree at another commit merges with merge-tree and keeps the source', async ({ ade, profile }) => {
   const repo = await ade.repo({ initialFiles: files })
-  const repositoryId = await register(profile, repo)
-  const target = await createReady(profile, repositoryId, { name: 'merged' })
+  const projectId = await register(profile, repo)
+  const target = await createReady(profile, projectId, { name: 'merged' })
   const inTarget = (...args: string[]) => repo.git('-C', target, ...args)
   await writeFile(join(target, 'b.txt'), 'bravo in target\n')
   await inTarget('commit', '--quiet', '-am', 'Target moves on')
@@ -114,14 +114,14 @@ test('a carry into a tree at another commit merges with merge-tree and keeps the
   await repo.write('a.txt', 'alpha merged\n')
   const id = operationId('carry-merge')
   await profile.call('worktree.carry', {
-    project_id: repositoryId,
+    project_id: projectId,
     operation_id: id,
     source: repo.path,
     target,
     expect_head: base,
     clean_source: true,
   })
-  const row = await settled(profile, repositoryId, id)
+  const row = await settled(profile, projectId, id)
   // The carry reached the target, but a merged result cannot prove the
   // source's content arrived intact, so the requested cleanup is refused.
   expect(row, JSON.stringify(row)).toMatchObject({ status: 'partial', code: 'carry_source_kept' })
@@ -143,8 +143,8 @@ test('a carry into a tree at another commit merges with merge-tree and keeps the
 
 test('a conflicting carry applies nothing, keeps both trees and still saves the changes', async ({ ade, profile }) => {
   const repo = await ade.repo({ initialFiles: files })
-  const repositoryId = await register(profile, repo)
-  const target = await createReady(profile, repositoryId, { name: 'conflict' })
+  const projectId = await register(profile, repo)
+  const target = await createReady(profile, projectId, { name: 'conflict' })
   const inTarget = (...args: string[]) => repo.git('-C', target, ...args)
   await writeFile(join(target, 'a.txt'), 'alpha from target\n')
   await inTarget('commit', '--quiet', '-am', 'Target edits a.txt')
@@ -154,13 +154,13 @@ test('a conflicting carry applies nothing, keeps both trees and still saves the 
   await repo.write('untracked.txt', 'stays\n')
   const id = operationId('carry-conflict')
   await profile.call('worktree.carry', {
-    project_id: repositoryId,
+    project_id: projectId,
     operation_id: id,
     source: repo.path,
     target,
     clean_source: true,
   })
-  const row = await settled(profile, repositoryId, id)
+  const row = await settled(profile, projectId, id)
   expect(row, JSON.stringify(row)).toMatchObject({
     status: 'failed',
     code: 'carry_conflict',
@@ -180,7 +180,7 @@ test('a conflicting carry applies nothing, keeps both trees and still saves the 
   expect(await repo.git('show', `${carry.ref_name}:a.txt`)).toBe('alpha from source')
 
   // The target's claim was released, not quarantined: it is eligible for cleanup.
-  const plan = await profile.call('worktree.cleanup.plan', { project_id: repositoryId })
+  const plan = await profile.call('worktree.cleanup.plan', { project_id: projectId })
   expect(plan.trees.find((tree) => tree.path === target)).toMatchObject({ eligible: true, blockers: [] })
 })
 
@@ -189,24 +189,24 @@ test('a path with staged and unstaged changes is carried but the source keeps bo
   profile,
 }) => {
   const repo = await ade.repo({ initialFiles: files })
-  const repositoryId = await register(profile, repo)
+  const projectId = await register(profile, repo)
   const mixed = await repo.stagedAndUnstaged('mixed.txt')
-  const target = await createReady(profile, repositoryId, { name: 'mixed' })
+  const target = await createReady(profile, projectId, { name: 'mixed' })
 
-  const preview = await profile.call('worktree.carry.preview', { project_id: repositoryId, source: repo.path })
+  const preview = await profile.call('worktree.carry.preview', { project_id: projectId, source: repo.path })
   expect(preview.entries).toEqual([
     expect.objectContaining({ path: 'mixed.txt', staged: true, unstaged: true, selected: true }),
   ])
 
   const id = operationId('carry-mixed')
   await profile.call('worktree.carry', {
-    project_id: repositoryId,
+    project_id: projectId,
     operation_id: id,
     source: repo.path,
     target,
     clean_source: true,
   })
-  const row = await settled(profile, repositoryId, id)
+  const row = await settled(profile, projectId, id)
   expect(row, JSON.stringify(row)).toMatchObject({ status: 'partial', code: 'carry_source_kept' })
   expect(row.result!.carry).toMatchObject({
     applied: 'exact',
@@ -228,27 +228,27 @@ test('a carry is refused for a dirty target, a stale head, an unowned tree, the 
   profile,
 }) => {
   const repo = await ade.repo({ initialFiles: files })
-  const repositoryId = await register(profile, repo)
-  const target = await createReady(profile, repositoryId, { name: 'refusals' })
+  const projectId = await register(profile, repo)
+  const target = await createReady(profile, projectId, { name: 'refusals' })
   const base = await repo.head()
   const carry = (extra: Record<string, unknown>) => ({
-    project_id: repositoryId,
+    project_id: projectId,
     source: repo.path,
     target,
     ...extra,
   })
 
   // Nothing to carry.
-  const empty = await profile.call('worktree.carry.preview', { project_id: repositoryId, source: repo.path })
+  const empty = await profile.call('worktree.carry.preview', { project_id: projectId, source: repo.path })
   expect(empty).toMatchObject({ carriable: false, blockers: ['no_changes'] })
   let id = operationId('carry-empty')
   await profile.call('worktree.carry', { ...carry({}), operation_id: id })
-  expect(await settled(profile, repositoryId, id)).toMatchObject({ status: 'failed', code: 'carry_blocked' })
+  expect(await settled(profile, projectId, id)).toMatchObject({ status: 'failed', code: 'carry_blocked' })
 
   await repo.write('a.txt', 'alpha dirty\n')
   // A requested path with no change is a blocker, never dropped silently.
   const unchanged = await profile.call('worktree.carry.preview', {
-    project_id: repositoryId,
+    project_id: projectId,
     source: repo.path,
     paths: ['a.txt', 'b.txt'],
   })
@@ -257,7 +257,7 @@ test('a carry is refused for a dirty target, a stale head, an unowned tree, the 
   // A HEAD that moved since the preview refuses.
   id = operationId('carry-stale')
   await profile.call('worktree.carry', { ...carry({ expect_head: '0'.repeat(40) }), operation_id: id })
-  const stale = await settled(profile, repositoryId, id)
+  const stale = await settled(profile, projectId, id)
   expect(stale).toMatchObject({ status: 'failed', code: 'carry_blocked' })
   expect(stale.result!.blockers).toEqual(['head_changed'])
 
@@ -265,14 +265,14 @@ test('a carry is refused for a dirty target, a stale head, an unowned tree, the 
   await writeFile(join(target, 'b.txt'), 'target dirt\n')
   id = operationId('carry-dirty-target')
   await profile.call('worktree.carry', { ...carry({ expect_head: base }), operation_id: id })
-  expect(await settled(profile, repositoryId, id)).toMatchObject({ status: 'failed', code: 'carry_target_dirty' })
+  expect(await settled(profile, projectId, id)).toMatchObject({ status: 'failed', code: 'carry_target_dirty' })
   expect(await repo.git('-C', target, 'status', '--porcelain=v1')).toBe(' M b.txt')
   await repo.git('-C', target, 'checkout', '--quiet', '--', 'b.txt')
 
   // The primary checkout never receives a carry.
   await expect(
     profile.call('worktree.carry', {
-      project_id: repositoryId,
+      project_id: projectId,
       operation_id: operationId('carry-primary'),
       source: target,
       target: repo.path,
@@ -296,22 +296,22 @@ test('a settled carry survives a daemon crash: its receipt replays and its ref a
   profile,
 }) => {
   const repo = await ade.repo({ initialFiles: files })
-  const repositoryId = await register(profile, repo)
-  const target = await createReady(profile, repositoryId, { name: 'restart' })
+  const projectId = await register(profile, repo)
+  const target = await createReady(profile, projectId, { name: 'restart' })
   await repo.write('a.txt', 'alpha across a restart\n')
 
   const id = operationId('carry-restart')
-  const request = { project_id: repositoryId, operation_id: id, source: repo.path, target, clean_source: true }
+  const request = { project_id: projectId, operation_id: id, source: repo.path, target, clean_source: true }
   await profile.call('worktree.carry', request)
-  const before = await settled(profile, repositoryId, id)
+  const before = await settled(profile, projectId, id)
   expect(before).toMatchObject({ status: 'succeeded' })
 
   await profile.restartDaemon('kill')
-  const after = await operation(profile, repositoryId, id)
+  const after = await operation(profile, projectId, id)
   expect(after).toMatchObject({ status: 'succeeded', result: { carry: before.result!.carry } })
   // The replay after the restart does not carry again.
   await profile.call('worktree.carry', request)
-  expect(await operation(profile, repositoryId, id)).toMatchObject({
+  expect(await operation(profile, projectId, id)).toMatchObject({
     status: 'succeeded',
     finished_at: (before as any).finished_at,
   })

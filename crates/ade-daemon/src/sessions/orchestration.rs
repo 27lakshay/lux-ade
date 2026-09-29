@@ -411,13 +411,13 @@ impl Sessions {
             WorkspaceChoice::Same => (parent.workspace_id.clone(), "same", None),
             WorkspaceChoice::NewWorktree {
                 workspace_id,
-                repository_id,
+                project_id,
                 worktree_operation_id,
             } => {
                 self.verify_new_worktree(
                     &parent.workspace_id,
                     non_empty("workspace_id", workspace_id)?,
-                    non_empty("repository_id", repository_id)?,
+                    non_empty("project_id", project_id)?,
                     non_empty("worktree_operation_id", worktree_operation_id)?,
                 )?;
                 (
@@ -534,14 +534,14 @@ impl Sessions {
         &self,
         parent_workspace: &str,
         workspace_id: &str,
-        repository_id: &str,
+        project_id: &str,
         operation_id: &str,
     ) -> Result<()> {
         let workspace = self.workspace(workspace_id)?;
         let reply: WorktreeOperationReply =
             serde_json::from_value(self.worktrees.command(&json!({
                 "op": "worktree.operation",
-                "project_id": repository_id,
+                "project_id": project_id,
                 "operation_id": operation_id,
             }))?)
             .context("Worktree ledger returned an invalid operation")?;

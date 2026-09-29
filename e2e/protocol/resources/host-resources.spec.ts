@@ -25,7 +25,7 @@ test('a profile cannot remove a checkout another profile works in, by its path o
     profiles: [worker, remover],
   } = await startHostProfiles(ade, 2)
   const tree = await externalTree(ade, repo, 'shared')
-  const repositoryId = await adopt(remover, repo.path, tree)
+  const projectId = await adopt(remover, repo.path, tree)
 
   const launch = await launchShell(worker, tree)
   expect(launch.launched).toBe(true)
@@ -48,7 +48,7 @@ test('a profile cannot remove a checkout another profile works in, by its path o
   await symlink(tree, alias)
   expect((await claimsOn(remover, alias)).map((claim) => claim.id)).toEqual([seen[0].id])
 
-  const refused = await removeTree(remover, repositoryId, 'remove-shared', tree)
+  const refused = await removeTree(remover, projectId, 'remove-shared', tree)
   expect(refused).toMatchObject({ type: 'error', code: 'host_resource_conflict', recovery: 'inspect_host_resources' })
   expect(refused.message).toContain(seen[0].id)
   expect(await exists(tree)).toBe(true)
@@ -59,7 +59,7 @@ test('a profile cannot remove a checkout another profile works in, by its path o
   const cli = await remover.cli(
     'request',
     'worktree.remove',
-    JSON.stringify({ project_id: repositoryId, operation_id: 'remove-shared-cli', path: tree, confirm_path: tree }),
+    JSON.stringify({ project_id: projectId, operation_id: 'remove-shared-cli', path: tree, confirm_path: tree }),
   )
   expect(cli.code).not.toBe(0)
   expect(String(cli.json?.message)).toContain('conflicts with the active shared use claim')
@@ -68,9 +68,9 @@ test('a profile cannot remove a checkout another profile works in, by its path o
   // under the same operation ID: a refusal left no receipt behind.
   await worker.call('terminal.stop', { workspace_id: launch.workspace.id, terminal_id: launch.shellId })
   await expect.poll(async () => (await claimsOn(remover, tree)).length).toBe(0)
-  const admitted = await removeTree(remover, repositoryId, 'remove-shared', tree)
+  const admitted = await removeTree(remover, projectId, 'remove-shared', tree)
   expect(admitted.type).toBe('worktree_state')
-  expect((await settledOperation(remover, repositoryId, 'remove-shared')).status).toBe('succeeded')
+  expect((await settledOperation(remover, projectId, 'remove-shared')).status).toBe('succeeded')
   expect(await exists(tree)).toBe(false)
 })
 
@@ -86,15 +86,15 @@ test('a launch racing a removal in another profile leaves one winner and never d
   for (const [index, worker] of workers.entries()) {
     const round = index + 1
     const tree = await externalTree(ade, repo, `race-${round}`)
-    const repositoryId = await adopt(remover, repo.path, tree)
+    const projectId = await adopt(remover, repo.path, tree)
     const { workspace } = await worker.call('workspace.open', { path: tree })
 
     const [launch, removal] = await Promise.all([
       startShell(worker, workspace),
-      removeTree(remover, repositoryId, `race-remove-${round}`, tree).then(async (reply) =>
+      removeTree(remover, projectId, `race-remove-${round}`, tree).then(async (reply) =>
         reply.type === 'error'
           ? reply
-          : { type: 'settled', operation: await settledOperation(remover, repositoryId, `race-remove-${round}`) },
+          : { type: 'settled', operation: await settledOperation(remover, projectId, `race-remove-${round}`) },
       ),
     ])
     const removed = removal.type === 'settled' && (removal.operation as { status: string }).status === 'succeeded'
@@ -186,7 +186,7 @@ test('an escaped descendant keeps the checkout quarantined after its profile die
     profiles: [lost, remover],
   } = await startHostProfiles(ade, 2)
   const tree = await externalTree(ade, repo, 'escaped')
-  const repositoryId = await adopt(remover, repo.path, tree)
+  const projectId = await adopt(remover, repo.path, tree)
   const launch = await launchShell(lost, tree)
   expect(launch.launched).toBe(true)
 
@@ -220,7 +220,7 @@ test('an escaped descendant keeps the checkout quarantined after its profile die
     owner_live: false,
     mine: false,
   })
-  const refused = await removeTree(remover, repositoryId, 'remove-escaped', tree)
+  const refused = await removeTree(remover, projectId, 'remove-escaped', tree)
   expect(refused).toMatchObject({ type: 'error', code: 'host_resource_conflict' })
   expect(await exists(tree)).toBe(true)
 
@@ -256,8 +256,8 @@ test('an escaped descendant keeps the checkout quarantined after its profile die
   expect(reused).toMatchObject({ type: 'error' })
   expect(reused.message).toContain('different parameters')
 
-  expect((await removeTree(remover, repositoryId, 'remove-escaped', tree)).type).toBe('worktree_state')
-  expect((await settledOperation(remover, repositoryId, 'remove-escaped')).status).toBe('succeeded')
+  expect((await removeTree(remover, projectId, 'remove-escaped', tree)).type).toBe('worktree_state')
+  expect((await settledOperation(remover, projectId, 'remove-escaped')).status).toBe('succeeded')
   expect(await exists(tree)).toBe(false)
 })
 
@@ -269,7 +269,7 @@ test('a daemon crash quarantines a live checkout claim, and the restarted daemon
     profiles: [owner, remover],
   } = await startHostProfiles(ade, 2)
   const tree = await externalTree(ade, repo, 'restarted')
-  const repositoryId = await adopt(remover, repo.path, tree)
+  const projectId = await adopt(remover, repo.path, tree)
   const launch = await launchShell(owner, tree)
   expect(launch.launched).toBe(true)
   const before = (await claimsOn(owner, tree))[0]
@@ -277,7 +277,7 @@ test('a daemon crash quarantines a live checkout claim, and the restarted daemon
   await owner.killDaemon()
   expect(await isRunning(launch.shellPid!)).toBe(true)
   expect((await claimsOn(remover, tree))[0]).toMatchObject({ id: before.id, state: 'quarantined', owner_live: false })
-  expect(await removeTree(remover, repositoryId, 'remove-restarted', tree)).toMatchObject({
+  expect(await removeTree(remover, projectId, 'remove-restarted', tree)).toMatchObject({
     type: 'error',
     code: 'host_resource_conflict',
   })
@@ -290,7 +290,7 @@ test('a daemon crash quarantines a live checkout claim, and the restarted daemon
   expect(after[0]).toMatchObject({ state: 'active', mine: true, owner_live: true, owner_profile: before.owner_profile })
   expect(after[0].id).not.toBe(before.id)
   expect(after[0].owner_incarnation).not.toBe(before.owner_incarnation)
-  expect(await removeTree(remover, repositoryId, 'remove-restarted', tree)).toMatchObject({
+  expect(await removeTree(remover, projectId, 'remove-restarted', tree)).toMatchObject({
     type: 'error',
     code: 'host_resource_conflict',
   })
@@ -307,7 +307,7 @@ test('a lost or unreadable registry blocks lifecycle commands until the profile 
     profiles: [holder, remover],
   } = await startHostProfiles(ade, 2)
   const tree = await externalTree(ade, repo, 'registry')
-  const repositoryId = await adopt(remover, repo.path, tree)
+  const projectId = await adopt(remover, repo.path, tree)
   expect((await launchShell(holder, tree)).launched).toBe(true)
   const registry = join(profilesHome, 'host-resources.sqlite3')
   expect((await remover.call('resources.inspect', {})).registry.path).toBe(registry)
@@ -319,7 +319,7 @@ test('a lost or unreadable registry blocks lifecycle commands until the profile 
   const missing = await remover.call('resources.inspect', {})
   expect(missing.registry).toMatchObject({ state: 'blocked', path: registry })
   expect(await exists(registry)).toBe(false)
-  expect(await removeTree(remover, repositoryId, 'remove-registry', tree)).toMatchObject({
+  expect(await removeTree(remover, projectId, 'remove-registry', tree)).toMatchObject({
     type: 'error',
     code: 'host_resources_unavailable',
     recovery: 'recover_host_resources',
@@ -352,6 +352,6 @@ test('a lost or unreadable registry blocks lifecycle commands until the profile 
     names.join(', '),
   ).toBe(true)
 
-  expect((await removeTree(remover, repositoryId, 'remove-registry', tree)).type).toBe('worktree_state')
-  expect((await settledOperation(remover, repositoryId, 'remove-registry')).status).toBe('succeeded')
+  expect((await removeTree(remover, projectId, 'remove-registry', tree)).type).toBe('worktree_state')
+  expect((await settledOperation(remover, projectId, 'remove-registry')).status).toBe('succeeded')
 })

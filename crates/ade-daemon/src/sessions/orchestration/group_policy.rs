@@ -190,7 +190,7 @@ mod tests {
     fn worktree(id: &str) -> WorkspaceChoice {
         WorkspaceChoice::NewWorktree {
             workspace_id: id.into(),
-            repository_id: "r".into(),
+            project_id: "r".into(),
             worktree_operation_id: format!("op-{id}"),
         }
     }

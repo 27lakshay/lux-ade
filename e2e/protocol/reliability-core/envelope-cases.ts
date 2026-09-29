@@ -506,28 +506,28 @@ export const envelopeCases: EnvelopeCase[] = [
   {
     op: 'worktree.adopt',
     setup: async (ctx) => {
-      const repositoryId = await register(ctx.profile, ctx.repo)
+      const projectId = await register(ctx.profile, ctx.repo)
       const path = join(dirname(ctx.repo.path), 'external')
       const other = join(dirname(ctx.repo.path), 'external-other')
       await ctx.repo.git('worktree', 'add', '--quiet', '-b', 'external', path)
       await ctx.repo.git('worktree', 'add', '--quiet', '-b', 'external-other', other)
       // The lifecycle lists linked trees it has observed.
       const refresh = stepId('refresh')
-      await ctx.profile.call('worktree.refresh', { project_id: repositoryId, operation_id: refresh })
-      await settled(ctx.profile, repositoryId, refresh)
+      await ctx.profile.call('worktree.refresh', { project_id: projectId, operation_id: refresh })
+      await settled(ctx.profile, projectId, refresh)
       expect(
-        (await ctx.profile.call('worktree.get', { project_id: repositoryId })).worktrees.find(
+        (await ctx.profile.call('worktree.get', { project_id: projectId })).worktrees.find(
           (tree) => tree.path === path,
         ),
       ).toMatchObject({ ade_owned: false })
-      return { repositoryId, path, other }
+      return { projectId, path, other }
     },
-    request: (state: { repositoryId: string; path: string; other: string }, altered) => {
+    request: (state: { projectId: string; path: string; other: string }, altered) => {
       const path = altered ? state.other : state.path
-      return { project_id: state.repositoryId, path, confirm_path: path }
+      return { project_id: state.projectId, path, confirm_path: path }
     },
-    observe: async (ctx, state: { repositoryId: string; path: string }) =>
-      (await ctx.profile.call('worktree.get', { project_id: state.repositoryId })).worktrees.find(
+    observe: async (ctx, state: { projectId: string; path: string }) =>
+      (await ctx.profile.call('worktree.get', { project_id: state.projectId })).worktrees.find(
         (tree) => tree.path === state.path,
       )?.ade_owned ?? null,
   },
