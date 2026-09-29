@@ -1,22 +1,23 @@
 # Vendor patches and reused-source provenance
 
 The patch inventory is complete for the four patch files currently retained in
-this repository. The distribution license audit is not complete. No upstream
-submission is recorded for these lux-ade patches; this ledger does not claim a search
+this repository. Only the Ghostty patch is used by the current Electron native build;
+the GPUI patches belong to the removed prototype. The distribution license audit is not
+complete. No upstream submission is recorded for these lux-ade patches; this ledger does not claim a search
 of every upstream issue or pull request. Reviewed against source on 2026-09-25.
 
 ## Pins and ownership
 
 | Patch | Pinned base and provenance | Status |
 | --- | --- | --- |
-| `patches/gpui-kit.patch` | Longbridge GPUI Kit `ce9267130ae030db4fc3bdec263212a0ab16045c`, Apache-2.0; lux-ade changes to thirteen files | Active local patch; no submission recorded |
-| `patches/gpui-pre-macos.patch` | crates.io `gpui-pre-macos` 0.3.6, derived from Zed `bcf6582ce3500df93a8a39366640173e6786cea6`, Apache-2.0; lux-ade callback fix and example | Active local patch; no submission recorded |
+| `patches/gpui-kit.patch` | Longbridge GPUI Kit `ce9267130ae030db4fc3bdec263212a0ab16045c`, Apache-2.0; lux-ade changes to thirteen files | Historical prototype patch; not consumed by current bootstrap |
+| `patches/gpui-pre-macos.patch` | crates.io `gpui-pre-macos` 0.3.6, derived from Zed `bcf6582ce3500df93a8a39366640173e6786cea6`, Apache-2.0; lux-ade callback fix and example | Historical prototype patch; not consumed by current bootstrap |
 | `patches/ghostty.patch` | Herdr `9c96f7ddb3be2cc575a159d4d1f1d49fb10d7006`, `vendor/libghostty-vt`, MIT Ghostty source; lux-ade renderer changes | Active local patch; no submission recorded |
 | `native/ghostty-snapshot.patch` | Same Herdr vendored source; earlier lux-ade renderer patch | Historical, superseded by `patches/ghostty.patch`; not consumed by bootstrap; no submission recorded |
 
 Archive URLs, SHA-256 hashes and extraction roots live in
-[`native/dependencies.json`](../native/dependencies.json). The parser uses the
-unpatched Herdr vendor source. The renderer uses that same base plus
+[`native/dependencies.json`](../native/dependencies.json). The current bootstrap fetches only
+Ghostty sources. The parser uses the unpatched Herdr vendor source. The renderer uses that same base plus
 `patches/ghostty.patch`. Do not treat the Herdr repository commit as an upstream
 Ghostty commit or as a license covering all of Herdr.
 

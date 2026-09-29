@@ -8,10 +8,10 @@ tracker. The user approved the Electron application, CLI and public protocol as
 E2E test interfaces backed by real ADE processes. No implementation is authorized
 merely by publication, and no feature is marked complete by this specification.
 
-Delivery-process planning for a faster parallel build lives in the
-[parallel build map](../parallel-build/README.md); it is not a v1 feature. Moving every
-durable record and rule into the daemon, so the desktop only presents, is planned in the
-[daemon authority map](../daemon-authority/README.md).
+Historical delivery-process planning lives in the [parallel build map](../parallel-build/README.md).
+The [daemon authority effort](../daemon-authority/HANDOFF.md) is complete except for its open
+browser and memory follow-ups. Use [current architecture](../../docs/architecture.md) to locate
+implemented behavior; specifications here state intended scope.
 
 ## Start here
 
@@ -30,7 +30,7 @@ durable record and rule into the daemon, so the desktop only presents, is planne
 | [Trusted plugins](04-plugins/spec.md) | F051–F060 | Extract contracts alongside working providers/UI, then prove independent extension |
 | [Projects and worktrees](05-workspaces/spec.md) | F061–F070 | Foundation, HostResources, creator-owned lifecycle |
 | [Files and Git](06-files-git/spec.md) | F071–F080 | Workspace identity; conversation feedback needs provider integration |
-| [Terminals and services](07-terminals-services/spec.md) | F081–F090 | First real execution slice; xterm restoration is an early gate |
+| [Terminals and services](07-terminals-services/spec.md) | F081–F090 | Runtime-owned terminals; the desktop now renders Ghostty WebAssembly snapshots |
 | [Browser and devices](08-browser-devices/spec.md) | F091–F100 | Foundation and host capabilities; ordinary browser preview enters daily loop |
 | [API and coordination](09-api-orchestration/spec.md) | F101–F113 | API/CLI foundation first; delegation follows providers/workspaces |
 | [Notifications and activity](10-notifications/spec.md) | F114–F120 | Durable activity and desktop integration |
@@ -47,7 +47,7 @@ cycle: build the smallest working vertical contracts, then deepen their modules.
 
 | Checkpoint | Completion evidence |
 |---|---|
-| Initialize | Reproducible pnpm/Cargo workspace; Electron/React HMR; public command connection; E2E runner; Rust-owned xterm terminal with correct reconnect |
+| Initialize | Reproducible pnpm/Cargo workspace; Electron/React HMR; public command connection; E2E runner; runtime-owned terminal with Ghostty snapshot reconnect |
 | Daily use | Profile/project/workspace/account selection; all three primary agents; messages/tools/approvals; persistent terminal; diff; dev service/browser preview; matching CLI controls |
 | Reliable extension | Recovery and resource failure scenarios; independent backend/UI extension; active provider version retention; safe mode |
 | Full v1 | Every F-series item marked V1 and every R-series requirement has declared support, E2E evidence and resolved material decisions, including selected remote/device/catalog capabilities |
@@ -60,8 +60,8 @@ No estimated dates or implementation-complete percentages have been established.
 - [Domain glossary](../../CONTEXT.md) supplies stable terminology.
 - [Architecture proposal](../../docs/proposed-architecture.md) explains ownership
   and the audit findings. These specs supply item-level scope and acceptance.
-- [Initialization plan](../../docs/monorepo-initialization-plan.md) describes the
-  first implementation sequence and package candidates.
+- [Historical initialization plan](../../docs/monorepo-initialization-plan.md) records the
+  first sequence and package candidates, including choices later revised in D06 and D07.
 - [Current architecture](../../docs/architecture.md) describes existing code.
 
 Later explicit user decisions override these documents. Record a scope change in

@@ -1,5 +1,10 @@
 # Dependency maintenance
 
+Historical scan and GPUI dependency analysis from 2026-09-25. The package paths below may no
+longer be in the current Cargo graph. Re-run `scripts/check_dependencies.sh` against the current
+lockfile before using an advisory count or migration route. The native-client seam table below
+describes the removed GPUI app.
+
 The 2026-09-25 cargo-deny scan covered the complete workspace dependency graph,
 including platform-specific and development dependencies. It found seven
 unmaintained-package advisories and no vulnerability, unsoundness, or yanked

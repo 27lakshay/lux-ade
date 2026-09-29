@@ -1,5 +1,10 @@
 # Client task lifetimes
 
+Historical GPUI client audit. The `ClientState`, GPUI task owners and native views below belong to
+the removed `ade-client`; they are not the Electron desktop's task model. See
+[current architecture](architecture.md) and the SDK journals in `packages/client` for current
+ownership. Retained here as evidence for the prototype.
+
 lux-ade's daemon owns application state. The runtime supervisor owns provider and terminal processes. Closing a client view must not send a process-stop command implicitly.
 
 ## Subscription ownership

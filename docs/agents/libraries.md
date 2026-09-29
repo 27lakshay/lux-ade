@@ -1,8 +1,8 @@
 # Libraries: check here before writing it yourself
 
 Before writing a utility, a hook, a parser or a UI mechanism, find the task below and use the
-package it names. These are installed in `apps/desktop` (dev dependencies marked *dev*). Write your
-own only when no row fits, and say why in the commit.
+package it names. These are installed in `apps/desktop` unless a row says otherwise (dev
+dependencies marked *dev*). Write your own only when no row fits, and explain why in the change.
 
 When you first import a package listed here, remove it from `ignoreDependencies` in
 `.fallowrc.json`. It sits there only until something uses it.
@@ -31,7 +31,7 @@ When you first import a package listed here, remove it from `ignoreDependencies`
 | Icons | `lucide-react`, through `<Icon>` (`apps/desktop/src/renderer/src/icons`) | inline SVGs; never imported directly outside the kit |
 | Animation, layout and gesture motion | `motion`: `m` from `motion/react-m`, presets from `app/motion.ts` (see the `motion` skill and apps/desktop/AGENTS.md) | hand-written animation loops, `framer-motion`, the full `motion` component |
 | Stopping one pane's crash from taking down the window | `react-error-boundary` | class component boundaries |
-| Media queries, resize observers, event listeners, debounced values, local storage | `usehooks-ts` (add it back when first needed; removed 2026-09-29 when its last use moved to the daemon) | new `useEffect` hooks for these |
+| Media queries, resize observers, event listeners, debounced values, local storage | Consider `usehooks-ts` and add it as a dependency when needed; it was removed 2026-09-29 when its last use moved to the daemon | new `useEffect` hooks for these |
 | State from the daemon | the Zustand stores in `src/renderer/src/state` | component state or new stores for the same data |
 | Request-and-answer data (files, review, services) | `@tanstack/react-query` | fetch-in-effect with manual caching |
 | Full-screen views | `@tanstack/react-router` (`router.tsx`) | conditional rendering of screens |

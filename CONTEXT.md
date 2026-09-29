@@ -1,41 +1,73 @@
-# ADE domain context
+# ADE language
 
-ADE is an Electron/React desktop app over a Rust profile daemon and runtime. The daemon owns every
-durable record and rule, so the CLI, the SDK and any UI drive the same state; the desktop presents
-it. Specifications describe intended behavior, not verified implementation status.
+These terms name ADE's resources and actions across the desktop, CLI and SDK.
 
-| Term | Meaning |
-|---|---|
-| Host | Stable identity of the machine where a resource executes |
-| Profile | Host-scoped accounts, settings, history, plugins and browser data; not a same-user security sandbox |
-| Project | Registered repository or ordinary folder; every workspace belongs to exactly one. Its kind is `repository` or `folder` |
-| Workspace | Independent stable identity for a checkout/directory on an execution host |
-| Workspace kind | `primary_checkout`, `linked_worktree` (a worktree) or `folder`; a branch is an attribute of a workspace, not a record |
-| Remove from ADE | Hide a workspace and stop its terminals without touching its files; opening its folder again restores the same workspace |
-| Conversation | Agent interaction bound to workspace, provider session and explicit account context |
-| Attention | Whether a conversation needs the person: `idle`, `running`, `needs_you` or `error`, reported by the daemon |
-| Operation | Identified command with payload fingerprint, admission state and outcome evidence |
-| Execution attempt | A particular runtime-owned run, fenced by incarnation/turn identity |
-| Provider | Adapter preserving an agent's native protocol and declared capabilities |
-| Account | Provider identity with host-owned native/credential state; refresh does not change identity |
-| Plugin activation | One running activation of a pinned plugin artifact; separate from its data schema |
-| HostResources | Cooperating runtimes' host-local physical resource claims and OS guards |
-| Terminal | Runtime-owned PTY/execution owned by a workspace; presented in the window by Ghostty |
-| Busy terminal | A terminal whose foreground process is not its shell; closing it asks first |
-| Window | A daemon record of one app window: which workspace it shows and its view state |
-| Layout | A window's sidebars, panes and tabs for one workspace, owned by the daemon |
-| Pane | One area of a layout that holds tabs; panes split side by side or stacked |
-| Tab | One entry in a pane; its tab target names what it shows |
-| Tab target | What a tab shows: a conversation, terminal, browser tab, file, diff or a new conversation |
-| Browser session | Explicit profile/host identity with frontend or background ownership |
-| Activity | Durable application event used by the feed and notification delivery |
-| E2E | Observable behavior through running Electron, CLI or public protocol using real ADE processes |
+## Place and identity
 
-Use the [v1 spec index](.scratch/ade-v1/README.md) and
-[requirements register](.scratch/ade-v1/requirements.md) for scope. Use the
-[architecture proposal](docs/proposed-architecture.md) for ownership and recovery
-rules, and the [daemon authority map](.scratch/daemon-authority/README.md) for the flat model of
-records and who owns what. `docs/architecture.md` describes the removed GPUI prototype.
-Record later material decisions in the spec's decision register and relevant
-specification; never silently infer that a package candidate or prototype behavior
-settles a product requirement.
+**Host**: A machine where ADE runs a resource.
+
+**Profile**: A host-scoped collection of accounts, settings, history and installed plugins.
+
+**Project**: A registered repository or ordinary folder that groups its workspaces.
+
+**Workspace**: A checkout or folder with its own stable identity within a project. A repository
+project can have a primary checkout and linked worktrees; a folder project has one workspace.
+_Avoid_: using project, branch or worktree for every workspace.
+
+**Remove from ADE**: Hide a workspace from ADE while retaining its files, so opening the folder
+again can restore its identity.
+
+## Agent work
+
+**Conversation**: One agent interaction bound to a workspace, provider session and account context.
+_Avoid_: chat when naming this ADE resource.
+
+**Provider**: An adapter to an agent's native protocol and declared capabilities.
+
+**Account**: A profile-owned provider identity whose native login can be used by conversations.
+
+**Account context**: The login a conversation's agent uses: a managed profile account or the
+provider's ambient login on its host.
+
+**Attention**: Whether a conversation is idle, running, needs the person, or has an error.
+
+**Unread**: Whether a conversation has a reply or notice newer than the person's seen mark. A
+conversation can be unread without needing attention.
+
+**Execution attempt**: One run of an agent, distinct from the conversation it serves.
+
+**Activity**: A durable event about agent work or a request for the person, available in the
+activity feed.
+
+## Commands
+
+**Operation**: A named query or command available through ADE's application API.
+
+**Effect command**: A command whose external or nonrepeatable effect needs an operation ID,
+outcome evidence and reconciliation before an uncertain result can be retried.
+
+**Receipt**: The durable record of an effect command's admission and outcome.
+
+## Workspace views and processes
+
+**Terminal**: A workspace-owned shell, service or script execution that a view can attach to.
+
+**Busy terminal**: A terminal whose foreground process is doing work beyond its own shell or
+managed program.
+
+**Window**: One app window, including the workspace it shows and its view state.
+
+**Layout**: The arrangement of sidebars, panes and tabs for one workspace in one window.
+
+**Pane**: One area of a layout with a strip of tabs. Panes can be split side by side or stacked.
+
+**Tab**: An entry in a pane that points at the content shown there. It is distinct from the
+resource it displays; two tabs can point at the same resource.
+
+**Browser tab**: A browser page resource scoped to a profile. Workspace ownership is planned in
+[browser ticket 09](.scratch/daemon-authority/issues/09-browser-tab-records.md).
+
+**Browser partition**: A profile-scoped store of a browser's site data, separate from other
+partitions in that profile.
+
+**Plugin activation**: One running instance of an installed plugin artifact.

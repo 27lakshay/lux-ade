@@ -4,7 +4,9 @@ Status: open
 Type: wayfinder map
 Label: wayfinder:map
 
-Planned 2026-09-29. This map plans; it does not build until its tickets are started.
+Planned 2026-09-29; core tickets completed. This map preserves the original plan and decisions.
+For implemented ownership and code paths use [current architecture](../../docs/architecture.md).
+The [handoff](HANDOFF.md) names the open browser and memory work.
 
 ## Goal
 
@@ -194,8 +196,10 @@ This reuses what worked in the [parallel build](../parallel-build/issues/13-coor
   `ade layout get`.
 - `apps/desktop` holds no durable state except the startup appearance copy and the
   not-yet-admitted journals the SDK stores through it.
-- The four-workspace benchmark (4 conversations and 6 real terminals each) holds 60 fps on
-  workspace switch and memory within 10% of the last measurement (about 411 MB).
+- The four-workspace benchmark holds 60 fps on workspace switch. The original 411 MB memory
+  figure came from synthetic conversation content; the later real-terminal run omitted chats and
+  is not comparable. [Acceptance evidence](../ade-v1/evidence/daemon-authority.md) records both
+  scopes. [Ticket 11](issues/11-electron-memory-floor.md) owns the new comparable baseline.
 
 ## Not decided yet
 

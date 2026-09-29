@@ -1,8 +1,14 @@
 # lux-ade production and open-source plan
 
+Historical GPUI-era plan. This preserves decisions and evidence from 2026-09-25, including
+proposals the Electron implementation superseded. Use [current architecture](architecture.md),
+[CONTEXT.md](../CONTEXT.md) and the [v1 specs](../.scratch/ade-v1/README.md) for current code,
+language and intended scope.
+
 Saved: 2026-09-25
 
-Status: Implementation in progress. This document preserves the full agreed scope. See [Implementation task list](implementation-task-list.md) for verified progress and remaining work. Publication is not authorized.
+Status: historical plan. See [Implementation task list](implementation-task-list.md) for its
+contemporaneous progress record. Publication is not authorized.
 
 The plan is to turn lux-ade into a maintainable, open-source desktop app with the completeness of a polished Electron application, while keeping Rust, GPUI, and the separate client/daemon/runtime architecture.
 

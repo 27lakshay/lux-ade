@@ -1,13 +1,15 @@
 # Proposed ADE architecture
 
-Status: design proposal, 26 September 2026. This document records the proposed
-successor to the prototype at `e42e5e7`; it does not describe implemented behavior.
-[Architecture and contribution map](architecture.md) describes the current code.
+Status: design proposal, 26 September 2026, with later decision amendments. It records the
+proposed successor to the GPUI prototype and future scope; it does not certify implemented
+behavior. [Current architecture](architecture.md) maps the code. Later decisions in the
+[decision register](../.scratch/ade-v1/decisions.md), including D06, D07 and D19, supersede
+older package and compatibility choices in this proposal.
 The existing implementation task list is not the build plan for this proposal.
 The [v1 specification index](../.scratch/ade-v1/README.md) is the item-level scope
 and E2E acceptance reference; it preserves all 140 original catalogue dispositions.
-The [monorepo initialization plan](monorepo-initialization-plan.md) records the
-subsequent React, xterm.js and Fallow selections and the end-to-end-only test policy.
+The [monorepo initialization plan](monorepo-initialization-plan.md) preserves its original
+package and test selections as history.
 
 The proposal keeps Rust for durable state and process supervision, replaces the
 GPUI frontend with an Electron desktop application, and makes the same application

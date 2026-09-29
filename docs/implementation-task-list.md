@@ -1,6 +1,8 @@
 # lux-ade implementation task list
 
-Status: In progress. The full production and open-source plan remains the scope.
+Status: historical GPUI implementation record. It describes work on the removed native client;
+it is not a current task list. For current code, use [architecture](architecture.md); for intended
+scope, use the [v1 specs](../.scratch/ade-v1/README.md).
 
 Source: [Production and open-source plan](production-and-open-source-plan.md)
 

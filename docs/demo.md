@@ -1,5 +1,10 @@
 # Run the local demo
 
+Historical GPUI demo. `scripts/demo.py` launches the removed `ade-client` executable, so this
+page is retained for prototype evidence and does not describe the current Electron app. For
+current credential-free checks, use the scratch profiles and provider mocks in
+[protocol E2E](../e2e/protocol/README.md) or [desktop E2E](../e2e/desktop/README.md).
+
 The demo uses the real lux-ade daemon, runtime, client, and Codex protocol adapter with a deterministic local provider fixture. It needs no model account and makes no model calls.
 
 Build the workspace first, then run:

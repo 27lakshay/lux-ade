@@ -58,7 +58,6 @@ that need a live page.
 | `browser.close` | Effect | Remove the record and its tabs from every layout (`layouts::remove_target`) in one transaction, then tell the owner to destroy the view |
 | `browser.list`, `browser.inspect` | Query | Served from daemon records; live fields come from the owner's last report |
 | `browser.owner.report` | Idempotent (owner only) | The owner reports observed URL, title, state, history flags and load errors for a tab, with a per-tab sequence so a late report never overwrites a newer one |
-| `browser.owner.adopt` | Idempotent (owner only), one-time | Migration: the owner uploads the tabs from `browser-tabs-v1.json` it still holds; the daemon creates records for any it does not know, in the profile's default workspace unless a layout already points at them |
 | Automation, capture, diagnostics, recording, import, screenshot | Unchanged | Still relayed to the owner, now naming daemon tab IDs |
 
 Browser tab changes reach the feed (`browser_tab_changed`, `browser_tab_removed`), debounced for
@@ -78,9 +77,10 @@ second).
    receipts and `browser-reconcile.ts` (the daemon's envelope and reconciliation cover them). Keep:
    the lease, sessions and partitions, the backup capture and restore of session storage, page
    hosting, and the automation, capture, diagnostics and recording cores.
-5. Migration: before deleting its receipts, the owner settles any pending one against its tabs
-   (existing logic), then calls `browser.owner.adopt` once and renames `browser-tabs-v1.json` to
-   `.adopted`.
+
+Prelaunch state follows [D19](../../ade-v1/decisions.md): this change
+creates daemon records from a fresh store. It does not import `browser-tabs-v1.json` or add an
+adoption protocol. The old file belongs to the prelaunch desktop implementation.
 
 ## Desktop (renderer)
 
@@ -94,7 +94,7 @@ the shown browser tab of each pane has a view attached; hidden tabs detach, like
 
 - Protocol E2E in `e2e/protocol/browser-records/`: open, navigate and close with no owner (records
   only); an owner attaching loads `not_loaded` tabs; a crash between the record and the relay
-  settles; workspace removal closes its tabs and their layout tabs; `adopt` is idempotent; a late
+  settles; workspace removal closes its tabs and their layout tabs; a late
   owner report never overwrites a newer one; the existing browser automation, capture, diagnostics
   and recording specs pass with daemon tab IDs.
 - Desktop Vitest: a browser tab reports its bounds, hides when not shown, and the address bar
@@ -104,8 +104,8 @@ the shown browser tab of each pane has a view attached; hidden tabs detach, like
 
 | Lane | Work | Files |
 |---|---|---|
-| 09a Daemon | Records, migration, operations, feed, owner report and adopt, E2E | `crates/`, `contract/daemon.rs` or a new `contract/browser_tabs.rs`, `e2e/protocol/browser-records/` |
-| 09b Owner | Electron main as a page host of daemon records; removal of its tab store and receipts; adopt on upgrade | `apps/desktop/src/main/browser*.ts` |
+| 09a Daemon | Records, operations, feed, owner report, E2E | `crates/`, `contract/daemon.rs` or a new `contract/browser_tabs.rs`, `e2e/protocol/browser-records/` |
+| 09b Owner | Electron main as a page host of daemon records; removal of its tab store and receipts | `apps/desktop/src/main/browser*.ts` |
 | 09c Surface | Browser tab content and address bar in panes | `apps/desktop/src/renderer` |
 
 09b and 09c start once 09a's contract is fixed (one coordinator step, as ticket 01 fixed

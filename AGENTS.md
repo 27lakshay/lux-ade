@@ -1,13 +1,14 @@
 # Project instructions
 
-ADE is in its UI phase. The backend (Rust daemon and runtime, contracts, SDK, CLI) is built and
-proven headlessly; the work now is the Electron desktop app in `apps/desktop`. Read
-[apps/desktop/AGENTS.md](apps/desktop/AGENTS.md) before changing anything there.
+ADE is an Electron desktop app over a Rust profile daemon and runtime. The CLI and SDK use the
+same daemon as the desktop. [Current architecture](docs/architecture.md) maps the code;
+[CONTEXT.md](CONTEXT.md) defines the domain language. The v1 specifications describe intended
+behavior, not proof that a surface is built.
 
 ## Working rules
 
-- Work on `main`. Commit each finished step with a focused message and report its hash. Pushing,
-  opening a PR and merging into another branch need a separate instruction.
+- Work on `main`. Finish and report each step; commit only when the user asks. Pushing, opening a
+  PR and merging into another branch also need a separate instruction.
 - Use pnpm for JavaScript and TypeScript packages. Keep Rust dependencies in Cargo.
 - A design discussion or plan alone is not an implementation order.
 - Every change passes `pnpm check:static`. It runs formatting, lint, typecheck, dead-code and
@@ -47,11 +48,12 @@ in UI copy.
 
 - Operations fall into three tiers: query, idempotent command and effect command. Only effect
   commands carry an operation ID, a daemon-computed payload fingerprint, a receipt and
-  reconciliation. Declare each operation's tier in its contract. See section 4 of
-  [the proposed architecture](docs/proposed-architecture.md).
-- Before changing process ownership, protocols, providers or plugins, read
-  [the proposed architecture](docs/proposed-architecture.md). [docs/architecture.md](docs/architecture.md)
-  describes the removed GPUI prototype; do not write code for it or its Python scripts.
+  reconciliation. Declare each operation's tier in its contract. For current ownership, read
+  [the architecture map](docs/architecture.md); for the decision rationale, read section 4 of
+  [the architecture proposal](docs/proposed-architecture.md).
+- Before changing process ownership, protocols, providers or plugins, read the current
+  [architecture map](docs/architecture.md) and the relevant v1 specification. The
+  [architecture proposal](docs/proposed-architecture.md) records rationale and future scope.
 - Contracts: add an operation's typed request and response to
   `crates/ade-core/src/contract/<domain>.rs` with a declared tier, then run
   `pnpm contract:generate`. Never edit the generated files in `packages/contracts` by hand.
@@ -66,15 +68,15 @@ A copied file carries a `Portions adapted from <repo> <path> (<licence>)` header
 in `THIRD-PARTY-NOTICES.md`. GPL-licensed files and vendored third-party directories there are
 study-only.
 
-## Agent skills
+## Read for the task
 
-- Issue tracker: the local Markdown tracker in [issue-tracker guidance](docs/agents/issue-tracker.md).
-  Start v1 work from the [spec index](.scratch/ade-v1/README.md) and its requirements register.
-- Triage: published specs use `ready-for-agent`; see [triage labels](docs/agents/triage-labels.md).
-- Domain: read [CONTEXT.md](CONTEXT.md) and follow [domain guidance](docs/agents/domain.md) before
-  changing shared terminology or contracts.
-- Libraries: before writing a utility, hook, parser or UI mechanism, find its task in
-  [docs/agents/libraries.md](docs/agents/libraries.md) and use the package it names.
-- Library notes: Electron and Tailwind v4 publish no agent docs; read the verified notes in
-  `docs/agents/` before using their APIs. The terminal (Ghostty as WebAssembly) is described in
-  [docs/agents/terminal.md](docs/agents/terminal.md).
+- **Desktop UI or Electron boundary:** read [apps/desktop/AGENTS.md](apps/desktop/AGENTS.md).
+- **V1 feature scope or acceptance:** read the [spec index](.scratch/ade-v1/README.md), its
+  requirements register and the owning spec. For tracker changes, read
+  [issue-tracker guidance](docs/agents/issue-tracker.md) and [triage labels](docs/agents/triage-labels.md).
+- **Shared terminology, ownership or contracts:** read [CONTEXT.md](CONTEXT.md),
+  [domain guidance](docs/agents/domain.md) and the owning spec.
+- **Utility, hook, parser or UI mechanism:** find the task in
+  [libraries](docs/agents/libraries.md) before writing one.
+- **Electron, Tailwind or terminal API:** read the relevant notes in `docs/agents/`;
+  [terminal notes](docs/agents/terminal.md) cover Ghostty WebAssembly.

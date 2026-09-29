@@ -1,8 +1,10 @@
 # Electron and Rust monorepo initialization plan
 
-Status: implementation plan, 26 September 2026. The pnpm/Electron foundation and
-read-only daemon attachment are implemented; terminal, CLI, and provider migration
-remain open.
+Status: historical implementation plan, 26 September 2026. It records choices later revised:
+the current desktop uses Ghostty WebAssembly instead of xterm.js, an in-house pane tree instead
+of dockview, and renderer and pure-core tests alongside E2E. See
+[current architecture](architecture.md) and [D06/D07](../.scratch/ade-v1/decisions.md) before
+using this plan as context.
 The [proposed architecture](proposed-architecture.md) defines the product and
 ownership requirements. This plan establishes its first runnable vertical slice.
 The [complete v1 specifications](../.scratch/ade-v1/README.md) define the full

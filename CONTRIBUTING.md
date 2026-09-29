@@ -1,122 +1,70 @@
-# Contributing to lux-ade
+# Contributing to ADE
 
-lux-ade uses Rust for the desktop, daemon and process runtime, with JS/TS adapters
-where provider SDKs require them. The supported desktop target is currently
-Apple Silicon macOS 14 or later. Intel, Linux and Windows desktop support are
-not yet verified.
+ADE's desktop is Electron/React. A Rust profile daemon owns application state; a separate Rust
+runtime owns provider processes, terminals and services. The supported desktop target is Apple
+Silicon macOS. The Rust toolchain is pinned in `rust-toolchain.toml`, and the JavaScript package
+manager in `package.json`.
 
-## Build
+## Set up and run
 
-Install Xcode (including its Metal Toolchain), rustup, Python 3.12+, Node.js 22
-and pnpm 10. The repository pins Rust in `rust-toolchain.toml`. OMP also needs
-Bun 1.4.2; set `ADE_BUN_BIN` if it is not on PATH.
+Install Xcode and its Metal toolchain, Rust through rustup, Python 3.12 or later, Node.js and
+pnpm. Some provider adapters also need their own executables; Oh My Pi uses Bun. From the repo
+root:
 
 ```sh
+pnpm install --frozen-lockfile
 python3 scripts/bootstrap.py
-bash scripts/run.sh --build-only
-bash scripts/run.sh
+pnpm dev
 ```
 
-Bootstrap downloads checksum-verified sources into `.ade/`, applies the patches
-in `patches/`, then builds both Ghostty libraries from the same pinned source.
-It records archive and patch fingerprints for installed source trees. A changed
-pin or patch fails with instructions to preserve and re-bootstrap the affected
-tree. Legacy unstamped trees are compared against freshly fetched, patched source
-before adoption; differing local files are never silently accepted. Existing
-dependency directories are not overwritten.
-To refresh dependencies, first preserve any local edits and move the affected
-`.ade` directory aside. Native builds need Xcode's Metal compiler; bootstrap does
-not change your Xcode selection or automatically install system components.
+Bootstrap fetches pinned native sources and checks their archive and patch fingerprints. It
+does not overwrite an existing source tree with local changes. `pnpm dev` builds the SDK, CLI,
+daemon and runtime, then opens the desktop with renderer hot reload. It uses a development
+profile under `.ade/dev-profiles-v2` unless `ADE_SOCKET` names another endpoint. See
+[desktop debugging](docs/agents/desktop-debugging.md) for restarting processes and inspecting
+the running app.
 
-For core-only work on another platform:
+For work on the shared Rust core without launching Electron:
 
 ```sh
-python3 scripts/bootstrap.py --sources-only
 cargo test --locked -p ade-core
 ```
 
-`CARGO_TARGET_DIR`, `GHOSTTY_KIT_DIR`, `GHOSTTY_RESOURCES_DIR` and `ADE_ZIG_BIN`
-allow explicit build overrides. The scripts respect your existing Rust setup.
-Generated resources are ignored by Git.
+`CARGO_TARGET_DIR`, `ADE_ZIG_BIN` and the native source overrides can select another build
+location or toolchain. The build scripts do not change Xcode selection or install system tools.
 
 ## Check changes
 
 ```sh
-bash scripts/check.sh
+pnpm check:static
 ```
 
-Launch the component preview without a daemon or provider account:
+This required gate checks formatting, contracts, architecture, API parity, builds, TypeScript,
+lint, dead code, JavaScript and renderer tests, Clippy and Rust tests. Protocol and desktop E2E
+run separately:
 
 ```sh
-ADE_UI_SHOWCASE=1 target/debug/ade-client
+pnpm test:e2e:protocol
+pnpm test:e2e:desktop
 ```
 
-If you override `CARGO_TARGET_DIR`, use that directory instead of `target`.
-The preview exposes shared controls, states, typography and motion; it is not a
-provider session.
+The [protocol suite](e2e/protocol/README.md) starts real daemon and runtime processes with
+scratch profiles and provider mocks. The [desktop suite](e2e/desktop/README.md) launches the
+built Electron app against the same kind of scratch backend. Inspect the running app after a UI
+change; tests alone do not show every pointer, focus or drawn-state regression.
 
-Run the provider's own tests when changing its adapter. Test UI changes in the
-component preview and the application; unit tests cannot prove native focus,
-input methods or accessibility behavior. Performance checks are in
-`scripts/benchmark_runtime.py` and `scripts/check_runtime_benchmark.py`.
+## Where work belongs
 
-## Rust for JS/TS contributors
+Read the [current architecture](docs/architecture.md) for the ownership map and
+[CONTEXT.md](CONTEXT.md) for ADE's terms. [AGENTS.md](AGENTS.md) routes work to the relevant
+guidance. Contracts originate in Rust and are generated into `packages/contracts` with
+`pnpm contract:generate`.
 
-A Cargo workspace resembles a pnpm workspace. A crate is a package; modules are
-namespaces within it. `struct` holds data and `enum` models alternatives.
-`Option<T>` means a value may be absent; `Result<T, E>` represents success or
-failure. `?` returns an error to the caller rather than throwing an exception.
-Ownership and `Drop` make resource lifetimes explicit. Start with ordinary
-structs and functions before introducing traits or generic abstractions.
+The v1 [requirements register](.scratch/ade-v1/requirements.md) and domain specs describe
+intended behavior. They do not certify that a feature is implemented. The removed GPUI app,
+its `ade-client` executable, `scripts/run.sh`, and the Python demo are historical; see
+[prototype history](docs/prototype-history.md).
 
-The client owns views and drafts. The daemon owns durable state. The runtime
-owns long-lived processes. Keep expensive work off the UI thread and do not
-make closing a view implicitly stop a provider process.
-
-Do not commit credentials, user conversations, local logs or generated app
-bundles. Public repository ownership, project licensing and release signing
-identity remain pending project decisions.
-
-## Pinned development tools
-
-```sh
-python3 scripts/install_tools.py
-bash scripts/check.sh
-bash scripts/check_dependencies.sh
-```
-
-The installer verifies official release archive checksums and puts
-cargo-nextest 0.9.145 and cargo-deny 0.20.2 in `.ade/tools/bin`. Versions and
-supported host archives are recorded in `scripts/tools.json`; no global tools
-are replaced. The check scripts add this directory to PATH themselves.
-For another host, use `cargo install --locked --version <pinned-version>` for
-the required tool and keep it on PATH.
-
-Nextest runs unit and integration tests in isolated processes with no automatic
-retries; doctests still run through Cargo. `.config/nextest.toml` defines the CI
-profile and a timeout for hung tests. See the [official installation guide](https://nexte.st/docs/installation/from-source/)
-and [configuration guide](https://nexte.st/docs/configuration/).
-
-The dependency gate checks RustSec advisories, yanked crates, wildcard
-requirements and dependency sources. Duplicate versions are reported as warnings
-because the current native dependency graph contains multiple versions by design.
-Unknown registries and Git sources are denied. Source archives fetched by our
-bootstrap are covered separately by pinned checksums and reviewed patches.
-The gate has no advisory ignore entries. Unmaintained-package notices remain
-warnings; known vulnerability and unsoundness advisories remain blocking.
-Current maintenance findings and upstream migration paths are tracked in
-[dependency-maintenance.md](docs/dependency-maintenance.md).
-
-The license check is intentionally separate until a distribution policy is
-selected; running the configured checks does not establish license clearance.
-See [cargo-deny's official guidance](https://embarkstudios.github.io/cargo-deny/)
-and `THIRD_PARTY_NOTICES.md` for the inventory boundary.
-
-Agent guidance discovery: nextest publishes an `AGENTS.md` for contributors to
-its own repository; lux-ade integrates its CLI rather than modifying nextest.
-The checked cargo-deny repository did not publish an `AGENTS.md`, and its docs
-`llms.txt` endpoint was absent. The ordinary official documentation above is the
-integration reference.
-
-For failure symptoms, profile inspection and recovery commands, see
-[troubleshooting](docs/troubleshooting.md).
+Keep credentials, conversations, local logs and generated bundles out of commits. The project
+license, public repository ownership and release signing identity remain undecided. For profile
+inspection and diagnostics, see [troubleshooting](docs/troubleshooting.md).
