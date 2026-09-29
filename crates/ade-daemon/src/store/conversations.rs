@@ -175,6 +175,12 @@ fn write_message(db: &Connection, message: &Message) -> Result<()> {
     db.execute("INSERT INTO messages(id,conversation_id,provider_item_id,sequence,data) VALUES(?1,?2,?3,?4,?5)
         ON CONFLICT(id) DO UPDATE SET provider_item_id=excluded.provider_item_id,data=excluded.data",
         params![message.id,message.conversation_id,message.provider_item_id,message.sequence,encode(message)?])?;
+    super::projects::record_news(
+        db,
+        &message.conversation_id,
+        message.sequence,
+        &message.role,
+    )?;
     Ok(())
 }
 
@@ -341,6 +347,7 @@ impl Store {
             "DELETE FROM messages WHERE conversation_id=?1 AND sequence>=?2",
             params![conversation, sequence],
         )?;
+        super::projects::recount_news(&tx, conversation)?;
         tx.execute(
             "INSERT INTO conversation_history_epochs(conversation_id,epoch) VALUES(?1,1)
              ON CONFLICT(conversation_id) DO UPDATE SET epoch=epoch+1",

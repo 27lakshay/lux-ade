@@ -8,11 +8,14 @@ use ade_core::model::{CatalogProject, CatalogRepository, ProjectKind, WorkspaceK
 use std::collections::{HashMap, HashSet};
 
 /// The profile schema this module adds. Applied by [`migrate`], which the
-/// provisional `version < 19` block of `Store::open` calls.
+/// provisional `version < 20` block of `Store::open` calls.
 /// `conversation_seen.seen_sequence` is the newest message `sequence` the
-/// person has seen.
+/// person has seen; `conversation_news.news_sequence` the newest message the
+/// person did not write, kept by every message writer ([`record_news`]), so
+/// listing unread state never parses messages.
 const SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS conversation_seen(conversation_id TEXT PRIMARY KEY, seen_sequence INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS conversation_news(conversation_id TEXT PRIMARY KEY, news_sequence INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS profile_settings(key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS workspace_worktree_operations(operation_id TEXT PRIMARY KEY, status TEXT NOT NULL CHECK(status IN ('running','succeeded','failed')), data TEXT NOT NULL, updated_at INTEGER NOT NULL);
     CREATE INDEX IF NOT EXISTS workspace_worktree_operations_running ON workspace_worktree_operations(status);
@@ -37,11 +40,46 @@ pub(super) fn migrate(tx: &Connection) -> Result<()> {
         "INSERT OR IGNORE INTO conversation_seen(conversation_id,seen_sequence) SELECT c.id,COALESCE((SELECT MAX(sequence) FROM messages m WHERE m.conversation_id=c.id),0) FROM conversations c",
         [],
     )?;
+    tx.execute(
+        &format!(
+            "INSERT OR REPLACE INTO conversation_news(conversation_id,news_sequence) SELECT conversation_id,MAX(sequence) FROM messages WHERE {NEWS} GROUP BY conversation_id"
+        ),
+        [],
+    )?;
     Ok(())
 }
 
-/// A message the person did not write themselves: what makes a Conversation unread.
+/// A message the person did not write themselves: what makes a Conversation
+/// unread. Only the migration backfill and a rewind read it from messages.
 const NEWS: &str = "COALESCE(json_extract(data,'$.role'),'')!='user'";
+
+/// Records a message written at `sequence` in `conversation`: news unless the
+/// person wrote it. Every message writer calls it in its own transaction.
+pub fn record_news(db: &Connection, conversation: &str, sequence: i64, role: &str) -> Result<()> {
+    if role != "user" {
+        db.execute(
+            "INSERT INTO conversation_news(conversation_id,news_sequence) VALUES(?1,?2) ON CONFLICT(conversation_id) DO UPDATE SET news_sequence=MAX(news_sequence,excluded.news_sequence)",
+            params![conversation, sequence],
+        )?;
+    }
+    Ok(())
+}
+
+/// Recounts a Conversation's news and seen marks after messages were
+/// removed (a rewind), so later messages at reused sequences are news again.
+pub(super) fn recount_news(db: &Connection, conversation: &str) -> Result<()> {
+    db.execute(
+        &format!(
+            "INSERT OR REPLACE INTO conversation_news(conversation_id,news_sequence) VALUES(?1,COALESCE((SELECT MAX(sequence) FROM messages WHERE conversation_id=?1 AND {NEWS}),0))"
+        ),
+        [conversation],
+    )?;
+    db.execute(
+        "UPDATE conversation_seen SET seen_sequence=MIN(seen_sequence,COALESCE((SELECT MAX(sequence) FROM messages WHERE conversation_id=?1),0)) WHERE conversation_id=?1",
+        [conversation],
+    )?;
+    Ok(())
+}
 
 /// Marks everything a Conversation holds now as seen, such as history just
 /// imported: old work is not news.
@@ -171,9 +209,7 @@ fn rows<T>(
 fn newest_news(db: &Connection, conversation: &str) -> Result<Option<i64>> {
     Ok(db
         .query_row(
-            &format!(
-                "SELECT sequence FROM messages WHERE conversation_id=?1 AND {NEWS} ORDER BY sequence DESC LIMIT 1"
-            ),
+            "SELECT news_sequence FROM conversation_news WHERE conversation_id=?1",
             [conversation],
             |row| row.get(0),
         )
@@ -211,18 +247,15 @@ impl ConversationFacts {
         )?
         .into_iter()
         .collect();
-        let news = match only {
-            Some(id) => newest_news(db, id)?
-                .map(|sequence| (id.to_owned(), sequence))
-                .into_iter()
-                .collect(),
-            None => db
-                .prepare(&format!(
-                    "SELECT conversation_id,MAX(sequence) FROM messages WHERE {NEWS} GROUP BY conversation_id"
-                ))?
-                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
-                .collect::<rusqlite::Result<_>>()?,
-        };
+        let news = rows(
+            db,
+            "SELECT conversation_id,news_sequence FROM conversation_news WHERE 1",
+            "conversation_id",
+            only,
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+        )?
+        .into_iter()
+        .collect();
         let pair =
             |row: &rusqlite::Row<'_>| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?));
         // Orchestration creates its tables on first use.
@@ -648,6 +681,52 @@ mod tests {
         let stored: Value = serde_json::from_str(&stored).unwrap();
         assert_eq!(stored["attention"], "idle");
         assert_eq!(stored["unread"], false);
+    }
+
+    #[test]
+    fn news_survives_a_rewind_and_the_migration_backfills_it() {
+        let db = Database::new();
+        let store = db.open();
+        let workspace = store
+            .workspace_open(&test_root(&new_id("news")), None)
+            .unwrap();
+        let conversation = store.create_conversation(&workspace.id, "Talk").unwrap();
+        let unread = |store: &Store| {
+            let mut listed = store.conversation(&conversation.id).unwrap();
+            store.present_conversation(&mut listed).unwrap();
+            listed.unread
+        };
+        for id in ["a1", "a2"] {
+            let reply = assistant(&conversation, id, id);
+            store
+                .commit_conversation(&conversation, &[reply], &[])
+                .unwrap();
+        }
+        assert!(store.mark_seen(&conversation.id, None).unwrap());
+        // A rewind drops the second reply; the next reply reuses its
+        // sequence and is news again.
+        store
+            .connection
+            .execute(
+                "DELETE FROM messages WHERE conversation_id=?1 AND sequence>=2",
+                [&conversation.id],
+            )
+            .unwrap();
+        recount_news(&store.connection, &conversation.id).unwrap();
+        assert!(!unread(&store));
+        let again = assistant(&conversation, "a3", "a3");
+        store
+            .commit_conversation(&conversation, &[again], &[])
+            .unwrap();
+        assert!(unread(&store));
+        // A profile from before the news table gets it filled from messages.
+        store
+            .connection
+            .execute("DELETE FROM conversation_news", [])
+            .unwrap();
+        assert!(!unread(&store));
+        migrate(&store.connection).unwrap();
+        assert!(unread(&store));
     }
 
     #[test]

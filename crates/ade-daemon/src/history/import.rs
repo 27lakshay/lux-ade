@@ -591,6 +591,12 @@ pub fn commit(
                 ],
             )
             .context("An imported message ID is already in use")?;
+            crate::store::record_news(
+                &tx,
+                &message.conversation_id,
+                message.sequence,
+                &message.role,
+            )?;
             added += 1;
         }
     }
