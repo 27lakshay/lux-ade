@@ -63,3 +63,4 @@ daemon's own redacted report with this app's logs), the folder pickers, and the 
   which is moving the specs that drive that path; steps 4 and 5 wait for ticket 07's window records
   and a keybindings setting.
 - 2026-09-29 — Step 4 done by ticket 07 (`e99cf45`): `selectedWorkspaces` is gone and review fencing reads the window record's `workspace_id`.
+- 2026-09-29 — Step 3 done: `review.feedback.send` from the window (`ade:review-feedback-send`, fenced to the window's workspace, `window_id` for the draft check); main's prompt building, staleness reads and review selections are gone, and `agent.send` refuses review fields. Not checked in the running app: the dev profile has no conversation. Left: step 5 (keybindings setting) and the typed unknown-provider code.
