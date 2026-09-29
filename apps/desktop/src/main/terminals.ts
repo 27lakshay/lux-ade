@@ -18,10 +18,10 @@ function endpoint(): string {
 /** The workspace, when the terminal is one of its own. */
 function owner(workspaceId: unknown, terminalId: unknown) {
   if (!validId(workspaceId) || !validId(terminalId)) throw new Error('Invalid terminal')
-  const workspace = getClient()
-    .getState()
-    .catalog?.workspaces.find((item) => item.id === workspaceId)
-  if (!workspace || (workspace.terminal_id !== terminalId && !workspace.extra_terminals?.includes(terminalId)))
+  const catalog = getClient().getState().catalog
+  const workspace = catalog?.workspaces.find((item) => item.id === workspaceId)
+  const terminal = catalog?.terminals?.find((item) => item.id === terminalId)
+  if (!workspace || terminal?.workspace_id !== workspaceId)
     throw new Error('The terminal is no longer in this workspace')
   return workspace
 }
