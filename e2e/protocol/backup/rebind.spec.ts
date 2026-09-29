@@ -9,10 +9,9 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { promisify } from 'node:util'
 import { expect, test, type AdeHarness, type ScratchProfile } from '../fixtures'
-import { control, nextProfileDataDirectory } from '../fixtures/control'
 import { scratchEnvironment } from '../fixtures/environment'
 import { rawReply } from '../fixtures/raw-reply'
-import { backupAndRestore, createBackup, rewriteDatabase } from './helpers'
+import { backupAndRestore } from './helpers'
 
 const run = promisify(execFile)
 
@@ -402,39 +401,6 @@ test('core and lifecycle rebinds reject each other’s unrelated source checkout
   expect(
     await rawReply(restored, { op: 'worktree.rebind', repository_id: lifecycle.id, path: sourceCore }),
   ).toMatchObject(refused('saved source workspace or repository'))
-})
-
-// fixme: `ade-control backup restore` accepts only the current schema and one behind, so it refuses this
-// schema-12 bundle ("Unsupported sessions.sqlite schema version 12"); the restore range is open decision D15.
-test.fixme('schema-12 restore cannot rebind without a saved source physical identity', async ({
-  ade,
-  profile: source,
-}) => {
-  const sourceFolder = join(ade.root, 'outside', 'source-folder')
-  const targetFolder = join(ade.root, 'outside', 'target-folder')
-  await mkdir(sourceFolder, { recursive: true })
-  await mkdir(targetFolder, { recursive: true })
-  const workspace = (await source.call('workspace.open', { path: sourceFolder })).workspace
-  const { path: bundle, result } = await createBackup(ade, source)
-  expect(result.code, result.stderr).toBe(0)
-  // A schema-12 bundle has no path bindings: nothing records the source's physical identity.
-  await rewriteDatabase(bundle, (db) =>
-    db.exec('DROP TABLE path_bindings; DELETE FROM schema_migrations WHERE version>=13; PRAGMA user_version=12;'),
-  )
-  const data = await nextProfileDataDirectory(ade)
-  const restoredData = await control(ade, ['backup', 'restore', '--backup', bundle, '--data-dir', data])
-  expect(restoredData.code, restoredData.stderr).toBe(0)
-  const restored = await ade.profile({ env: { ADE_ROOT: source.defaultWorkspaceRoot } })
-  expect((await restored.call('catalog.get', {})).catalog.workspaces).toEqual(
-    expect.arrayContaining([expect.objectContaining({ id: workspace.id, needs_rebind: true })]),
-  )
-  expect(
-    await rawReply(restored, { op: 'workspace.rebind', workspace_id: workspace.id, path: targetFolder }),
-  ).toMatchObject(refused('physical identity is unavailable'))
-  expect((await restored.call('workspace.rebind.list', {})).workspaces).toEqual(
-    expect.arrayContaining([expect.objectContaining({ id: workspace.id, needs_rebind: true, rebindable: false })]),
-  )
-  expect(await createTerminal(restored, workspace.id)).toMatchObject(fenced)
 })
 
 for (const failpoint of ['before_workspace_commit', 'after_workspace_commit'] as const) {
