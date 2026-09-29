@@ -1,8 +1,13 @@
 # Triage labels
 
-The invoked to-spec workflow specifies `ready-for-agent` for published specs.
-The local Markdown tracker records that label with `Status: ready-for-agent`.
+| Role | Local Markdown label | Meaning |
+|---|---|---|
+| `needs-triage` | `needs-triage` | Needs evaluation |
+| `needs-info` | `needs-info` | Waiting for information |
+| `ready-for-agent` | `ready-for-agent` | Specified for agent work when requested |
+| `ready-for-human` | `ready-for-human` | Requires human implementation |
+| `wontfix` | `wontfix` | Will not be actioned |
 
-This label authorizes planning/decomposition when requested; it does not mean the
-feature is implemented, dependencies are complete, or unresolved delivery decisions
-have been answered. Other workflows must not invent a different label mapping.
+For v1 specs, write the label in `Status:`. These labels describe triage state;
+they do not authorize implementation or certify that a feature is built.
+Wayfinder tickets keep their separate open/closed status and `wayfinder:*` label.

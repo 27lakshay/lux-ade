@@ -80,3 +80,20 @@ study-only.
   [libraries](docs/agents/libraries.md) before writing one.
 - **Electron, Tailwind or terminal API:** read the relevant notes in `docs/agents/`;
   [terminal notes](docs/agents/terminal.md) cover Ghostty WebAssembly.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs live in local Markdown files under `.scratch/`. See
+[issue-tracker guidance](docs/agents/issue-tracker.md).
+
+### Triage labels
+
+The five default triage roles use their own names as labels. See
+[triage labels](docs/agents/triage-labels.md).
+
+### Domain docs
+
+This repo uses one shared [CONTEXT.md](CONTEXT.md) and root-level ADRs. See
+[domain guidance](docs/agents/domain.md).

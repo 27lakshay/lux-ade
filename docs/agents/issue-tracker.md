@@ -13,6 +13,9 @@ The user selected the repository-local Markdown tracker for ADE v1 specs.
 - Keep the register and owning spec synchronized when scope changes. Preserve IDs.
 - Use the configured triage vocabulary. Comments append under `## Comments`.
 
+For v1 specs, `Status:` records the triage role from [triage labels](triage-labels.md).
+Wayfinder tickets instead use `Status: open` or `closed` and a separate `Label: wayfinder:*`.
+
 ## Wayfinding operations
 
 - A wayfinder map is `.scratch/<effort>/README.md` with `Type: wayfinder map`
