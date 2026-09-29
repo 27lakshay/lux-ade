@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react'
 
-// Reduce motion: follow the system, always on, or always off. Stored like the theme preference.
+// Reduce motion: follow the system, always on, or always off. The profile's setting lives in the
+// daemon (`reduced_motion`); a copy stays in localStorage for the first paint, like the theme.
 // The effective value is written to <html data-reduced-motion> so CSS transitions and the kit's CSS
 // animations obey it too; Motion reads it through MotionConfig.
 
@@ -31,13 +32,20 @@ function apply(): void {
   for (const listener of listeners) listener()
 }
 
-export function setMotionPreference(preference: MotionPreference): void {
+/** Shows a preference and keeps its boot copy. */
+export function applyMotionPreference(preference: MotionPreference): void {
   try {
     localStorage.setItem(KEY, preference)
   } catch {
     // Storage unavailable: the preference still applies until the window reloads.
   }
   apply()
+}
+
+/** Changes the profile's reduce-motion setting, showing it at once. */
+export function setMotionPreference(preference: MotionPreference): void {
+  applyMotionPreference(preference)
+  void window.adeHost?.settings.set({ reduced_motion: preference }).catch(() => {})
 }
 
 /** Applies the saved preference and follows the system setting. Call once at startup. */

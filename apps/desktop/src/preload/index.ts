@@ -5,6 +5,7 @@ import { files } from './files'
 import { profiles } from './profiles'
 import { review } from './review'
 import { services } from './services'
+import { settings } from './settings'
 import { terminal } from './stream'
 import { terminals } from './terminals'
 import { workspaces } from './workspaces'
@@ -51,6 +52,7 @@ const adeHost: AdeHost = {
   browser,
   terminal,
   terminals,
+  settings,
 }
 
 contextBridge.exposeInMainWorld('adeHost', { ...adeHost, ...e2eAliases })

@@ -1,18 +1,24 @@
-import type { Conversation, Workspace } from '@ade/client'
+import type { CatalogProject, Conversation, Workspace } from '@ade/client'
 import type { StatusState } from '@/components/Status'
 
-// What the navigator lists: projects, their workspaces, and each workspace's conversations. A
-// project is a repository (its workspaces are its checkouts and worktrees) or a plain folder, which
-// is a project with one workspace. Sorted by name, so the list does not jump as the catalog updates.
+// What the navigator lists: projects, their workspaces, and each workspace's conversations, all as
+// the daemon's catalog states them (project, kind, branch, attention). Sorted by name, so the list
+// does not jump as the catalog updates.
 
 export interface NavigatorWorkspace {
   id: string
   name: string
+  /** A folder's full path: where the workspace is on disk. */
+  root: string
+  branch: string | null
+  /** The daemon's own workspace, which cannot be removed from ADE. */
+  default: boolean
+  /** A worktree ADE made and may delete. */
+  deletableWorktree: boolean
   conversations: Conversation[]
 }
 
 export interface NavigatorProject {
-  /** The repository id, or the workspace id for a plain folder. */
   id: string
   name: string
   /** A Git repository, which can have worktrees; a plain folder cannot. */
@@ -23,14 +29,11 @@ export interface NavigatorProject {
 const byName = <T extends { name: string }>(a: T, b: T): number =>
   a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true })
 
-/**
- * Groups workspaces into projects. `projectNames` names repositories (the catalog's
- * `repositories`); a repository missing from it takes the name of its first workspace.
- */
+/** Groups workspaces into their projects. */
 export function navigatorTree(
   workspaces: Workspace[],
   conversations: Conversation[],
-  projectNames: Record<string, string> = {},
+  projects: Record<string, CatalogProject>,
 ): NavigatorProject[] {
   const conversationsOf = new Map<string, Conversation[]>()
   for (const conversation of conversations) {
@@ -38,38 +41,42 @@ export function navigatorTree(
     list.push(conversation)
     conversationsOf.set(conversation.workspace_id, list)
   }
-  const projects = new Map<string, NavigatorProject>()
+  const grouped = new Map<string, NavigatorProject>()
   for (const workspace of workspaces) {
-    const projectId = workspace.repository_id ?? workspace.id
-    const project = projects.get(projectId) ?? {
+    const projectId = workspace.project_id ?? workspace.id
+    const project = projects[projectId]
+    const group = grouped.get(projectId) ?? {
       id: projectId,
-      name: '',
-      repository: workspace.repository_id !== null,
+      name: project?.name ?? workspace.name,
+      repository: project?.kind === 'repository',
       workspaces: [],
     }
-    project.workspaces.push({
+    group.workspaces.push({
       id: workspace.id,
       name: workspace.name,
+      root: workspace.root,
+      branch: workspace.branch ?? null,
+      default: workspace.default ?? false,
+      deletableWorktree: workspace.kind === 'linked_worktree' && workspace.ade_owned === true,
       conversations: conversationsOf.get(workspace.id) ?? [],
     })
-    projects.set(projectId, project)
+    grouped.set(projectId, group)
   }
-  return [...projects.values()]
-    .map((project) => {
-      const sorted = [...project.workspaces].sort(byName)
-      return { ...project, workspaces: sorted, name: projectNames[project.id] ?? sorted[0]!.name }
-    })
+  return [...grouped.values()]
+    .map((project) => ({ ...project, workspaces: [...project.workspaces].sort(byName) }))
     .sort(byName)
 }
 
-const RUNNING = new Set(['running', 'responding', 'streaming', 'starting', 'cancelling'])
-const NEEDS_YOU = new Set(['waiting', 'pending'])
-const FAILED = new Set(['error', 'unavailable', 'disconnected'])
-
-/** The status mark for a conversation's status as the daemon reports it. */
-export function conversationState(status: string): StatusState {
-  if (RUNNING.has(status)) return 'running'
-  if (NEEDS_YOU.has(status)) return 'needsYou'
-  if (FAILED.has(status)) return 'error'
-  return 'idle'
+/** The status mark for what a conversation needs, as the daemon reports it. */
+export function conversationState(conversation: Conversation): StatusState {
+  switch (conversation.attention) {
+    case 'running':
+      return 'running'
+    case 'needs_you':
+      return 'needsYou'
+    case 'error':
+      return 'error'
+    default:
+      return 'idle'
+  }
 }

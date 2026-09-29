@@ -50,25 +50,32 @@ interface MenuAction {
   destructive?: boolean
 }
 
-function workspaceActions(
-  workspace: NavigatorWorkspace,
-  repository: boolean,
-  rename: () => void,
-): (MenuAction | 'separator')[] {
-  return [
-    { label: 'Rename', icon: 'rename', run: rename },
-    'separator',
-    { label: 'Remove from ADE', icon: 'remove', run: () => void removeWorkspace(workspace.id, workspace.name) },
-    ...(repository
+function workspaceActions(workspace: NavigatorWorkspace, rename: () => void): (MenuAction | 'separator')[] {
+  // The daemon's own workspace cannot be removed; only a worktree ADE made can be deleted.
+  const removal: MenuAction[] = [
+    ...(workspace.default
+      ? []
+      : [
+          {
+            label: 'Remove from ADE',
+            icon: 'remove' as const,
+            run: () => void removeWorkspace(workspace.id, workspace.name),
+          },
+        ]),
+    ...(workspace.deletableWorktree
       ? [
           {
             label: 'Delete worktree',
             icon: 'delete' as const,
             destructive: true,
-            run: () => void deleteWorktree(workspace.id, workspace.name),
+            run: () => void deleteWorktree(workspace.id, workspace.name, workspace.root),
           },
         ]
       : []),
+  ]
+  return [
+    { label: 'Rename', icon: 'rename', run: rename },
+    ...(removal.length ? ['separator' as const, ...removal] : []),
   ]
 }
 
@@ -100,17 +107,9 @@ function RenameField({ workspace, done }: { workspace: NavigatorWorkspace; done:
   )
 }
 
-function WorkspaceRows({
-  workspace,
-  repository,
-  active,
-}: {
-  workspace: NavigatorWorkspace
-  repository: boolean
-  active: boolean
-}) {
+function WorkspaceRows({ workspace, active }: { workspace: NavigatorWorkspace; active: boolean }) {
   const [renaming, setRenaming] = useState(false)
-  const actions = workspaceActions(workspace, repository, () => setRenaming(true))
+  const actions = workspaceActions(workspace, () => setRenaming(true))
   return (
     <li>
       {renaming ? (
@@ -180,7 +179,7 @@ function WorkspaceRows({
             <li key={conversation.id}>
               <Row
                 depth={2}
-                leading={<Status state={conversationState(conversation.status)} />}
+                leading={<Status state={conversationState(conversation)} />}
                 onClick={() => selectWorkspace(workspace.id)}
               >
                 {conversation.title}
@@ -226,7 +225,7 @@ function ProjectRows({
               icon="new"
               size="xs"
               label={`New workspace in ${project.name}`}
-              onClick={() => void newWorkspace(project.workspaces[0]!.id, project.name)}
+              onClick={() => void newWorkspace(project.id, project.name)}
             />
           </span>
         )}
@@ -234,12 +233,7 @@ function ProjectRows({
       {!collapsed && (
         <ul>
           {project.workspaces.map((workspace) => (
-            <WorkspaceRows
-              key={workspace.id}
-              workspace={workspace}
-              repository={project.repository}
-              active={workspace.id === active}
-            />
+            <WorkspaceRows key={workspace.id} workspace={workspace} active={workspace.id === active} />
           ))}
         </ul>
       )}
@@ -253,14 +247,14 @@ export function ProjectTree() {
   const workspaces = useDaemon((state) => state.workspaces)
   const conversationIds = useDaemon((state) => state.conversationIds)
   const conversations = useDaemon((state) => state.conversations)
-  const repositoryNames = useDaemon((state) => state.repositoryNames)
+  const projectRecords = useDaemon((state) => state.projects)
   const active = useStore(layoutStore, (state) => state.active)
   const connected = useDaemon((state) => state.status === 'connected')
   const [collapsed, setCollapsed] = useLocalStorage<string[]>(`ade.navigator.collapsed:${WINDOW_NAME}`, [])
   const projects = navigatorTree(
     workspaceIds.map((id) => workspaces[id]!),
     conversationIds.map((id) => conversations[id]!),
-    repositoryNames,
+    projectRecords,
   )
   const toggle = (id: string): void =>
     setCollapsed((ids) => (ids.includes(id) ? ids.filter((other) => other !== id) : [...ids, id]))

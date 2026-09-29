@@ -2,37 +2,33 @@
 // Run: node --test apps/desktop/src/main/workspace-actions-core.test.mjs
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { workspaceBlockerText, worktreeBlockerTexts } from './workspace-actions-core.ts'
+import { blockerText, blockerTexts } from './workspace-actions-core.ts'
 
 test('workspace blockers name what is running', () => {
   assert.equal(
-    workspaceBlockerText({ kind: 'conversation_running', id: 'c', label: 'Fix the build' }),
+    blockerText({ kind: 'conversation_running', id: 'c', label: 'Fix the build' }),
     '“Fix the build” is running',
   )
+  assert.equal(blockerText({ kind: 'service_running', id: 's', label: 'Service web' }), 'Service web is running')
   assert.equal(
-    workspaceBlockerText({ kind: 'service_running', id: 's', label: 'Service web' }),
-    'Service web is running',
-  )
-  assert.equal(
-    workspaceBlockerText({ kind: 'default_workspace', id: 'w', label: "The daemon's default workspace" }),
+    blockerText({ kind: 'default_workspace', id: 'w', label: "The daemon's default workspace" }),
     'ADE keeps this workspace for itself',
   )
-  assert.equal(workspaceBlockerText({ kind: 'something_new', id: 'x', label: 'Thing x' }), 'Thing x')
 })
 
-test('a worktree held only by its own workspace can be deleted', () => {
-  assert.deepEqual(worktreeBlockerTexts({ blockers: [] }), [])
-  assert.deepEqual(worktreeBlockerTexts({ blockers: ['active_work', 'setup_incomplete'] }), [])
+test('worktree blockers read as reasons; an unknown kind keeps the daemon’s label', () => {
+  assert.equal(blockerText({ kind: 'dirty', id: '/t', label: 'dirty' }), 'It has uncommitted or untracked files')
+  assert.equal(blockerText({ kind: 'primary_checkout', id: '/t', label: 'x' }), 'It is the project’s main checkout')
+  assert.equal(blockerText({ kind: 'brand_new', id: 'x', label: 'Something new' }), 'Something new')
 })
 
-test('other worktree blockers are listed once each', () => {
-  assert.deepEqual(worktreeBlockerTexts({ blockers: ['dirty', 'active_work', 'unavailable', 'not_listed'] }), [
-    'It has uncommitted or untracked files',
-    'Git no longer lists it',
-  ])
-  assert.deepEqual(worktreeBlockerTexts({ blockers: ['brand_new'] }), ['Blocked: brand new'])
-})
-
-test('a tree the plan leaves out is the main checkout', () => {
-  assert.deepEqual(worktreeBlockerTexts(undefined), ['It is the project’s main checkout'])
+test('each reason is listed once', () => {
+  assert.deepEqual(
+    blockerTexts([
+      { kind: 'unavailable', id: 'a', label: '' },
+      { kind: 'not_listed', id: 'a', label: '' },
+      { kind: 'dirty', id: 'a', label: '' },
+    ]),
+    ['Git no longer lists it', 'It has uncommitted or untracked files'],
+  )
 })

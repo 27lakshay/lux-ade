@@ -37,6 +37,7 @@ import { finishQuit, holdQuit, registerQuitGuard, registerQuitTeardown } from '.
 import { registerReviewIpc, setGitJournal } from './review'
 import { registerServiceIpc } from './services'
 import { disconnectWindow, setStreamProfile, startStreamBridge, stopStreamBridge } from './stream-bridge'
+import { registerSettingsIpc } from './settings'
 import { registerTerminalIpc } from './terminals'
 import { registerWorkspaceActionIpc } from './workspace-actions'
 import { registerWorkspaceIpc, selectedWorkspaces, selectionRequests } from './workspaces'
@@ -88,6 +89,7 @@ registerConversationIpc()
 registerWorkspaceIpc()
 registerWorkspaceActionIpc()
 registerTerminalIpc()
+registerSettingsIpc()
 registerServiceIpc()
 registerReviewIpc()
 registerFileIpc()

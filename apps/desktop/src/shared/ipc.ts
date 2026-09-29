@@ -7,6 +7,7 @@ import type { ProfilesBridge } from './bridge/profiles'
 import type { ReviewBridge } from './bridge/review'
 import type { ServicesBridge } from './bridge/services'
 import type { ProfileState } from './bridge/types'
+import type { SettingsBridge } from './bridge/settings'
 import type { TerminalsBridge } from './bridge/terminals'
 import type { WorkspacesBridge } from './bridge/workspaces'
 
@@ -37,9 +38,10 @@ export interface InvokeChannels {
   'ade:workspace-rename': WorkspacesBridge['rename']
   'ade:workspace-remove': WorkspacesBridge['remove']
   'ade:worktree-create': WorkspacesBridge['createWorktree']
-  'ade:worktree-check': WorkspacesBridge['checkWorktree']
   'ade:worktree-delete': WorkspacesBridge['deleteWorktree']
   'ade:terminal-create': TerminalsBridge['create']
+  'ade:settings-get': SettingsBridge['get']
+  'ade:settings-set': SettingsBridge['set']
   'ade:terminal-close': TerminalsBridge['close']
   'ade:terminal-restart': TerminalsBridge['restart']
   'ade:restore-bindings': WorkspacesBridge['listRestoreBindings']

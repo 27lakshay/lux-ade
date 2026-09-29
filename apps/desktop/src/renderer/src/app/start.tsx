@@ -21,6 +21,7 @@ import './app.css'
 import { commandService, registerAppCommands } from './commands'
 import { clearOnProfileSwitch, queryClient } from './query-client'
 import { createAppRouter } from './router'
+import { startProfileSettings } from './profile-settings'
 import { startTheme } from './theme'
 
 // Starts the app in this window: theme, commands, routing, then the first render. Called once by
@@ -50,6 +51,7 @@ export async function start(): Promise<void> {
       : undefined
   const router = createAppRouter({ Workspace: bench ? () => <Workspace renderContent={bench} /> : Workspace })
   const daemon = window.adeHost ? createDaemonStore(window.adeHost) : null
+  if (daemon && window.adeHost) startProfileSettings(window.adeHost, daemon.store)
   // Menu commands that change the screen. Any other command acts on the workspace, so it first
   // returns there from a full-screen view.
   window.adeHost?.onCommand((command) => {

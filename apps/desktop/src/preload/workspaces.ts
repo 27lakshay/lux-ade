@@ -10,7 +10,6 @@ export const workspaces: WorkspacesBridge = {
   chooseRestoreFolder: () => invoke('ade:restore-choose-folder'),
   rename: (id, name) => invoke('ade:workspace-rename', id, name),
   remove: (id) => invoke('ade:workspace-remove', id),
-  createWorktree: (projectWorkspaceId, name) => invoke('ade:worktree-create', projectWorkspaceId, name),
-  checkWorktree: (id) => invoke('ade:worktree-check', id),
+  createWorktree: (projectId, name) => invoke('ade:worktree-create', projectId, name),
   deleteWorktree: (id) => invoke('ade:worktree-delete', id),
 }

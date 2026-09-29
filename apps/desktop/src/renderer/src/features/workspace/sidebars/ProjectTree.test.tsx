@@ -1,4 +1,4 @@
-import type { Conversation, Workspace } from '@ade/client'
+import type { CatalogProject, Conversation, Workspace } from '@ade/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { userEvent } from 'vitest/browser'
 import { DEFAULT_WORKSPACE, layoutStore, openTab, setActiveWorkspace } from '../model/layout-store'
@@ -12,28 +12,39 @@ afterEach(() => {
   window.adeHost = undefined as unknown as typeof window.adeHost
 })
 
-const workspace = (id: string, name: string, repository_id: string | null): Workspace => ({
+const workspace = (id: string, name: string, project_id: string, extra: Partial<Workspace> = {}): Workspace => ({
   id,
   name,
-  repository_id,
+  project_id,
+  repository_id: null,
   root: `/code/${name}`,
   terminal_id: `t-${id}`,
   needs_rebind: false,
   worktree_lifecycle_needs_rebind: false,
+  kind: 'folder',
+  branch: null,
+  default: false,
+  ade_owned: false,
+  ...extra,
 })
-const conversation = (id: string, workspace_id: string, title: string, status = 'idle'): Conversation => ({
-  id,
-  workspace_id,
-  title,
-  provider: 'codex',
-  status,
-})
-const catalog = (
-  workspaces: Workspace[],
-  conversations: Conversation[] = [],
-  repositories: { id: string; root: string; name: string }[] = [],
-) => setCatalog({ workspaces, conversations, repositories })
-const two = [workspace('w1', 'main', 'r1'), workspace('w2', 'feature', 'r1'), workspace('w3', 'notes', null)]
+const conversation = (
+  id: string,
+  workspace_id: string,
+  title: string,
+  attention: Conversation['attention'] = 'idle',
+): Conversation => ({ id, workspace_id, title, provider: 'codex', status: 'idle', attention })
+const projects: CatalogProject[] = [
+  { id: 'r1', kind: 'repository', name: 'shop', root: '/code/shop/.git' },
+  { id: 'f1', kind: 'folder', name: 'notes', root: '/code/notes' },
+]
+const catalog = (workspaces: Workspace[], conversations: Conversation[] = []) =>
+  setCatalog({ workspaces, conversations, projects })
+/** A repository with its main checkout and an ADE-made worktree, and a plain folder. */
+const two = [
+  workspace('w1', 'main', 'r1', { kind: 'primary_checkout', branch: 'main' }),
+  workspace('w2', 'feature', 'r1', { kind: 'linked_worktree', ade_owned: true, branch: 'ade/feature' }),
+  workspace('w3', 'notes', 'f1'),
+]
 /** The rows' titles at a level: projects, or the workspaces of one project. */
 const PROJECT_ROWS = ':scope > li > div > button'
 const WORKSPACE_ROWS = ':scope > li > ul > li > div > div > button'
@@ -50,7 +61,6 @@ const hostSpy = (overrides: Partial<Window['adeHost']['workspaces']> = {}) => {
     rename: vi.fn(async () => {}),
     remove: vi.fn(async () => ({ removed: true as const })),
     createWorktree: vi.fn(async () => 'w9'),
-    checkWorktree: vi.fn(async () => ({ path: '/code/feature', reasons: [] as string[] })),
     deleteWorktree: vi.fn(async () => ({ removed: true as const })),
     ...overrides,
   }
@@ -65,10 +75,9 @@ test('lists projects, their workspaces and conversations from the catalog', asyn
   const projects = screen.getByRole('list', { name: 'Projects' })
   await expect.element(projects.getByRole('button', { name: /Fix the build/ })).toBeVisible()
   const rows = (selector: string) => [...projects.element().querySelectorAll(selector)].map((row) => row.textContent)
-  // Grouped by repository and sorted; until project names arrive, a project takes its first
-  // workspace's name.
-  expect(rows(PROJECT_ROWS)).toEqual(['feature', 'notes'])
-  expect(rows(WORKSPACE_ROWS.replace(':scope > li', ':scope > li:first-child'))).toEqual(['feature', 'main'])
+  // Grouped by project, named by the catalog, and sorted.
+  expect(rows(PROJECT_ROWS)).toEqual(['notes', 'shop'])
+  expect(rows(WORKSPACE_ROWS.replace(':scope > li', ':scope > li:last-child'))).toEqual(['feature', 'main'])
   await expect.element(screen.getByText('Projects')).toBeVisible()
 })
 
@@ -116,7 +125,7 @@ test('a project collapses and stays collapsed across a restart of the window', a
   const screen = await renderWorkspace()
   catalog(two)
   await expect.poll(workspaceRow('main')).toBeTruthy()
-  document.querySelector<HTMLElement>('[aria-label="Projects"] > li > div > button')!.click()
+  document.querySelector<HTMLElement>('[aria-label="Projects"] > li:last-child > div > button')!.click()
   await expect.poll(workspaceRow('main')).toBeFalsy()
   void screen
   expect(JSON.parse(localStorage.getItem('ade.navigator.collapsed:main')!)).toEqual(['r1'])
@@ -128,11 +137,11 @@ test('with no projects, the navigator says so', async () => {
   await expect.element(screen.getByText('No projects yet')).toBeVisible()
 })
 
-test('a repository project is named after its checkout folder', async () => {
+test('a conversation’s mark shows the attention the daemon reports', async () => {
   const screen = await renderWorkspace()
-  catalog(two, [], [{ id: 'r1', root: '/code/shop/.git', name: 'shop' }])
+  catalog(two, [conversation('c1', 'w2', 'Fix the build', 'needs_you')])
   const projects = screen.getByRole('list', { name: 'Projects' })
-  await expect.element(projects.getByRole('button', { name: 'shop', exact: true })).toBeVisible()
+  await expect.element(projects.getByLabelText('Needs you')).toBeVisible()
 })
 
 /** Opens a workspace's "⋯" menu and chooses an item. */
@@ -174,21 +183,35 @@ test('removing a workspace asks first, and a refusal says what is running', asyn
   await expect.element(screen.getByText('“Fix the build” is running.')).toBeVisible()
 })
 
-test('only a repository workspace offers to delete its worktree; a blocked one says why without asking', async () => {
-  const host = hostSpy({
-    checkWorktree: vi.fn(async () => ({ path: '/code/main', reasons: ['It is the project’s main checkout'] })),
+test('only a worktree ADE made can be deleted, and ADE’s own workspace cannot be removed', async () => {
+  hostSpy()
+  const screen = await renderWorkspace()
+  catalog([...two, workspace('w0', 'workspace', 'f0', { default: true })])
+  const items = async (name: string) => {
+    await screen.getByRole('button', { name: `${name} actions` }).click()
+    await expect.element(screen.getByRole('menuitem', { name: 'Rename' })).toBeVisible()
+    const labels = [...document.querySelectorAll('[role=menuitem]')].map((item) => item.textContent)
+    await userEvent.keyboard('{Escape}')
+    return labels
+  }
+  expect(await items('notes')).toEqual(['Rename', 'Remove from ADE'])
+  expect(await items('main')).toEqual(['Rename', 'Remove from ADE'])
+  expect(await items('feature')).toEqual(['Rename', 'Remove from ADE', 'Delete worktree'])
+  expect(await items('workspace')).toEqual(['Rename'])
+})
+
+test('a refused worktree deletion says why', async () => {
+  hostSpy({
+    deleteWorktree: vi.fn(async () => ({
+      removed: false as const,
+      reasons: ['It has uncommitted or untracked files'],
+    })),
   })
   const screen = await renderWorkspace()
   catalog(two)
-  await screen.getByRole('button', { name: 'notes actions' }).click()
-  await expect.element(screen.getByRole('menuitem', { name: 'Remove from ADE' })).toBeVisible()
-  expect(screen.getByRole('menuitem', { name: 'Delete worktree' }).query()).toBeNull()
-  await userEvent.keyboard('{Escape}')
-
-  await choose(screen, 'main', 'Delete worktree')
-  await expect.element(screen.getByText('It is the project’s main checkout.')).toBeVisible()
-  expect(screen.getByRole('alertdialog').query()).toBeNull()
-  expect(host.deleteWorktree).not.toHaveBeenCalled()
+  await choose(screen, 'feature', 'Delete worktree')
+  await screen.getByRole('alertdialog').getByRole('button', { name: 'Delete worktree' }).click()
+  await expect.element(screen.getByText('It has uncommitted or untracked files.')).toBeVisible()
 })
 
 test('deleting a worktree names its folder before it goes', async () => {
@@ -205,14 +228,14 @@ test('deleting a worktree names its folder before it goes', async () => {
 test('a new workspace is a worktree of the project, shown once it is made', async () => {
   const host = hostSpy()
   const screen = await renderWorkspace()
-  catalog(two, [], [{ id: 'r1', root: '/code/shop/.git', name: 'shop' }])
+  catalog(two)
   expect(screen.getByRole('button', { name: 'New workspace in notes' }).query()).toBeNull()
   await screen.getByRole('button', { name: 'New workspace in shop' }).click()
   const dialog = screen.getByRole('dialog')
   await expect.element(dialog.getByRole('button', { name: 'Create' })).toBeDisabled()
   await dialog.getByRole('textbox', { name: 'Name' }).fill('  Checkout flow ')
   await userEvent.keyboard('{Enter}')
-  expect(host.createWorktree).toHaveBeenCalledWith('w2', 'Checkout flow')
+  expect(host.createWorktree).toHaveBeenCalledWith('r1', 'Checkout flow')
   await expect.poll(() => layoutStore.getState().active).toBe('w9')
   expect(host.select).toHaveBeenCalledWith('w9', null)
 })

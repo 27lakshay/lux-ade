@@ -19,19 +19,11 @@ export interface WorkspacesBridge {
   rename(id: string, name: string): Promise<void>
   /** Removes the workspace from ADE and keeps its files; refused while something in it runs. */
   remove(id: string): Promise<RemoveOutcome>
-  /** Creates a worktree of the workspace's project, opens it, and returns the new workspace's ID. */
-  createWorktree(projectWorkspaceId: string, name: string): Promise<string>
-  /** Whether the workspace's worktree can be deleted, and its folder. */
-  checkWorktree(id: string): Promise<WorktreeCheck>
-  /** Removes the workspace from ADE, then deletes its worktree folder. */
+  /** Creates a worktree of a repository project, opens it, and returns the new workspace's ID. */
+  createWorktree(projectId: string, name: string): Promise<string>
+  /** Removes the workspace from ADE, then deletes its worktree folder; refused with reasons. */
   deleteWorktree(id: string): Promise<RemoveOutcome>
 }
 
 /** A removal either happened or was refused, with each reason in words a person reads. */
 export type RemoveOutcome = { removed: true } | { removed: false; reasons: string[] }
-
-export interface WorktreeCheck {
-  path: string
-  /** Empty when the worktree can be deleted. */
-  reasons: string[]
-}

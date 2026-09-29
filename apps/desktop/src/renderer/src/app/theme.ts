@@ -1,8 +1,9 @@
 import { isThemePreference, type ThemePreference } from '../../../shared/window-chrome'
 
-// Light, dark, or follow the system. The preference lives in localStorage, where the boot script
-// (public/theme-boot.js) reads it before the first paint; main gets each change so the native
-// window matches and remembers it (src/main/appearance.ts).
+// Light, dark, or follow the system. The profile's setting lives in the daemon (`appearance`,
+// profile-settings.ts keeps the window in step with it). A copy stays in localStorage only so the
+// boot script (public/theme-boot.js) paints the right theme before the daemon answers; main gets
+// each change so the native window matches (src/main/appearance.ts).
 
 export const THEME_KEY = 'ade.theme'
 
@@ -31,7 +32,8 @@ function paint(preference: ThemePreference): void {
   requestAnimationFrame(() => requestAnimationFrame(() => root.classList.remove('theme-switching')))
 }
 
-export function setThemePreference(preference: ThemePreference): void {
+/** Shows a preference: the page, the native window and the boot copy. */
+export function applyThemePreference(preference: ThemePreference): void {
   try {
     localStorage.setItem(THEME_KEY, preference)
   } catch {
@@ -39,6 +41,12 @@ export function setThemePreference(preference: ThemePreference): void {
   }
   paint(preference)
   window.adeHost?.setTheme(preference)
+}
+
+/** Changes the profile's appearance setting, showing it at once. */
+export function setThemePreference(preference: ThemePreference): void {
+  applyThemePreference(preference)
+  void window.adeHost?.settings.set({ appearance: preference }).catch(() => {})
 }
 
 /** Applies the saved preference and follows system changes. */

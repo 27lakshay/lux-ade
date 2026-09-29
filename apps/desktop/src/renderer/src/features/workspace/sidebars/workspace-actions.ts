@@ -38,17 +38,15 @@ export async function removeWorkspace(id: string, name: string): Promise<void> {
   }
 }
 
-export async function deleteWorktree(id: string, name: string): Promise<void> {
+export async function deleteWorktree(id: string, name: string, folder: string): Promise<void> {
+  const confirmed = await confirm({
+    title: `Delete the worktree “${name}”?`,
+    description: `ADE removes the workspace and deletes ${folder}. Its branch stays.`,
+    confirmLabel: 'Delete worktree',
+    destructive: true,
+  })
+  if (!confirmed) return
   try {
-    const check = await window.adeHost.workspaces.checkWorktree(id)
-    if (check.reasons.length > 0) return refused(`Could not delete “${name}”`, check.reasons)
-    const confirmed = await confirm({
-      title: `Delete the worktree “${name}”?`,
-      description: `ADE removes the workspace and deletes ${check.path}. Its branch stays.`,
-      confirmLabel: 'Delete worktree',
-      destructive: true,
-    })
-    if (!confirmed) return
     const outcome = await window.adeHost.workspaces.deleteWorktree(id)
     if (!outcome.removed) refused(`Could not delete “${name}”`, outcome.reasons)
   } catch (error) {
@@ -57,7 +55,7 @@ export async function deleteWorktree(id: string, name: string): Promise<void> {
 }
 
 /** Asks for a name, creates a worktree of the project named after it, and shows it. */
-export async function newWorkspace(projectWorkspaceId: string, projectName: string): Promise<void> {
+export async function newWorkspace(projectId: string, projectName: string): Promise<void> {
   const name = await askName({
     title: `New workspace in ${projectName}`,
     description: 'ADE creates a worktree on a new branch named after it.',
@@ -66,7 +64,7 @@ export async function newWorkspace(projectWorkspaceId: string, projectName: stri
   })
   if (!name) return
   try {
-    const id = await toast.promise(window.adeHost.workspaces.createWorktree(projectWorkspaceId, name), {
+    const id = await toast.promise(window.adeHost.workspaces.createWorktree(projectId, name), {
       loading: { title: `Creating “${name}”…` },
       success: { title: `Created “${name}”` },
       error: (error: unknown) => ({ title: `Could not create “${name}”`, description: hostErrorMessage(error) }),
