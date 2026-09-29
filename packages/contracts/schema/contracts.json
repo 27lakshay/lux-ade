@@ -30646,7 +30646,6 @@
       "description": "One lifecycle operation from the ledger. The daemon stores this shape.",
       "properties": {
         "binding_generation": {
-          "default": 0,
           "maximum": 9007199254740991,
           "minimum": -9007199254740991,
           "type": "integer"
@@ -30699,7 +30698,6 @@
           "$ref": "#/$defs/WorktreeOperationStatus"
         },
         "worktree_path": {
-          "default": null,
           "type": [
             "string",
             "null"

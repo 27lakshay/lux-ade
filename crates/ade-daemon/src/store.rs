@@ -33,6 +33,7 @@ mod conversations;
 mod drafts;
 pub mod layouts;
 mod migrations;
+pub use migrations::SCHEMA_VERSION;
 mod projects;
 pub mod runtime_recovery;
 mod send_intents;

@@ -34,22 +34,6 @@ fn creation(result: &Value) -> Result<(String, String)> {
     Ok((field("workspace_id")?, field("terminal_id")?))
 }
 
-/// Creations recorded in `terminal_creations` before receipts moved to the
-/// shared `operations` table. Nothing writes that table any more.
-fn legacy_creation(
-    connection: &Connection,
-    operation_id: &str,
-) -> Result<Option<(String, String)>> {
-    connection
-        .query_row(
-            "SELECT workspace_id,terminal_id FROM terminal_creations WHERE request_id=?1",
-            [operation_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .optional()
-        .map_err(Into::into)
-}
-
 impl Store {
     pub fn reserve_terminal(&self, id: &str, instance: &str) -> Result<Conversation> {
         let tx = self.transaction()?;
@@ -145,8 +129,7 @@ impl Store {
             {
                 creation(&serde_json::from_str(&result)?).map(Some)
             }
-            Some(_) => Ok(None),
-            None => legacy_creation(&self.connection, operation_id),
+            _ => Ok(None),
         }
     }
     /// Adds a shell to a workspace. With an operation ID, the receipt
@@ -179,15 +162,7 @@ impl Store {
         let now = now_ms();
         if let Some(operation_id) = operation_id {
             valid_creation_id(operation_id)?;
-            if let Some((workspace_id, terminal_id)) = legacy_creation(&tx, operation_id)? {
-                ensure!(workspace_id == id, CREATION_CONFLICT);
-                return Ok(PlacedTerminal {
-                    terminal_id,
-                    layout: None,
-                });
-            }
-            // Receipts from before titles keep their payload: the title
-            // joins it only when given.
+            // The title and the place join the payload only when given.
             let mut payload = json!({"workspace_id": id});
             if let Some(title) = title {
                 payload["title"] = json!(title);

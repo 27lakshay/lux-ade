@@ -7,50 +7,8 @@ use super::*;
 use ade_core::model::{CatalogProject, CatalogRepository, ProjectKind, WorkspaceKind};
 use std::collections::{HashMap, HashSet};
 
-/// The profile schema this module adds. Applied by [`migrate`], which the
-/// provisional `version < 20` block of `Store::open` calls.
-/// `conversation_seen.seen_sequence` is the newest message `sequence` the
-/// person has seen; `conversation_news.news_sequence` the newest message the
-/// person did not write, kept by every message writer ([`record_news`]), so
-/// listing unread state never parses messages.
-const SCHEMA: &str = "
-    CREATE TABLE IF NOT EXISTS conversation_seen(conversation_id TEXT PRIMARY KEY, seen_sequence INTEGER NOT NULL);
-    CREATE TABLE IF NOT EXISTS conversation_news(conversation_id TEXT PRIMARY KEY, news_sequence INTEGER NOT NULL);
-    CREATE TABLE IF NOT EXISTS profile_settings(key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL);
-    CREATE TABLE IF NOT EXISTS workspace_worktree_operations(operation_id TEXT PRIMARY KEY, status TEXT NOT NULL CHECK(status IN ('running','succeeded','failed')), data TEXT NOT NULL, updated_at INTEGER NOT NULL);
-    CREATE INDEX IF NOT EXISTS workspace_worktree_operations_running ON workspace_worktree_operations(status);
-";
-
-/// The catalog projects migration: every workspace gets a `project_id` (its
-/// repository, or a new folder project), and every existing Conversation
-/// starts read so an upgrade marks nothing unread.
-pub(super) fn migrate(tx: &Connection) -> Result<()> {
-    tx.execute_batch(SCHEMA)?;
-    // `review.feedback.send` queues feedback that the delivered message keeps.
-    let has_feedback: bool = tx.query_row(
-        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('queued_prompts') WHERE name='review_feedback')",
-        [],
-        |row| row.get(0),
-    )?;
-    if !has_feedback {
-        tx.execute_batch("ALTER TABLE queued_prompts ADD COLUMN review_feedback TEXT;")?;
-    }
-    assign_project_ids(tx)?;
-    tx.execute(
-        "INSERT OR IGNORE INTO conversation_seen(conversation_id,seen_sequence) SELECT c.id,COALESCE((SELECT MAX(sequence) FROM messages m WHERE m.conversation_id=c.id),0) FROM conversations c",
-        [],
-    )?;
-    tx.execute(
-        &format!(
-            "INSERT OR REPLACE INTO conversation_news(conversation_id,news_sequence) SELECT conversation_id,MAX(sequence) FROM messages WHERE {NEWS} GROUP BY conversation_id"
-        ),
-        [],
-    )?;
-    Ok(())
-}
-
 /// A message the person did not write themselves: what makes a Conversation
-/// unread. Only the migration backfill and a rewind read it from messages.
+/// unread. Only a rewind reads it from messages.
 const NEWS: &str = "COALESCE(json_extract(data,'$.role'),'')!='user'";
 
 /// Records a message written at `sequence` in `conversation`: news unless the
@@ -88,27 +46,6 @@ pub fn seen_as_is(db: &Connection, conversation: &str) -> Result<()> {
         "INSERT INTO conversation_seen(conversation_id,seen_sequence) SELECT ?1,COALESCE(MAX(sequence),0) FROM messages WHERE conversation_id=?1 ON CONFLICT(conversation_id) DO UPDATE SET seen_sequence=MAX(seen_sequence,excluded.seen_sequence)",
         [conversation],
     )?;
-    Ok(())
-}
-
-/// Gives each workspace without one its project: its repository, or a folder
-/// project of its own.
-fn assign_project_ids(tx: &Connection) -> Result<()> {
-    let rows: Vec<(String, String)> = tx
-        .prepare("SELECT id,data FROM workspaces ORDER BY rowid")?
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
-        .collect::<rusqlite::Result<_>>()?;
-    for (id, data) in rows {
-        let mut workspace: WorkspaceRecord = decode(data)?;
-        if !workspace.project_id.is_empty() {
-            continue;
-        }
-        workspace.project_id = project_of(&workspace);
-        tx.execute(
-            "UPDATE workspaces SET data=?2 WHERE id=?1",
-            params![id, encode(&workspace)?],
-        )?;
-    }
     Ok(())
 }
 
@@ -593,40 +530,6 @@ mod tests {
     }
 
     #[test]
-    fn the_migration_assigns_projects_and_marks_existing_conversations_read() {
-        let db = Database::new();
-        let store = db.open();
-        let folder = store
-            .workspace_open(&test_root(&new_id("legacy")), None)
-            .unwrap();
-        let conversation = store.create_conversation(&folder.id, "Old").unwrap();
-        let reply = assistant(&conversation, "old-reply", "old-item");
-        store
-            .commit_conversation(&conversation, &[reply], &[])
-            .unwrap();
-        // A record written before projects existed.
-        let mut legacy = store.workspace(&folder.id).unwrap();
-        legacy.project_id = String::new();
-        store
-            .connection
-            .execute(
-                "UPDATE workspaces SET data=?2 WHERE id=?1",
-                params![legacy.id, encode(&legacy).unwrap()],
-            )
-            .unwrap();
-        store
-            .connection
-            .execute("DELETE FROM conversation_seen", [])
-            .unwrap();
-        migrate(&store.connection).unwrap();
-        let migrated = store.workspace(&folder.id).unwrap();
-        assert!(migrated.project_id.starts_with("project_"));
-        let mut listed = store.conversation(&conversation.id).unwrap();
-        store.present_conversation(&mut listed).unwrap();
-        assert!(!listed.unread);
-    }
-
-    #[test]
     fn unread_follows_changes_after_the_seen_mark_and_attention_follows_status() {
         let db = Database::new();
         let store = db.open();
@@ -684,7 +587,7 @@ mod tests {
     }
 
     #[test]
-    fn news_survives_a_rewind_and_the_migration_backfills_it() {
+    fn news_survives_a_rewind() {
         let db = Database::new();
         let store = db.open();
         let workspace = store
@@ -718,14 +621,6 @@ mod tests {
         store
             .commit_conversation(&conversation, &[again], &[])
             .unwrap();
-        assert!(unread(&store));
-        // A profile from before the news table gets it filled from messages.
-        store
-            .connection
-            .execute("DELETE FROM conversation_news", [])
-            .unwrap();
-        assert!(!unread(&store));
-        migrate(&store.connection).unwrap();
         assert!(unread(&store));
     }
 

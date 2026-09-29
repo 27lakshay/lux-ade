@@ -671,12 +671,10 @@ pub struct WorktreeOperation {
     /// The caller's operation ID.
     pub id: String,
     pub repository_id: String,
-    #[serde(default)]
     pub binding_generation: i64,
     /// The request as the caller sent it, including `op`.
     #[schemars(with = "Value")]
     pub request: Value,
-    #[serde(default)]
     pub worktree_path: Option<String>,
     pub status: WorktreeOperationStatus,
     /// Command output and its `value`; `null` until the command runs.
@@ -1262,18 +1260,5 @@ mod tests {
         )
         .unwrap();
         assert_eq!(resource.outcome, ResourceOutcome::NotIgnored);
-    }
-
-    #[test]
-    fn legacy_ledger_rows_default_new_fields() {
-        let legacy: WorktreeOperation = serde_json::from_value(json!({"id": "old",
-            "repository_id": "repo", "request": {}, "status": "interrupted",
-            "result": null, "error": null, "started_at": 1, "finished_at": null}))
-        .unwrap();
-        assert_eq!(legacy.binding_generation, 0);
-        assert!(legacy.worktree_path.is_none() && legacy.code.is_none());
-        let encoded = serde_json::to_value(legacy).unwrap();
-        assert!(encoded.get("code").is_none());
-        assert_eq!(encoded["worktree_path"], Value::Null);
     }
 }

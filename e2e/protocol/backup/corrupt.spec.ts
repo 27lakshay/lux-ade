@@ -94,8 +94,8 @@ const damages: Damage[] = [
     damage: (bundle) => rewriteDatabase(bundle, sql('PRAGMA user_version=99;')),
   },
   {
-    name: 'a profile schema from before the execution fence',
-    message: /Restore requires a schema-12 backup/,
+    name: 'an older profile schema',
+    message: /Unsupported sessions\.sqlite schema version 11; this build restores only schema/,
     damage: (bundle) => rewriteDatabase(bundle, sql('PRAGMA user_version=11;')),
   },
   {

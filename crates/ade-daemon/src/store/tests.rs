@@ -75,88 +75,6 @@ fn queue_consumption_is_atomic_ordered_and_not_replayed_after_restart() {
     assert!(store.cancel_queued(&c.id, "first").is_err());
 }
 #[test]
-fn attachment_migration_preserves_v5_drafts_and_queued_prompts() {
-    let db = Database::new();
-    let store = db.open();
-    let (_, c) = fixture(&store);
-    store
-        .save_draft(
-            &c.id,
-            "window",
-            &Draft {
-                context_nodes: Vec::new(),
-                text: "Draft before upgrade".into(),
-                revision: 4,
-                attachments: vec![],
-            },
-        )
-        .unwrap();
-    store
-        .enqueue(&c.id, "queued-before-upgrade", "Queued before upgrade")
-        .unwrap();
-    store.connection.execute_batch("DROP TABLE service_ports; DROP TABLE services; DELETE FROM schema_migrations WHERE version=7; DROP TABLE attachments; ALTER TABLE drafts DROP COLUMN attachments; ALTER TABLE queued_prompts DROP COLUMN attachments; DELETE FROM schema_migrations WHERE version=6; PRAGMA user_version=5;").unwrap();
-    drop(store);
-    let store = db.open();
-    let draft = store.draft(&c.id, "window").unwrap();
-    assert_eq!(draft.text, "Draft before upgrade");
-    assert_eq!(draft.revision, 4);
-    assert!(draft.attachments.is_empty());
-    let queued = store.queued(&c.id).unwrap();
-    assert_eq!(queued[0].text, "Queued before upgrade");
-    assert!(queued[0].attachments.is_empty());
-    let attachment = store
-        .attach(&c.id, "file", "example.txt", b"Snapshot")
-        .unwrap();
-    store
-        .save_draft(
-            &c.id,
-            "window",
-            &Draft {
-                context_nodes: Vec::new(),
-                text: draft.text,
-                revision: 5,
-                attachments: vec![attachment.clone()],
-            },
-        )
-        .unwrap();
-    drop(store);
-    let store = db.open();
-    assert_eq!(
-        store.draft(&c.id, "window").unwrap().attachments.as_slice(),
-        std::slice::from_ref(&attachment)
-    );
-    assert!(
-        store.prompt(&c.id, "", &[attachment]).unwrap().attachments[0]
-            .text_block()
-            .unwrap()
-            .ends_with("Snapshot")
-    );
-}
-#[test]
-fn queue_migration_preserves_drafts_and_conversations() {
-    let db = Database::new();
-    let store = db.open();
-    let (_, c) = fixture(&store);
-    store
-        .save_draft(
-            &c.id,
-            "window",
-            &Draft {
-                context_nodes: Vec::new(),
-                attachments: vec![],
-                text: "Keep".into(),
-                revision: 1,
-            },
-        )
-        .unwrap();
-    store.connection.execute_batch("DROP TABLE service_ports; DROP TABLE services; DELETE FROM schema_migrations WHERE version=7; DROP TABLE attachments; ALTER TABLE drafts DROP COLUMN attachments; DROP TABLE queued_prompts; DELETE FROM schema_migrations WHERE version>=5; PRAGMA user_version=4;").unwrap();
-    drop(store);
-    let store = db.open();
-    assert_eq!(store.draft(&c.id, "window").unwrap().text, "Keep");
-    store.enqueue(&c.id, "queued", "New").unwrap();
-    assert_eq!(store.queue_heads().unwrap()[0].id, "queued");
-}
-#[test]
 fn drafts_are_scoped_durable_and_ignore_late_writes() {
     let db = Database::new();
     let store = db.open();
@@ -311,26 +229,6 @@ fn draft_resolution_rejects_intervening_writer_and_preserves_text() {
         .unwrap();
     assert_eq!(resolved.text, "chosen local");
     assert_eq!(resolved.revision, 9);
-}
-#[test]
-fn draft_migration_preserves_existing_conversations() {
-    let db = Database::new();
-    let store = db.open();
-    let (_, conversation) = fixture(&store);
-    store.connection.execute_batch("DROP TABLE service_ports; DROP TABLE services; DROP TABLE attachments; DROP TABLE drafts; DROP TABLE queued_prompts; DELETE FROM schema_migrations WHERE version>=4; PRAGMA user_version=3;").unwrap();
-    drop(store);
-    let store = db.open();
-    assert_eq!(
-        store.conversation(&conversation.id).unwrap().title,
-        conversation.title
-    );
-    assert!(
-        store
-            .draft(&conversation.id, "window-a")
-            .unwrap()
-            .text
-            .is_empty()
-    );
 }
 pub(super) struct Database {
     directory: std::path::PathBuf,
@@ -658,37 +556,6 @@ fn a_window_whose_last_workspace_is_removed_closes() {
     );
 }
 #[test]
-fn the_migration_replaces_the_prototype_window_table() {
-    let db = Database::new();
-    let store = db.open();
-    let (workspace, _) = fixture(&store);
-    store.create_window("w", &workspace.id, None).unwrap();
-    // A profile from before the layouts migration: the prototype's window
-    // table, holding a row. The catalog projects migration follows the
-    // layouts one and runs again harmlessly.
-    let latest: i64 = store
-        .connection
-        .pragma_query_value(None, "user_version", |row| row.get(0))
-        .unwrap();
-    let current = latest - 1;
-    store
-        .connection
-        .execute_batch(&format!(
-            "DROP TABLE layouts; DROP TABLE windows;
-            CREATE TABLE windows(id TEXT PRIMARY KEY,workspace_id TEXT NOT NULL REFERENCES workspaces(id),conversation_id TEXT REFERENCES conversations(id),data TEXT NOT NULL);
-            INSERT INTO windows VALUES('old','{}',NULL,'{{}}');
-            DELETE FROM schema_migrations WHERE version={current}; PRAGMA user_version={};",
-            workspace.id,
-            current - 1
-        ))
-        .unwrap();
-    drop(store);
-    let store = db.open();
-    assert!(store.windows().unwrap().is_empty());
-    store.create_window("w", &workspace.id, None).unwrap();
-    assert_eq!(store.layout("w", None).unwrap().revision, 0);
-}
-#[test]
 fn reopen_retains_identity_history_resume_and_windows() {
     let db = Database::new();
     let store = db.open();
@@ -893,238 +760,93 @@ fn provider_replay_retains_message_identity_and_sequence_with_bounded_pages() {
     );
 }
 #[test]
-#[ignore = "stale fixture: needs recorded path bindings since fail-closed rebind checks"]
-fn a_future_database_fails_without_clobbering() {
+fn another_schema_version_is_refused_untouched_with_the_delete_instruction() {
+    for version in [1, SCHEMA_VERSION - 1, SCHEMA_VERSION + 1] {
+        let db = Database::new();
+        std::fs::create_dir_all(&db.directory).unwrap();
+        let connection = Connection::open(db.path()).unwrap();
+        connection
+            .execute_batch(&format!(
+                "CREATE TABLE payload(id INTEGER PRIMARY KEY, value BLOB);
+                INSERT INTO payload VALUES(1, X'0001FF'); PRAGMA user_version={version};"
+            ))
+            .unwrap();
+        drop(connection);
+        let before = std::fs::read(db.path()).unwrap();
+        let failure = Store::open(&db.path())
+            .err()
+            .expect("another schema must fail")
+            .to_string();
+        assert!(
+            failure.contains(&format!("has schema version {version}"))
+                && failure.contains("Delete the database"),
+            "{failure}"
+        );
+        assert_eq!(std::fs::read(db.path()).unwrap(), before);
+        assert!(!db.path().with_extension("sqlite-wal").exists());
+        assert!(!db.path().with_extension("sqlite-shm").exists());
+        let connection = Connection::open(db.path()).unwrap();
+        assert_eq!(
+            connection
+                .pragma_query_value(None, "journal_mode", |r| r.get::<_, String>(0))
+                .unwrap(),
+            "delete"
+        );
+    }
+}
+
+#[test]
+fn a_new_database_gets_the_whole_schema_and_reopens() {
     let db = Database::new();
     let store = db.open();
-    fixture(&store);
-    store
-        .connection
-        .pragma_update(None, "user_version", 99)
-        .unwrap();
+    let (workspace, conversation) = fixture(&store);
     drop(store);
-    assert!(Store::open(&db.path()).is_err());
-    let conn = Connection::open(db.path()).unwrap();
-    assert_eq!(
-        conn.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
-            .unwrap(),
-        99
-    );
-}
-fn migration_v5_fixture() -> (Database, String) {
-    let db = Database::new();
     let store = db.open();
-    let (_, conversation) = fixture(&store);
-    store
-        .save_draft(
-            &conversation.id,
-            "migration-window",
-            &Draft {
-                context_nodes: Vec::new(),
-                text: "unsent migration draft".into(),
-                revision: 8,
-                attachments: vec![],
-            },
-        )
-        .unwrap();
-    store
-        .enqueue(&conversation.id, "migration-queued", "saved queued prompt")
-        .unwrap();
-    store
+    let version: i64 = store
         .connection
-        .execute_batch(
-            "DROP TABLE service_ports; DROP TABLE services;
-            DELETE FROM schema_migrations WHERE version >= 6; DROP TABLE attachments;
-            ALTER TABLE drafts DROP COLUMN attachments;
-            ALTER TABLE queued_prompts DROP COLUMN attachments; PRAGMA user_version=5;",
+        .pragma_query_value(None, "user_version", |r| r.get(0))
+        .unwrap();
+    assert_eq!(version, SCHEMA_VERSION);
+    let fence: (i64, i64) = store
+        .connection
+        .query_row(
+            "SELECT worktree_lifecycle_needs_rebind,restored_from_backup FROM restore_fence WHERE id=1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .unwrap();
-    (db, conversation.id)
-}
-
-fn assert_v5_migration_rolled_back(db: &Database, conversation: &str) {
-    let connection = Connection::open(db.path()).unwrap();
+    assert_eq!(fence, (0, 0));
+    assert_eq!(store.workspace(&workspace.id).unwrap().root, workspace.root);
     assert_eq!(
-        connection
-            .pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
-            .unwrap(),
-        5
-    );
-    assert_eq!(
-        connection
-            .query_row("PRAGMA integrity_check", [], |r| r.get::<_, String>(0))
-            .unwrap(),
-        "ok"
-    );
-    assert_eq!(
-        connection
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE name='attachments'",
-                [],
-                |r| r.get::<_, i64>(0)
-            )
-            .unwrap(),
-        0
-    );
-    assert_eq!(
-        connection
-            .query_row(
-                "SELECT COUNT(*) FROM pragma_table_info('drafts') WHERE name='attachments'",
-                [],
-                |r| r.get::<_, i64>(0)
-            )
-            .unwrap(),
-        0
-    );
-    assert_eq!(
-        connection
-            .query_row(
-                "SELECT COUNT(*) FROM pragma_table_info('queued_prompts') WHERE name='attachments'",
-                [],
-                |r| r.get::<_, i64>(0)
-            )
-            .unwrap(),
-        0
-    );
-    assert_eq!(
-        connection
-            .query_row(
-                "SELECT COUNT(*) FROM schema_migrations WHERE version>=6",
-                [],
-                |r| r.get::<_, i64>(0)
-            )
-            .unwrap(),
-        0
-    );
-    assert_eq!(
-        connection
-            .query_row(
-                "SELECT text FROM drafts WHERE conversation_id=?1",
-                [conversation],
-                |r| r.get::<_, String>(0)
-            )
-            .unwrap(),
-        "unsent migration draft"
-    );
-    assert_eq!(
-        connection
-            .query_row(
-                "SELECT text FROM queued_prompts WHERE conversation_id=?1",
-                [conversation],
-                |r| r.get::<_, String>(0)
-            )
-            .unwrap(),
-        "saved queued prompt"
-    );
-    assert_eq!(
-        connection
-            .query_row(
-                "SELECT COUNT(*) FROM conversations WHERE id=?1",
-                [conversation],
-                |r| r.get::<_, i64>(0)
-            )
-            .unwrap(),
-        1
+        store.conversation(&conversation.id).unwrap().title,
+        conversation.title
     );
 }
 
 #[test]
-#[ignore = "stale: expects a schema version older than the current ladder"]
-fn migration_sql_failure_rolls_back_ddl_and_preserves_data_for_retry() {
-    let (db, conversation) = migration_v5_fixture();
-    let connection = Connection::open(db.path()).unwrap();
-    connection
-        .execute_batch(
-            "CREATE TRIGGER reject_migration_six BEFORE INSERT ON schema_migrations
-            WHEN NEW.version=6 BEGIN SELECT RAISE(ABORT, 'fixture migration failure'); END;",
-        )
-        .unwrap();
-    drop(connection);
-    let failure = Store::open(&db.path()).err().expect("migration must fail");
-    assert!(failure.to_string().contains("fixture migration failure"));
-    assert_v5_migration_rolled_back(&db, &conversation);
-    let connection = Connection::open(db.path()).unwrap();
-    connection
-        .execute_batch("DROP TRIGGER reject_migration_six")
-        .unwrap();
-    drop(connection);
-    let restored = db.open();
-    assert_eq!(
-        restored
-            .draft(&conversation, "migration-window")
-            .unwrap()
-            .text,
-        "unsent migration draft"
-    );
-    assert_eq!(
-        restored.queued(&conversation).unwrap()[0].text,
-        "saved queued prompt"
-    );
-    assert_eq!(
-        restored
-            .connection
-            .pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
-            .unwrap(),
-        7
-    );
-}
-
-#[test]
-fn newer_schema_rejection_preserves_original_database_bytes_and_journal() {
-    let db = Database::new();
-    std::fs::create_dir_all(&db.directory).unwrap();
-    let connection = Connection::open(db.path()).unwrap();
-    connection
-        .execute_batch(
-            "CREATE TABLE future_payload(id INTEGER PRIMARY KEY, value BLOB);
-            INSERT INTO future_payload VALUES(1, X'0001FF'); PRAGMA user_version=99;",
-        )
-        .unwrap();
-    drop(connection);
-    let before = std::fs::read(db.path()).unwrap();
-    let failure = Store::open(&db.path())
-        .err()
-        .expect("future schema must fail");
-    assert!(
-        failure
-            .to_string()
-            .contains("Unsupported database version 99")
-    );
-    assert_eq!(std::fs::read(db.path()).unwrap(), before);
-    assert!(!db.path().with_extension("sqlite-wal").exists());
-    assert!(!db.path().with_extension("sqlite-shm").exists());
-    let connection = Connection::open(db.path()).unwrap();
-    assert_eq!(
-        connection
-            .pragma_query_value(None, "journal_mode", |r| r.get::<_, String>(0))
-            .unwrap(),
-        "delete"
-    );
-}
-
-#[test]
-#[ignore = "subprocess entry point used by migration kill regression"]
-fn migration_interruption_child() {
-    let path = std::env::var_os("ADE_STORE_MIGRATION_TEST_DB").expect("test DB path");
+#[ignore = "subprocess entry point used by the creation kill regression"]
+fn creation_interruption_child() {
+    let path = std::env::var_os("ADE_STORE_CREATION_TEST_DB").expect("test DB path");
     Store::open(Path::new(&path)).unwrap();
-    panic!("migration unexpectedly completed instead of reaching checkpoint");
+    panic!("creation unexpectedly completed instead of reaching checkpoint");
 }
 
 #[test]
-fn killed_migration_rolls_back_and_next_start_preserves_saved_data() {
+fn a_killed_creation_leaves_no_schema_and_the_next_start_creates_it() {
     use std::process::{Command, Stdio};
     use std::time::{Duration, Instant};
-    let (db, conversation) = migration_v5_fixture();
-    let marker = db.directory.join("migration-checkpoint");
+    let db = Database::new();
+    std::fs::create_dir_all(&db.directory).unwrap();
+    let marker = db.directory.join("creation-checkpoint");
     let mut child = Command::new(std::env::current_exe().unwrap())
         .args([
             "--exact",
-            "store::tests::migration_interruption_child",
+            "store::tests::creation_interruption_child",
             "--ignored",
             "--nocapture",
         ])
-        .env("ADE_STORE_MIGRATION_TEST_DB", db.path())
-        .env("ADE_STORE_MIGRATION_TEST_CHECKPOINT", &marker)
+        .env("ADE_STORE_CREATION_TEST_DB", db.path())
+        .env("ADE_STORE_CREATION_TEST_CHECKPOINT", &marker)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -1142,21 +864,22 @@ fn killed_migration_rolls_back_and_next_start_preserves_saved_data() {
     let reached = marker.exists();
     let _ = child.kill();
     let status = child.wait().unwrap();
-    assert!(reached, "child did not reach real uncommitted migration");
+    assert!(reached, "child did not reach the uncommitted creation");
     assert!(!status.success());
-    assert_v5_migration_rolled_back(&db, &conversation);
-    let restored = db.open();
+    let connection = Connection::open(db.path()).unwrap();
     assert_eq!(
-        restored
-            .draft(&conversation, "migration-window")
-            .unwrap()
-            .text,
-        "unsent migration draft"
+        connection
+            .pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+            .unwrap(),
+        0
     );
-    assert_eq!(
-        restored.queued(&conversation).unwrap()[0].text,
-        "saved queued prompt"
-    );
+    let tables: i64 = connection
+        .query_row("SELECT COUNT(*) FROM sqlite_master", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(tables, 0);
+    drop(connection);
+    let store = db.open();
+    fixture(&store);
 }
 #[test]
 fn a_renamed_workspace_keeps_its_name_across_reopen_and_rejects_bad_names() {

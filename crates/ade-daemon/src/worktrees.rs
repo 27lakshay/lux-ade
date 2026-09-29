@@ -113,6 +113,19 @@ impl Repository {
 /// The lifecycle operation ledger. Schema 4 renamed it from `operations`,
 /// which now holds the shared effect receipts of [`crate::receipts`].
 const LEDGER: &str = "jobs";
+/// The lifecycle database schema this build creates and reads. Nothing
+/// upgrades an older one until ADE launches (decision D19).
+pub const LIFECYCLE_SCHEMA_VERSION: i64 = 5;
+/// The lifecycle tables: registered repositories, ADE-owned trees, tree
+/// phases, archive records and the operation ledger (`LEDGER`). The shared
+/// receipt table is added by `receipts::ensure`.
+const LIFECYCLE_SCHEMA: &str = "
+    CREATE TABLE repositories(id TEXT PRIMARY KEY, data TEXT NOT NULL);
+    CREATE TABLE owned(id TEXT PRIMARY KEY, data TEXT NOT NULL);
+    CREATE TABLE trees(id TEXT PRIMARY KEY, data TEXT NOT NULL);
+    CREATE TABLE archived(id TEXT PRIMARY KEY, data TEXT NOT NULL);
+    CREATE TABLE jobs(id TEXT PRIMARY KEY, data TEXT NOT NULL);
+";
 
 fn record_failure(job: &mut Operation, error: anyhow::Error) {
     let envelope = ade_core::error::error_envelope(error);
@@ -165,17 +178,6 @@ enum Effect {
 }
 
 impl Effect {
-    /// The operations [`Self::decode`] accepts.
-    const OPS: [&str; 8] = [
-        "worktree.switch",
-        "worktree.remove",
-        "worktree.refresh",
-        "worktree.create",
-        "worktree.setup",
-        "worktree.cleanup",
-        "worktree.carry",
-        "worktree.resources.apply",
-    ];
     fn decode(op: &str, request: &Value) -> Result<Self> {
         Ok(match op {
             "worktree.switch" => Self::Switch(decode(request)?),
@@ -261,25 +263,6 @@ fn strip_hook_output(hooks: Option<&mut Value>) {
             run.remove("output");
         }
     }
-}
-
-/// The repository ID `id` names now; see [`Worktrees::resolve_repository`].
-fn resolve(db: &Connection, id: &str) -> Result<String> {
-    let known = db
-        .query_row("SELECT 1 FROM repositories WHERE id=?1", [id], |_| Ok(()))
-        .optional()?
-        .is_some();
-    if known {
-        return Ok(id.to_owned());
-    }
-    let aliased: Option<String> = db
-        .query_row(
-            "SELECT id FROM repository_aliases WHERE alias=?1",
-            [id],
-            |row| row.get(0),
-        )
-        .optional()?;
-    Ok(aliased.unwrap_or_else(|| id.to_owned()))
 }
 
 fn read_tree(db: &Connection, path: &str) -> Result<Option<TreeRecord>> {
@@ -438,10 +421,8 @@ fn receipt_status(status: JobStatus) -> Status {
     }
 }
 
-/// Brings a ledger row's receipt up to date. A row written before schema 4 has
-/// no receipt; it gets one fingerprinted from its stored request, dated from
-/// the row's start, so the same ID and parameters still replay and different
-/// parameters still conflict.
+/// Brings a ledger row's receipt up to date with the row: a job the daemon
+/// interrupted at restart settles its receipt as unknown.
 fn reconcile_receipt(db: &Connection, job: &Operation) -> Result<()> {
     let stored: Option<String> = db
         .query_row(
@@ -451,14 +432,7 @@ fn reconcile_receipt(db: &Connection, job: &Operation) -> Result<()> {
         )
         .optional()?;
     let current = match stored.as_deref() {
-        None => {
-            let op = job.request["op"].as_str().unwrap_or("");
-            let payload = Effect::decode(op, &job.request)
-                .and_then(|effect| effect.payload())
-                .unwrap_or_else(|_| job.request.clone());
-            receipts::begin(db, &job.id, op, &payload, None, job.started_at)?;
-            Status::Accepted
-        }
+        None => bail!("Worktree operation {} has no receipt", job.id),
         Some("expired") => return Ok(()),
         Some(status) => Status::parse(status)?,
     };
@@ -1026,84 +1000,23 @@ impl Worktrees {
                     b"# lux-ade lifecycle defaults. Configure each repository explicitly.\n",
                 )?;
         }
-        let db = Connection::open(directory.join("lifecycle.sqlite3"))?;
+        let path = directory.join("lifecycle.sqlite3");
+        let db = Connection::open(&path)?;
         let version: i64 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
         ensure!(
-            (0..=4).contains(&version),
-            "Unsupported lifecycle database version {version}"
+            version == 0 || version == LIFECYCLE_SCHEMA_VERSION,
+            "The worktree lifecycle database {} has schema version {version}; this build reads only schema {LIFECYCLE_SCHEMA_VERSION} and does not upgrade older databases before launch. Delete the database to start this profile's lifecycle again",
+            path.display()
         );
         db.pragma_update(None, "journal_mode", "WAL")?;
         db.pragma_update(None, "synchronous", "FULL")?;
-        db.execute_batch("CREATE TABLE IF NOT EXISTS repositories(id TEXT PRIMARY KEY,data TEXT NOT NULL);CREATE TABLE IF NOT EXISTS owned(id TEXT PRIMARY KEY,data TEXT NOT NULL);")?;
-        // Tree phases and archive records need no schema version: both tables
-        // are new and additive, and older builds ignore them.
-        db.execute_batch("CREATE TABLE IF NOT EXISTS trees(id TEXT PRIMARY KEY,data TEXT NOT NULL);CREATE TABLE IF NOT EXISTS archived(id TEXT PRIMARY KEY,data TEXT NOT NULL);")?;
-        // Lifecycle IDs moved onto catalog project IDs, kept so a caller's
-        // recorded ID still resolves. Additive, like the two tables above.
-        db.execute_batch("CREATE TABLE IF NOT EXISTS repository_aliases(alias TEXT PRIMARY KEY,id TEXT NOT NULL);")?;
-        if version < 2 {
-            let tx = rusqlite::Transaction::new_unchecked(
-                &db,
-                rusqlite::TransactionBehavior::Immediate,
-            )?;
-            let rows: Vec<String> = tx
-                .prepare("SELECT data FROM repositories")?
-                .query_map([], |row| row.get(0))?
-                .collect::<rusqlite::Result<_>>()?;
-            for row in rows {
-                let mut repository: Repository = serde_json::from_str(&row)?;
-                if repository.needs_rebind {
-                    continue;
-                }
-                match (identity(&repository.root), identity(&repository.common_dir)) {
-                    (Ok((root_device, root_inode)), Ok((common_device, common_inode))) => {
-                        repository.root_device = Some(root_device);
-                        repository.root_inode = Some(root_inode);
-                        repository.common_device = Some(common_device);
-                        repository.common_inode = Some(common_inode);
-                    }
-                    _ => repository.needs_rebind = true,
-                }
-                put(&tx, "repositories", &repository.id, &repository)?;
-            }
-            tx.pragma_update(None, "user_version", 2)?;
-            tx.commit()?;
-        }
-        if version < 3 {
-            let tx = rusqlite::Transaction::new_unchecked(
-                &db,
-                rusqlite::TransactionBehavior::Immediate,
-            )?;
-            let rows: Vec<String> = tx
-                .prepare("SELECT data FROM repositories")?
-                .query_map([], |row| row.get(0))?
-                .collect::<rusqlite::Result<_>>()?;
-            for row in rows {
-                let mut repository: Repository = serde_json::from_str(&row)?;
-                // A schema-2 repository already rebound once has lost its source
-                // identity. Leave it unknown so another rebind fails closed.
-                if repository.binding_generation == 0 {
-                    repository.source_root_device = repository.root_device.clone();
-                    repository.source_root_inode = repository.root_inode.clone();
-                    repository.source_common_device = repository.common_device.clone();
-                    repository.source_common_inode = repository.common_inode.clone();
-                }
-                put(&tx, "repositories", &repository.id, &repository)?;
-            }
-            tx.pragma_update(None, "user_version", 3)?;
-            tx.commit()?;
-        }
-        if version < 4 {
-            // The ledger keeps its rows and rowids under a new name; the shared
-            // receipt table takes the `operations` name. Receipts for the kept
-            // rows are backfilled below.
+        if version == 0 {
             let tx = Transaction::new_unchecked(&db, TransactionBehavior::Immediate)?;
-            tx.execute_batch("CREATE TABLE IF NOT EXISTS operations(id TEXT PRIMARY KEY,data TEXT NOT NULL);ALTER TABLE operations RENAME TO jobs;")?;
+            tx.execute_batch(LIFECYCLE_SCHEMA)?;
             receipts::ensure(&tx)?;
-            tx.pragma_update(None, "user_version", 4)?;
+            tx.pragma_update(None, "user_version", LIFECYCLE_SCHEMA_VERSION)?;
             tx.commit()?;
         }
-        receipts::ensure(&db)?;
         let tx = Transaction::new_unchecked(&db, TransactionBehavior::Immediate)?;
         let pending: Vec<String> = tx
             .prepare("SELECT data FROM jobs ORDER BY rowid")?
@@ -1165,16 +1078,10 @@ impl Worktrees {
     pub fn set_project_ids(&self, ids: ProjectIds) {
         let _ = self.project_ids.set(ids);
     }
-    /// The repository an ID names now: itself, or the project ID an older
-    /// lifecycle ID was moved to by [`Self::unify_repository_ids`]. An unknown
-    /// ID comes back unchanged, so the caller's lookup reports it.
-    pub fn resolve_repository(&self, id: &str) -> Result<String> {
-        resolve(&self.data.lock().unwrap().db, id)
-    }
     /// Whether a lifecycle or review operation holds the repository now.
     pub fn repository_busy(&self, id: &str) -> Result<bool> {
         let d = self.data.lock().unwrap();
-        Ok(d.busy.contains(&resolve(&d.db, id)?))
+        Ok(d.busy.contains(id))
     }
     /// The lifecycle repository whose canonical Git common directory is
     /// `common`, without registering one.
@@ -1228,78 +1135,6 @@ impl Worktrees {
             })
             .map(|(path, _)| path)
             .collect())
-    }
-    /// Moves each lifecycle repository registered under its own
-    /// `repository_…` ID onto the catalog project ID for its Git common
-    /// directory, keeping the old ID as an alias so recorded operations and
-    /// receipts still resolve. A repository that needs a rebind, runs an
-    /// operation, or whose lock a surviving supervisor holds is left for the
-    /// next start. Returns how many moved.
-    pub fn unify_repository_ids(
-        &self,
-        project_id: impl Fn(&str) -> Result<Option<String>>,
-    ) -> Result<usize> {
-        let repositories: Vec<Repository> = {
-            let d = self.data.lock().unwrap();
-            d.db.prepare("SELECT data FROM repositories ORDER BY rowid")?
-                .query_map([], |row| row.get::<_, String>(0))?
-                .map(|row| Ok(serde_json::from_str(&row?)?))
-                .collect::<Result<_>>()?
-        };
-        let mut moved = 0;
-        for mut repository in repositories {
-            if repository.needs_rebind || !repository_binding_matches(&repository) {
-                continue;
-            }
-            let target = match project_id(&repository.common_dir) {
-                Ok(Some(target)) if target != repository.id => target,
-                Ok(_) => continue,
-                Err(error) => {
-                    eprintln!(
-                        "Worktree lifecycle repository {} keeps its ID: {error:#}",
-                        repository.id
-                    );
-                    continue;
-                }
-            };
-            let lock = OpenOptions::new()
-                .create(true)
-                .truncate(false)
-                .read(true)
-                .write(true)
-                .mode(0o600)
-                .open(self.directory.join(format!("{}.lock", repository.id)))?;
-            if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
-                continue;
-            }
-            let d = self.data.lock().unwrap();
-            if d.busy.contains(&repository.id)
-                || read_json::<Repository>(&d.db, "repositories", &target).is_ok()
-            {
-                continue;
-            }
-            let old = std::mem::replace(&mut repository.id, target.clone());
-            let tx = Transaction::new_unchecked(&d.db, TransactionBehavior::Immediate)?;
-            tx.execute("DELETE FROM repositories WHERE id=?1", [&old])?;
-            put(&tx, "repositories", &target, &repository)?;
-            for table in ["trees", "owned", LEDGER, "archived"] {
-                tx.execute(
-                    &format!("UPDATE {table} SET data=json_set(data,'$.repository_id',?2) WHERE json_extract(data,'$.repository_id')=?1"),
-                    params![old, target],
-                )?;
-            }
-            tx.execute(
-                "UPDATE repository_aliases SET id=?2 WHERE id=?1",
-                params![old, target],
-            )?;
-            tx.execute(
-                "INSERT INTO repository_aliases(alias,id) VALUES(?1,?2) ON CONFLICT(alias) DO UPDATE SET id=excluded.id",
-                params![old, target],
-            )?;
-            tx.commit()?;
-            moved += 1;
-        }
-        Ok(moved)
     }
     pub fn active_operations(&self) -> usize {
         self.data.lock().unwrap().busy.len()
@@ -2033,20 +1868,6 @@ impl Worktrees {
     }
     pub fn command(self: &Arc<Self>, request: &Value) -> Result<Value> {
         let op = field(request, "op")?;
-        // An ID from before the catalog and the lifecycle shared one names
-        // its project now. An effect keeps its request as sent, so a retry
-        // matches the receipt fingerprinted before the move; `start`
-        // resolves the ID itself.
-        let resolved;
-        let request = match request.get("repository_id").and_then(Value::as_str) {
-            Some(id) if !Effect::OPS.contains(&op) => {
-                let mut copy = request.clone();
-                copy["repository_id"] = json!(self.resolve_repository(id)?);
-                resolved = copy;
-                &resolved
-            }
-            _ => request,
-        };
         if op == "worktree.rebind.list" {
             let WorktreeRebindListRequest {} = decode(request)?;
             return self.rebind_catalog();
@@ -2167,10 +1988,7 @@ impl Worktrees {
             }
         }
         let id = project
-            .filter(|id| {
-                read_json::<Repository>(&d.db, "repositories", id).is_err()
-                    && resolve(&d.db, id).is_ok_and(|resolved| resolved == *id)
-            })
+            .filter(|id| read_json::<Repository>(&d.db, "repositories", id).is_err())
             .unwrap_or_else(|| new_id("repository"));
         let r = Repository {
             id,
@@ -2304,7 +2122,7 @@ impl Worktrees {
     /// reused with different parameters.
     fn start(self: &Arc<Self>, op: &str, request: &Value) -> Result<Value> {
         let effect = Effect::decode(op, request)?;
-        let id = &self.resolve_repository(valid("repository_id", effect.repository_id())?)?;
+        let id = valid("repository_id", effect.repository_id())?;
         let operation_id = valid("operation_id", effect.operation_id())?;
         ensure!(operation_id.len() <= 256, "Request ID too long");
         let payload = effect.payload()?;
@@ -3667,50 +3485,47 @@ impl Drop for ReviewGuard {
 mod safe_lifecycle_error_tests {
     use super::*;
     #[test]
-    fn legacy_running_receipt_reopens_as_uncertain_without_replaying_request() {
+    fn a_running_job_reopens_as_uncertain_without_replaying_request() {
         let directory = std::env::temp_dir().join(new_id("ade-lifecycle-recovery-test"));
         std::fs::create_dir(&directory).unwrap();
         let hub = Worktrees::open(&directory).unwrap();
-        let legacy = json!({"id":"old-operation","repository_id":"repo",
-            "request":{"op":"worktree.remove","path":"/do-not-run","request_id":"old-operation"},
+        let request =
+            json!({"op":"worktree.remove","path":"/do-not-run","operation_id":"running-operation"});
+        let job = json!({"id":"running-operation","repository_id":"repo","binding_generation":0,
+            "request":request,"worktree_path":null,
             "status":"running","result":null,"error":null,"started_at":1,"finished_at":null});
-        hub.data
-            .lock()
-            .unwrap()
-            .db
-            .execute(
-                "INSERT INTO jobs(id,data) VALUES(?1,?2)",
-                params!["old-operation", legacy.to_string()],
+        {
+            let d = hub.data.lock().unwrap();
+            receipts::begin(
+                &d.db,
+                "running-operation",
+                "worktree.remove",
+                &request,
+                None,
+                1,
             )
             .unwrap();
+            d.db.execute(
+                "INSERT INTO jobs(id,data) VALUES(?1,?2)",
+                params!["running-operation", job.to_string()],
+            )
+            .unwrap();
+        }
         drop(hub);
         let hub = Worktrees::open(&directory).unwrap();
         let receipt: Operation =
-            read_json(&hub.data.lock().unwrap().db, LEDGER, "old-operation").unwrap();
+            read_json(&hub.data.lock().unwrap().db, LEDGER, "running-operation").unwrap();
         assert_eq!(receipt.status, JobStatus::Interrupted);
         assert_eq!(receipt.code.as_deref(), Some("lifecycle_outcome_unknown"));
         assert_eq!(
             receipt.recovery.as_deref(),
             Some("inspect_repository_before_retry")
         );
-        assert_eq!(receipt.request, legacy["request"]);
+        assert_eq!(receipt.request, request);
         assert!(receipt.result.is_null());
         assert_eq!(hub.active_operations(), 0);
         drop(hub);
         std::fs::remove_dir_all(directory).unwrap();
-    }
-    #[test]
-    fn legacy_completed_receipt_defaults_new_fields_without_changing_result() {
-        let legacy = json!({"id":"old","repository_id":"repo","request":{},
-            "status":"failed","result":{"exit_code":1},"error":"legacy failure",
-            "started_at":1,"finished_at":2});
-        let receipt: Operation = serde_json::from_value(legacy.clone()).unwrap();
-        assert!(receipt.code.is_none());
-        assert!(receipt.recovery.is_none());
-        let encoded = serde_json::to_value(receipt).unwrap();
-        assert_eq!(encoded["result"], legacy["result"]);
-        assert_eq!(encoded["error"], legacy["error"]);
-        assert!(encoded.get("code").is_none());
     }
     #[test]
     fn command_failure_never_discloses_hook_or_remote_output() {

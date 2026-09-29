@@ -6,7 +6,6 @@
 import { createHash } from 'node:crypto'
 import { access, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { DatabaseSync } from 'node:sqlite'
 import { expect, startConversation, test, waitForIdle, type ScratchProfile } from '../fixtures'
 import { control, nextProfileDataDirectory, spawnControl } from '../fixtures/control'
 
@@ -149,49 +148,6 @@ test('draft save and reclaim serialize so both cannot succeed for one upload', a
       text: '',
     })
   }
-})
-
-test('a real daemon upgrades v10 attachments to live generation-fenced records', async ({ ade, profile }) => {
-  const { conversationId: conversation_id } = await startConversation(profile, 'codex')
-  const { put, saveDraft } = attachments(profile, conversation_id)
-  const attachment = await put('legacy-upload')
-  await saveDraft('legacy-window', 1, 'Keep legacy payload', [attachment])
-  const bundle = join(ade.root, 'legacy-backup')
-  const created = await control(ade, ['backup', 'create', '--data-dir', profile.dataDirectory, '--out', bundle])
-  expect(created.code, created.stderr).toBe(0)
-  const data = await nextProfileDataDirectory(ade)
-  const restored = await control(ade, ['backup', 'restore', '--backup', bundle, '--data-dir', data])
-  expect(restored.code, restored.stderr).toBe(0)
-
-  // Model a schema-10 store: attachments without generation, state or creation time.
-  const database = join(data, 'sessions.sqlite')
-  const db = new DatabaseSync(database)
-  const current = (db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version
-  db.exec(`ALTER TABLE attachments DROP COLUMN created_at;
-    ALTER TABLE attachments DROP COLUMN state;
-    ALTER TABLE attachments DROP COLUMN generation;
-    DROP TABLE restore_fence;
-    DELETE FROM schema_migrations WHERE version>=11;
-    PRAGMA user_version=10;`)
-  db.close()
-
-  const upgraded = await ade.profile()
-  expect(upgraded.dataDirectory).toBe(data)
-  expect((await upgraded.call('draft.get', { conversation_id, window_id: 'legacy-window' })).draft).toMatchObject({
-    attachments: [attachment],
-  })
-  const preview = (await upgraded.call('attachment.reclaim.preview', { conversation_id, attachment_id: attachment.id }))
-    .preview
-  expect(preview).toMatchObject({
-    state: 'live',
-    payload_bytes: attachment.size,
-    protected_by: ['draft'],
-    reclaimable: false,
-  })
-  expect(preview.generation).toMatch(/^[0-9a-f]{32}$/)
-  const check = new DatabaseSync(database, { readOnly: true })
-  expect((check.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(current)
-  check.close()
 })
 
 test('a backend snapshot remains valid while attachment reclaim runs', async ({ ade, profile }) => {

@@ -1,6 +1,8 @@
 // Proof spec for the protocol E2E fixtures: a real daemon and runtime, a
 // scratch Git repository, the SDK, the CLI, the provider mocks and the fault
 // helpers, with nothing left running afterwards.
+import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import {
   expect,
   fixtureAnswers,
@@ -135,4 +137,16 @@ test('the SDK rejects a reply-less request that fails its contract before sendin
     code: 'invalid_request',
     delivery: 'not_sent',
   })
+})
+
+test('a profile database at another schema version is refused with the delete instruction', async ({ profile }) => {
+  await profile.stop()
+  const database = new DatabaseSync(join(profile.dataDirectory, 'sessions.sqlite'))
+  const current = (database.prepare('PRAGMA user_version').get() as { user_version: number }).user_version
+  database.exec(`PRAGMA user_version=${current - 1}`)
+  database.close()
+  // Nothing upgrades an older database before launch (D19); the daemon stops.
+  await expect(profile.restartDaemon()).rejects.toThrow(
+    new RegExp(`has schema version ${current - 1}; this build reads only schema ${current}.*Delete the database`),
+  )
 })

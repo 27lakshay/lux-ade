@@ -1,17 +1,12 @@
 // F026 managed accounts: each account gets its own durable home inside its
 // profile, conversations keep the account they were created with across a
-// restart, a redirected home is refused, an unverified account never falls
-// back to ambient credentials, and an older store upgrades without losing
-// ambient conversations. Ported from the legacy e2e/specs/account-registry
+// restart, a redirected home is refused, and an unverified account never falls
+// back to ambient credentials. Ported from the legacy e2e/specs/account-registry
 // and account-launch specs; the profile registry is ade-control's.
-import { execFile } from 'node:child_process'
 import { access, chmod, rename, stat, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { promisify } from 'node:util'
 import { test as scratchTest } from '../fixtures'
 import { expect, test, type ManagedProfile } from '../fixtures/managed-profiles'
-
-const run = promisify(execFile)
 
 async function started(profile: ManagedProfile): Promise<string> {
   const status = await profile.cli('status')
@@ -99,39 +94,6 @@ test('accounts have durable, distinct profile homes and conversations keep their
   await rename(first.native_home, `${first.native_home}-saved`)
   await symlink(second.native_home, first.native_home)
   await expect(profile.call('account.list', {})).rejects.toThrow(/redirected/)
-})
-
-test('a legacy profile database upgrades without losing ambient conversations', async ({ host }) => {
-  const profile = await host.create('Existing')
-  const workspace_id = await started(profile)
-  const existing = (
-    await profile.call('conversation.create', { workspace_id, provider: 'codex', title: 'Before accounts' })
-  ).conversation
-  await profile.stop()
-
-  // Model a v8 profile after the real process has produced its other durable state.
-  await run('python3', [
-    '-c',
-    `import sqlite3,sys
-with sqlite3.connect(sys.argv[1]) as db:
- db.execute('DROP TABLE accounts')
- db.execute('ALTER TABLE attachments DROP COLUMN created_at')
- db.execute('ALTER TABLE attachments DROP COLUMN state')
- db.execute('ALTER TABLE attachments DROP COLUMN generation')
- db.execute('DROP TABLE restore_fence')
- db.execute('DELETE FROM schema_migrations WHERE version>=9')
- db.execute('PRAGMA user_version=8')`,
-    join(profile.dataDirectory, 'sessions.sqlite'),
-  ])
-
-  await started(profile)
-  expect((await profile.call('conversation.get', { conversation_id: existing.id })).conversation).toMatchObject({
-    id: existing.id,
-    account_id: null,
-    account_context: 'legacy_ambient',
-  })
-  const account = (await profile.call('account.create', { provider: 'codex', name: 'New' })).account
-  expect(account.state).toBe('unverified')
 })
 
 scratchTest('an unverified managed account cannot fall back to ambient Claude credentials', async ({ ade }) => {

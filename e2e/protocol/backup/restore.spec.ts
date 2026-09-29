@@ -1,9 +1,9 @@
 // F050, R014, F059 and D15: a live profile is backed up while it keeps
 // working, the bundle is inspected, and a restore into a fresh profile is
 // read back through the public protocol.
-import { access, readdir, realpath, rm, writeFile } from 'node:fs/promises'
+import { access, readdir, realpath, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { expect, send, startConversation, test, turnReply, waitForMessage } from '../fixtures'
+import { expect, test, turnReply } from '../fixtures'
 import { control, spawnControl } from '../fixtures/control'
 import {
   copyBundle,
@@ -16,7 +16,6 @@ import {
   seed,
   skillName,
   stages,
-  type Manifest,
 } from './helpers'
 
 test('backs up a live profile during writes and restores conversations, attachments, plugins, skills and accounts', async ({
@@ -157,105 +156,30 @@ test('backs up a live profile during writes and restores conversations, attachme
   expect(source.record).toMatchObject({ value: { text: 'written while the backup ran' } })
 })
 
-test('restores a bundle one schema behind, migrates it, and refuses two behind without creating the target', async ({
-  ade,
-  profile,
-}) => {
-  test.setTimeout(90_000)
-  const { conversationId } = await startConversation(profile, 'codex')
-  await send(profile, conversationId, 'hello')
-  await waitForMessage(profile, conversationId, turnReply.codex)
+test('refuses a bundle of an older schema or format without creating the target', async ({ ade, profile }) => {
   const { path: bundle, result } = await createBackup(ade, profile)
   expect(result.code, result.stderr).toBe(0)
-  const current = (await readManifest(bundle)).entries.find((entry) => entry.path === 'sessions.sqlite')!.schema!
+  const manifest = await readManifest(bundle)
+  const current = manifest.entries.find((entry) => entry.path === 'sessions.sqlite')!.schema!
 
-  // Schema 17 added only the receipts table; take it back out, as a schema-16 build wrote it.
+  // Nothing restores an older bundle before launch (D19).
   const behind = await copyBundle(bundle, join(ade.root, 'behind'))
-  await rewriteDatabase(behind, (db) =>
-    db.exec(`DROP TABLE operations; DELETE FROM schema_migrations WHERE version=${current};
-    PRAGMA user_version=${current - 1};`),
-  )
-  const inspected = await control(ade, ['backup', 'inspect', '--backup', behind])
-  expect(inspected.code, inspected.stderr).toBe(0)
-  expect(
-    (inspected.json!.manifest as Manifest).entries.find((entry) => entry.path === 'sessions.sqlite'),
-  ).toMatchObject({ schema: current - 1 })
-
-  // Two behind is outside the D15 range; restore refuses before it creates anything.
-  const older = await copyBundle(behind, join(ade.root, 'older'))
-  await rewriteDatabase(older, (db) =>
-    db.exec(`DROP TABLE terminal_creations;
-    DELETE FROM schema_migrations WHERE version=${current - 1}; PRAGMA user_version=${current - 2};`),
-  )
-  const refusedTarget = join(ade.root, 'older-target')
-  const refused = await control(ade, ['backup', 'restore', '--backup', older, '--data-dir', refusedTarget])
-  expect(refused.code).not.toBe(0)
-  expect(String(refused.json?.message)).toContain(`Unsupported sessions.sqlite schema version ${current - 2}`)
-  await expect(access(refusedTarget)).rejects.toThrow()
-  expect(await stages(ade.root)).toEqual([])
-
-  const restored = await restoreIntoNewProfile(ade, behind)
-  const snapshot = await restored.call('conversation.get', { conversation_id: conversationId })
-  expect(JSON.stringify(snapshot.messages)).toContain(turnReply.codex)
-  // An effect command needs the receipts table schema 17 adds, so it proves the daemon migrated.
-  // A restored workspace is fenced until it is rebound to a folder of the new profile.
-  const [fenced] = (await restored.call('workspace.rebind.list', {})).workspaces
-  expect(fenced).toMatchObject({ needs_rebind: true })
-  const { workspace } = await restored.call('workspace.rebind', {
-    workspace_id: fenced.id,
-    path: restored.defaultWorkspaceRoot,
-  })
-  expect(workspace.needs_rebind).toBe(false)
-  const created = await restored.call('conversation.create', { workspace_id: workspace.id, provider: 'codex' })
-  expect(created.conversation.id).toMatch(/^conversation_/)
-  const again = await createBackup(ade, restored, 'migrated')
-  expect(again.result.code, again.result.stderr).toBe(0)
-  expect((await readManifest(again.path)).entries.find((entry) => entry.path === 'sessions.sqlite')).toMatchObject({
-    schema: current,
-  })
-})
-
-test('restores a format-2 bundle and rebuilds the history index it still carries', async ({ ade, profile }) => {
-  const { conversationId } = await startConversation(profile, 'codex')
-  await send(profile, conversationId, 'hello')
-  await waitForMessage(profile, conversationId, turnReply.codex)
-  const { path: bundle, result } = await createBackup(ade, profile)
-  expect(result.code, result.stderr).toBe(0)
-
-  // Format 2 held only the core, review and lifecycle stores, and no coverage list.
-  const legacy = await copyBundle(bundle, join(ade.root, 'format-2'))
-  const manifest = await readManifest(legacy)
-  const kept = new Set([
-    'sessions.sqlite',
-    'sessions.review.sqlite3',
-    'sessions.worktrees/lifecycle.sqlite3',
-    'sessions.worktrees/empty.toml',
-  ])
-  for (const entry of manifest.entries.filter((candidate) => !kept.has(candidate.path))) {
-    await rm(join(legacy, entry.path), { recursive: true, force: true })
-  }
-  await rm(join(legacy, 'sessions.plugins'), { recursive: true, force: true })
+  await rewriteDatabase(behind, (db) => db.exec(`PRAGMA user_version=${current - 1};`))
+  const format = await copyBundle(bundle, join(ade.root, 'format'))
   await writeFile(
-    join(legacy, 'manifest.json'),
-    JSON.stringify({
-      format_version: 2,
-      scope: manifest.scope,
-      entries: manifest.entries.filter((entry) => kept.has(entry.path)),
-      excluded: [
-        'browser sessions, tabs, cookies and pending sends',
-        'provider-native homes and credentials',
-        'external projects, repositories and worktrees',
-        'service routes, logs, owner locks, sockets and processes',
-      ],
-    }),
+    join(format, 'manifest.json'),
+    JSON.stringify({ ...manifest, format_version: manifest.format_version - 1 }),
   )
-  const inspected = await control(ade, ['backup', 'inspect', '--backup', legacy])
-  expect(inspected.code, inspected.stderr).toBe(0)
-
-  const restored = await restoreIntoNewProfile(ade, legacy)
-  await expect
-    .poll(async () => (await restored.call('history.index.status', {})).index)
-    .toMatchObject({ caught_up: true, rebuilding: false })
-  const found = await restored.call('history.search', { query: 'Hello' })
-  expect(found.results.map((match) => match.provenance.conversation_id)).toContain(conversationId)
+  const cases: Array<[string, string]> = [
+    [behind, `Unsupported sessions.sqlite schema version ${current - 1}; this build restores only schema ${current}`],
+    [format, `this build restores only format ${manifest.format_version} bundles`],
+  ]
+  for (const [copy, message] of cases) {
+    const target = `${copy}-target`
+    const refused = await control(ade, ['backup', 'restore', '--backup', copy, '--data-dir', target])
+    expect(refused.code).not.toBe(0)
+    expect(String(refused.json?.message)).toContain(message)
+    await expect(access(target)).rejects.toThrow()
+  }
+  expect(await stages(ade.root)).toEqual([])
 })

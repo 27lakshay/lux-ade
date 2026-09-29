@@ -10,22 +10,9 @@ use ade_core::model::WorkspaceKind;
 pub(super) const FACTS_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
 
 impl Sessions {
-    /// Gives the lifecycle the catalog's project IDs: repositories it
-    /// registered under its own IDs move onto them now (the old ID stays an
-    /// alias), and new registrations take them from the start.
+    /// Gives the lifecycle the catalog's project IDs, so a repository it
+    /// registers takes its project's ID.
     pub(super) fn share_project_ids(self: &Arc<Self>) {
-        let moved = {
-            let d = self.data.lock().unwrap();
-            self.worktrees
-                .unify_repository_ids(|common| d.store.project_for_common(common))
-        };
-        match moved {
-            Ok(0) => {}
-            Ok(moved) => {
-                tracing::info!("Moved {moved} worktree lifecycle repositories onto project IDs")
-            }
-            Err(error) => tracing::warn!("Worktree lifecycle IDs were not unified: {error:#}"),
-        }
         let weak = Arc::downgrade(self);
         self.worktrees.set_project_ids(Arc::new(move |common| {
             let hub = weak.upgrade().context("The profile daemon is stopping")?;
@@ -84,10 +71,9 @@ impl Sessions {
         Ok(workspace)
     }
 
-    /// A project by its ID, or by a lifecycle ID from before the two shared one.
+    /// A project by its ID.
     pub fn project(&self, id: &str) -> Result<crate::store::Project> {
-        let id = self.worktrees.resolve_repository(id)?;
-        self.data.lock().unwrap().store.project(&id)
+        self.data.lock().unwrap().store.project(id)
     }
 
     /// The roots of a repository project's workspaces, those in the catalog first.

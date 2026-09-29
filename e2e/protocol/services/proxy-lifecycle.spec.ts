@@ -2,13 +2,12 @@
 // burst of parallel assets, a foreign process that takes the service port, a
 // WebSocket held open across a daemon handoff, a full runtime stop, a
 // reviewed remap after the service is replaced, a retirement that fails and
-// one that fences an idle connection, route churn past the route limit, and a
-// v9 profile that backfills service identities before assigning URLs. Ported
+// one that fences an idle connection, and route churn past the route limit. Ported
 // from the legacy e2e/specs/service-proxy spec; proxy.spec.ts covers the
 // individual steps.
 import { execFile, spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, rename, rm } from 'node:fs/promises'
 import { createConnection, createServer } from 'node:net'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -395,86 +394,3 @@ async function text(url: string): Promise<string | null> {
     return null
   }
 }
-
-async function userVersion(database: string): Promise<string> {
-  const { stdout } = await run('python3', [
-    '-c',
-    'import sqlite3,sys; print(sqlite3.connect(sys.argv[1]).execute("PRAGMA user_version").fetchone()[0])',
-    database,
-  ])
-  return stdout.trim()
-}
-
-test('a v9 profile backfills distinct durable service identities before assigning stable URLs', async ({
-  ade,
-  profile,
-}) => {
-  const workspace_id = (await profile.call('workspace.open', { path: ade.root })).workspace.id
-  const holding = (env: Record<string, string> = {}) => ({
-    program: process.execPath,
-    args: ['-e', 'setInterval(()=>{},1000)'],
-    env,
-    cwd: '.',
-    ports: ['PORT'],
-  })
-  for (const name of ['first', 'second']) {
-    await profile.call('service.configure', { workspace_id, name, revision: 0, config: holding() })
-  }
-  const database = join(profile.dataDirectory, 'sessions.sqlite')
-  // The stop waits for the runtime to exit, so it has released its saved proxy ports.
-  await profile.stop()
-  const current = await userVersion(database)
-  // Model a v9 profile: services without identities and the later schema removed.
-  await run('python3', [
-    '-c',
-    `import json,sqlite3,sys
-with sqlite3.connect(sys.argv[1]) as db:
- rows=db.execute('SELECT workspace_id,name,data FROM services').fetchall()
- for workspace,name,data in rows:
-  service=json.loads(data)
-  service.pop('identity',None)
-  db.execute('UPDATE services SET data=? WHERE workspace_id=? AND name=?',(json.dumps(service),workspace,name))
- db.execute('ALTER TABLE attachments DROP COLUMN created_at')
- db.execute('ALTER TABLE attachments DROP COLUMN state')
- db.execute('ALTER TABLE attachments DROP COLUMN generation')
- db.execute('DROP TABLE restore_fence')
- db.execute('DELETE FROM schema_migrations WHERE version>=10')
- db.execute('PRAGMA user_version=9')`,
-    database,
-  ])
-
-  await profile.restartDaemon()
-  const migrated = (await profile.call('service.list', { workspace_id })).services
-  expect(migrated).toHaveLength(2)
-  expect(migrated.every((service) => service.identity.startsWith('service_'))).toBe(true)
-  expect(new Set(migrated.map((service) => service.identity)).size).toBe(2)
-  const firstIdentity = migrated.find((service) => service.name === 'first')!.identity
-  const route = await profile.call('service.proxy.ensure', { workspace_id, name: 'first', port_variable: 'PORT' })
-  expect(route.service_identity).toBe(firstIdentity)
-  const edited = (
-    await profile.call('service.configure', {
-      workspace_id,
-      name: 'first',
-      revision: 1,
-      config: holding({ FLAG: '1' }),
-    })
-  ).service
-  expect(edited.identity).toBe(firstIdentity)
-
-  // Routes saved before route IDs existed get one on the next start.
-  await profile.stop()
-  const proxyRegistry = join(profile.dataDirectory, 'service-proxies.json')
-  const legacyRoutes = JSON.parse(await readFile(proxyRegistry, 'utf8')) as Record<string, unknown>[]
-  for (const legacyRoute of legacyRoutes) delete legacyRoute.route_id
-  await writeFile(proxyRegistry, JSON.stringify(legacyRoutes))
-  await profile.restartDaemon()
-  const afterRestart = (await profile.call('service.list', { workspace_id })).services
-  expect(afterRestart.find((service) => service.name === 'first')?.identity).toBe(firstIdentity)
-  const restored = await profile.call('service.proxy.ensure', { workspace_id, name: 'first', port_variable: 'PORT' })
-  expect(restored.url).toBe(route.url)
-  expect(restored.route_id).toMatch(/^route_/)
-  const upgradedRoutes = JSON.parse(await readFile(proxyRegistry, 'utf8')) as { route_id: string }[]
-  expect(upgradedRoutes[0]?.route_id).toBe(restored.route_id)
-  // The store is migrated back to the schema a new profile has.
-  expect(await userVersion(database)).toBe(current)
-})

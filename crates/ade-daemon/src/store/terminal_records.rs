@@ -228,83 +228,6 @@ impl Feed {
     }
 }
 
-pub(crate) fn ensure_table(tx: &Connection) -> Result<()> {
-    tx.execute_batch(
-        "CREATE TABLE IF NOT EXISTS terminals(id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id), data TEXT NOT NULL); CREATE INDEX IF NOT EXISTS terminals_by_workspace ON terminals(workspace_id);",
-    )?;
-    Ok(())
-}
-
-/// The schema change: the `terminals` table, filled from every workspace's
-/// `terminal_id` and `extra_terminals`. The coordinator assigns its schema
-/// version at merge.
-pub(crate) fn migrate_terminal_records(tx: &Connection) -> Result<()> {
-    ensure_table(tx)?;
-    backfill(tx)
-}
-
-/// Adds a record for every terminal a workspace lists without one, keeping
-/// the workspace's order. Each terminal's kind is read from what owns it: a
-/// script run's ID, a service that names it, or a Conversation handed to it.
-pub(crate) fn backfill(tx: &Connection) -> Result<()> {
-    let workspaces: Vec<WorkspaceRecord> = all(tx, "SELECT data FROM workspaces ORDER BY rowid")?;
-    for workspace in workspaces {
-        let ids = std::iter::once(&workspace.terminal_id).chain(&workspace.extra_terminals);
-        for id in ids {
-            if load(tx, id)?.is_some() {
-                continue;
-            }
-            let primary = id == &workspace.terminal_id;
-            let stored = if primary {
-                Stored::primary(id, &workspace.id)
-            } else {
-                classify(tx, &workspace.id, id)?
-            };
-            write(tx, &stored)?;
-        }
-    }
-    Ok(())
-}
-
-fn classify(tx: &Connection, workspace_id: &str, id: &str) -> Result<Stored> {
-    if let Ok(name) = ade_core::scripts::run_name(id) {
-        return Ok(Stored {
-            script_run_id: Some(id.into()),
-            label: Some(name.into()),
-            ..Stored::new(id, workspace_id, TerminalKind::Script)
-        });
-    }
-    let service: Option<String> = tx
-        .query_row(
-            "SELECT data FROM services WHERE workspace_id=?1 AND json_extract(data,'$.terminal_id')=?2",
-            params![workspace_id, id],
-            |row| row.get(0),
-        )
-        .optional()?;
-    if let Some(service) = service {
-        let service: ade_core::services::Service = decode(service)?;
-        return Ok(Stored {
-            service_id: Some(service.identity),
-            label: Some(service.name),
-            ..Stored::new(id, workspace_id, TerminalKind::Service)
-        });
-    }
-    let conversation: Option<String> = tx
-        .query_row(
-            "SELECT id FROM conversations WHERE json_extract(data,'$.terminal_owner.terminal_id')=?1",
-            [id],
-            |row| row.get(0),
-        )
-        .optional()?;
-    Ok(match conversation {
-        Some(conversation) => Stored {
-            conversation_id: Some(conversation),
-            ..Stored::new(id, workspace_id, TerminalKind::Conversation)
-        },
-        None => Stored::new(id, workspace_id, TerminalKind::Shell),
-    })
-}
-
 pub(crate) fn load(db: &Connection, id: &str) -> Result<Option<Stored>> {
     db.query_row("SELECT data FROM terminals WHERE id=?1", [id], |row| {
         row.get::<_, String>(0)
@@ -617,19 +540,6 @@ mod tests {
         assert!(store.terminal(&workspace.terminal_id).unwrap().is_none());
         assert!(store.terminal(&replaced).unwrap().unwrap().primary);
         store.retire_terminal(&workspace.id, &named).unwrap();
-        assert_eq!(listed(&store).extra_terminals, vec![plain.clone()]);
-
-        // A terminal a workspace lists without a record gains one on open.
-        store
-            .connection
-            .execute("DELETE FROM terminals WHERE id=?1", [&plain])
-            .unwrap();
-        drop(store);
-        let store = scratch.open();
-        assert_eq!(
-            store.terminal(&plain).unwrap().unwrap().kind,
-            TerminalKind::Shell
-        );
         assert_eq!(listed(&store).extra_terminals, vec![plain]);
     }
 

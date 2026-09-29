@@ -61,35 +61,25 @@ fn hash(path: &Path) -> Result<Value> {
         .collect::<String>();
     Ok(json!({"size":size,"sha256":digest}))
 }
-/// The oldest `sessions.sqlite` schema that carries the execution fence restore
-/// relies on (`restore_fence`, `send_intents.restore_hold`).
-const FENCE_SCHEMA: i64 = 12;
-
-/// Decides whether a database schema version is readable. A versioned database may
-/// be one schema behind; the daemon migrates it when it opens. How much further
-/// back restore reaches is decision D15. A profile database from before the
-/// execution fence gets its own named rejection.
+/// Decides whether a database schema version is readable: only the schema
+/// this build uses. Nothing restores an older schema until ADE launches
+/// (decision D19).
 fn supported_schema(name: &str, version: i64, expected: i64) -> Result<()> {
     ensure!(
-        name != "sessions.sqlite" || version >= FENCE_SCHEMA,
-        "Restore requires a schema-12 backup with an execution fence; {name} has schema version {version}"
-    );
-    ensure!(
-        version == expected || (expected > 0 && version == expected - 1),
-        "Unsupported {name} schema version {version}"
+        version == expected,
+        "Unsupported {name} schema version {version}; this build restores only schema {expected}"
     );
     Ok(())
 }
 /// Decides whether a restored profile database may bind a fresh runtime home.
-/// It needs both restore fence marks and a schema restore accepts: the
-/// current one, or one behind, which the daemon migrates when it opens.
+/// It needs both restore fence marks and the current schema.
 pub(super) fn bind_verdict(version: i64, fence: (i64, i64)) -> Result<()> {
     let current = coverage::store("sessions.sqlite")
         .context("Unknown database")?
         .schema;
     ensure!(
-        fence == (1, 1) && supported_schema("sessions.sqlite", version, current).is_ok(),
-        "Only a fenced restore of a supported schema can bind a fresh runtime home"
+        fence == (1, 1) && version == current,
+        "Only a fenced restore of the current schema can bind a fresh runtime home"
     );
     Ok(())
 }
@@ -301,7 +291,6 @@ fn projection_excluded(path: &Path) -> Result<()> {
 }
 /// Checks one attachment row: its metadata names it, a live payload is exactly
 /// the declared size, a discarded payload is empty, and it has a generation.
-/// Every supported `sessions.sqlite` schema has the schema-11 columns.
 fn attachment_verdict(
     id: &str,
     metadata: &str,
@@ -812,9 +801,9 @@ fn directory_entry(files: &[FileRecord]) -> Value {
         "files":files.iter().map(FileRecord::to_json).collect::<Vec<_>>()})
 }
 /// Validates a bundle: [`coverage::check_manifest`] rules on the manifest,
-/// then every entry is checked against the files on disk. A format-3 or later
-/// bundle must also hold no history index and a registry whose plugins all have
-/// their artifacts.
+/// then every entry is checked against the files on disk. The bundle must
+/// also hold no history index, no secret service value, and a registry whose
+/// plugins all have their artifacts and name no credential ADE made.
 fn validate(source: &Path) -> Result<(Value, Plan)> {
     directory(source)?;
     let marker = source.join("manifest.json");
@@ -844,17 +833,11 @@ fn validate(source: &Path) -> Result<(Value, Plan)> {
             );
         }
     }
-    if plan.format >= coverage::PROJECTION_EXCLUDED_SINCE {
-        projection_excluded(&source.join("sessions.sqlite"))?;
-    }
-    if plan.format >= coverage::SECRETS_WITHHELD_SINCE {
-        secrets_withheld(&source.join("sessions.sqlite"))?;
-    }
+    projection_excluded(&source.join("sessions.sqlite"))?;
+    secrets_withheld(&source.join("sessions.sqlite"))?;
     if plan.has(PLUGINS_DB) {
         plugin_artifacts(&source.join(PLUGINS_DB), plan.artifact_files())?;
-        if plan.format >= coverage::PLUGIN_CREDENTIALS_WITHHELD_SINCE {
-            plugin_credentials_withheld(&source.join(PLUGINS_DB))?;
-        }
+        plugin_credentials_withheld(&source.join(PLUGINS_DB))?;
     }
     Ok((value, plan))
 }
@@ -938,9 +921,6 @@ fn release_services(db: &Connection) -> Result<()> {
 }
 fn fence(data: &Path, final_data: &Path, plan: &Plan) -> Result<()> {
     let core = data.join("sessions.sqlite");
-    // A format-2 bundle still holds the history index; drop it here too, so
-    // every restored profile rebuilds the index from its own messages.
-    exclude_projection(&core)?;
     let mut db = Connection::open(&core)?;
     db.pragma_update(None, "journal_mode", "DELETE")?;
     let tx = db.transaction()?;
@@ -1531,21 +1511,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn bind_accepts_every_schema_restore_accepts_and_needs_the_fence() {
-        // A bundle from a one-behind profile restores at that schema, because
-        // fence() does not migrate it; bind must then accept it too.
+    fn bind_needs_the_current_schema_and_the_fence() {
         let current = coverage::store("sessions.sqlite").unwrap().schema;
-        for version in [current, current - 1] {
-            assert!(supported_schema("sessions.sqlite", version, current).is_ok());
-            assert!(bind_verdict(version, (1, 1)).is_ok(), "{version}");
-        }
+        assert!(bind_verdict(current, (1, 1)).is_ok());
         for (version, fence) in [
-            (current - 2, (1, 1)),
+            (current - 1, (1, 1)),
             (current + 1, (1, 1)),
-            (11, (1, 1)),
             (current, (0, 1)),
             (current, (1, 0)),
-            (current - 1, (0, 0)),
+            (current, (0, 0)),
         ] {
             let error = bind_verdict(version, fence).unwrap_err().to_string();
             assert!(
@@ -1556,28 +1530,21 @@ mod tests {
     }
 
     #[test]
-    fn schema_range_is_current_and_one_behind_with_a_named_pre_fence_rejection() {
-        assert!(supported_schema("sessions.sqlite", 17, 17).is_ok());
-        assert!(supported_schema("sessions.sqlite", 16, 17).is_ok());
-        let old = supported_schema("sessions.sqlite", 11, 17).unwrap_err();
-        assert!(
-            old.to_string()
-                .starts_with("Restore requires a schema-12 backup")
-        );
-        let between = supported_schema("sessions.sqlite", 15, 17).unwrap_err();
-        assert_eq!(
-            between.to_string(),
-            "Unsupported sessions.sqlite schema version 15"
-        );
-        let future = supported_schema("sessions.sqlite", 99, 17).unwrap_err();
-        assert_eq!(
-            future.to_string(),
-            "Unsupported sessions.sqlite schema version 99"
-        );
+    fn restore_reads_only_the_current_schema() {
+        assert!(supported_schema("sessions.sqlite", 21, 21).is_ok());
+        for version in [20, 11, 99] {
+            let error = supported_schema("sessions.sqlite", version, 21).unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                format!(
+                    "Unsupported sessions.sqlite schema version {version}; this build restores only schema 21"
+                )
+            );
+        }
         assert!(supported_schema("sessions.review.sqlite3", 0, 0).is_ok());
         assert!(supported_schema("sessions.review.sqlite3", 1, 0).is_err());
-        assert!(supported_schema("sessions.worktrees/lifecycle.sqlite3", 3, 4).is_ok());
-        assert!(supported_schema("sessions.worktrees/lifecycle.sqlite3", 2, 4).is_err());
+        assert!(supported_schema("sessions.worktrees/lifecycle.sqlite3", 5, 5).is_ok());
+        assert!(supported_schema("sessions.worktrees/lifecycle.sqlite3", 4, 5).is_err());
     }
 
     #[test]

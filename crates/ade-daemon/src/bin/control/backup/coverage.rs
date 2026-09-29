@@ -9,23 +9,13 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 
-/// The format this build writes. Format 3 adds directory entries and the
-/// plugin stores, and leaves the history search index out. Format 4 adds the
-/// browser library. Format 5 withholds secret service environment values.
-/// Format 6 drops plugin credential references to items ADE made. Format 7
-/// adds the two receipt stores kept outside the profile database: the
-/// effect-command envelope and the browser operation journal.
+/// The format this build writes, and the only one restore reads: nothing
+/// restores an older bundle until ADE launches (decision D19). Format 7 holds
+/// the plugin stores, the browser library and the two receipt stores kept
+/// outside the profile database, and leaves out the history search index,
+/// secret service environment values and plugin credential references to
+/// items ADE made.
 pub const FORMAT: i64 = 7;
-/// The oldest format restore still reads. Formats 4 to 7 add no store a
-/// restore needs, so restore keeps reading formats 2 and 3. A bundle without
-/// a receipt store restores with an empty one, as before format 7.
-pub const OLDEST_FORMAT: i64 = 2;
-/// The first format that leaves the history search index out.
-pub const PROJECTION_EXCLUDED_SINCE: i64 = 3;
-/// The first format whose `sessions.sqlite` holds no secret service value.
-pub const SECRETS_WITHHELD_SINCE: i64 = 5;
-/// The first format whose plugin registry names no item ADE made.
-pub const PLUGIN_CREDENTIALS_WITHHELD_SINCE: i64 = 6;
 pub const SCOPE: &str = "backend-snapshot-only";
 /// A non-SQLite manifest file stays small.
 pub const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
@@ -55,10 +45,9 @@ impl Kind {
 pub struct Store {
     pub path: &'static str,
     pub kind: Kind,
-    /// The current schema (`PRAGMA user_version`); 0 for an unversioned store.
+    /// The current schema (`PRAGMA user_version`); 0 for an unversioned
+    /// store. Restore accepts only this schema.
     pub schema: i64,
-    /// The first backup format that holds it.
-    pub since: i64,
 }
 
 pub const PLUGINS_DB: &str = "sessions.plugins.sqlite3";
@@ -80,56 +69,47 @@ pub const STORES: &[Store] = &[
     Store {
         path: "sessions.sqlite",
         kind: Kind::Sqlite,
-        schema: 20,
-        since: 2,
+        schema: ade_daemon::store::SCHEMA_VERSION,
     },
     Store {
         path: "sessions.review.sqlite3",
         kind: Kind::Sqlite,
         schema: 0,
-        since: 2,
     },
     Store {
         path: "sessions.worktrees/lifecycle.sqlite3",
         kind: Kind::Sqlite,
-        schema: 4,
-        since: 2,
+        schema: ade_daemon::worktrees::LIFECYCLE_SCHEMA_VERSION,
     },
     Store {
         path: "sessions.worktrees/empty.toml",
         kind: Kind::Manifest,
         schema: 0,
-        since: 2,
     },
     Store {
         path: PLUGINS_DB,
         kind: Kind::Sqlite,
         schema: 0,
-        since: 3,
     },
     Store {
         path: PLUGIN_ARTIFACTS,
         kind: Kind::Directory,
         schema: 0,
-        since: 3,
     },
     Store {
         path: BROWSER_LIBRARY,
         kind: Kind::Sqlite,
         schema: 0,
-        since: 4,
     },
     Store {
         path: ENVELOPE_DB,
         kind: Kind::Sqlite,
         schema: 0,
-        since: 7,
     },
     Store {
         path: BROWSER_OPERATIONS,
         kind: Kind::Sqlite,
         schema: 0,
-        since: 7,
     },
 ];
 
@@ -137,46 +117,6 @@ pub fn store(path: &str) -> Option<&'static Store> {
     STORES.iter().find(|store| store.path == path)
 }
 
-/// Exclusions a format-2 bundle declares.
-pub const EXCLUDED_V2: &[&str] = &[
-    "browser sessions, tabs, cookies and pending sends",
-    "provider-native homes and credentials",
-    "external projects, repositories and worktrees",
-    "service routes, logs, owner locks, sockets and processes",
-];
-/// Exclusions a format-3 bundle declares.
-pub const EXCLUDED_V3: &[&str] = &[
-    "browser sessions, tabs, cookies and pending sends",
-    "provider-native homes and credentials",
-    "external projects, repositories and worktrees",
-    "service routes, logs, owner locks, sockets and processes",
-    "history search index: a rebuildable projection of sessions.sqlite; the daemon rebuilds it after restore",
-    "host-level HostResources registry and its claims: host-owned, not profile-owned; the restored profile binds to the registry on its host",
-    "plugin install staging and plugin-private files outside the plugin registry",
-];
-/// Exclusions a format-4 bundle declares.
-pub const EXCLUDED_V4: &[&str] = &[
-    "browser sessions, tabs, cookies and pending sends",
-    "provider-native homes and credentials",
-    "external projects, repositories and worktrees",
-    "service routes, logs, owner locks, sockets and processes",
-    "history search index: a rebuildable projection of sessions.sqlite; the daemon rebuilds it after restore",
-    "host-level HostResources registry and its claims: host-owned, not profile-owned; the restored profile binds to the registry on its host",
-    "plugin install staging and plugin-private files outside the plugin registry",
-    "browser import staging: transient copies of import sources",
-];
-/// Exclusions a format-5 bundle declares.
-pub const EXCLUDED_V5: &[&str] = &[
-    "browser sessions, tabs, cookies and pending sends",
-    "provider-native homes and credentials",
-    "external projects, repositories and worktrees",
-    "service routes, logs, owner locks, sockets and processes",
-    "history search index: a rebuildable projection of sessions.sqlite; the daemon rebuilds it after restore",
-    "host-level HostResources registry and its claims: host-owned, not profile-owned; the restored profile binds to the registry on its host",
-    "plugin install staging and plugin-private files outside the plugin registry",
-    "browser import staging: transient copies of import sources",
-    "secret service environment values: each is stored as [redacted]; configure it again before starting the service",
-];
 /// Exclusions this format declares, including what restore rebuilds.
 pub const EXCLUDED: &[&str] = &[
     "browser sessions, tabs, cookies and pending sends",
@@ -191,229 +131,6 @@ pub const EXCLUDED: &[&str] = &[
     "plugin credential references to items ADE made: the bundle drops each; send the credential again after restore",
 ];
 
-/// How a format-3 bundle treats each profile store.
-pub const COVERAGE_V3: &[(&str, &str, &str)] = &[
-    (
-        "sessions.sqlite",
-        "backed_up",
-        "conversations, attachments, activity and notification deliveries, the MCP catalog, and the skill catalog with its bundle blobs",
-    ),
-    ("sessions.review.sqlite3", "backed_up", "review feedback"),
-    (
-        "sessions.worktrees/lifecycle.sqlite3",
-        "backed_up",
-        "worktree lifecycle ledger; restore fences it",
-    ),
-    (
-        "sessions.worktrees/empty.toml",
-        "backed_up",
-        "worktree manifest",
-    ),
-    (
-        PLUGINS_DB,
-        "backed_up",
-        "plugin registry, records and settings",
-    ),
-    (
-        PLUGIN_ARTIFACTS,
-        "backed_up",
-        "installed plugin artifacts, one hash per file",
-    ),
-    (
-        "sessions.sqlite#history_index",
-        "rebuilt",
-        "the history search index is a projection of messages",
-    ),
-    (
-        "host-resources.sqlite3",
-        "excluded",
-        "host-owned registry shared by every profile on the host",
-    ),
-    (
-        "sessions.plugins/staging",
-        "excluded",
-        "transient install scratch",
-    ),
-];
-
-/// How a format-4 bundle treats each profile store.
-pub const COVERAGE_V4: &[(&str, &str, &str)] = &[
-    (
-        "sessions.sqlite",
-        "backed_up",
-        "conversations, attachments, activity and notification deliveries, the MCP catalog, and the skill catalog with its bundle blobs",
-    ),
-    ("sessions.review.sqlite3", "backed_up", "review feedback"),
-    (
-        "sessions.worktrees/lifecycle.sqlite3",
-        "backed_up",
-        "worktree lifecycle ledger; restore fences it",
-    ),
-    (
-        "sessions.worktrees/empty.toml",
-        "backed_up",
-        "worktree manifest",
-    ),
-    (
-        PLUGINS_DB,
-        "backed_up",
-        "plugin registry, records and settings",
-    ),
-    (
-        PLUGIN_ARTIFACTS,
-        "backed_up",
-        "installed plugin artifacts, one hash per file",
-    ),
-    (
-        "sessions.sqlite#history_index",
-        "rebuilt",
-        "the history search index is a projection of messages",
-    ),
-    (
-        "host-resources.sqlite3",
-        "excluded",
-        "host-owned registry shared by every profile on the host",
-    ),
-    (
-        "sessions.plugins/staging",
-        "excluded",
-        "transient install scratch",
-    ),
-    (
-        BROWSER_LIBRARY,
-        "backed_up",
-        "named browser partitions, imported bookmarks and history, and held design captures",
-    ),
-    (
-        "browser-import-staging",
-        "excluded",
-        "transient copies of import sources",
-    ),
-];
-/// How a format-5 bundle treats each profile store.
-pub const COVERAGE_V5: &[(&str, &str, &str)] = &[
-    (
-        "sessions.sqlite",
-        "backed_up",
-        "conversations, attachments, activity and notification deliveries, the MCP catalog, and the skill catalog with its bundle blobs",
-    ),
-    ("sessions.review.sqlite3", "backed_up", "review feedback"),
-    (
-        "sessions.worktrees/lifecycle.sqlite3",
-        "backed_up",
-        "worktree lifecycle ledger; restore fences it",
-    ),
-    (
-        "sessions.worktrees/empty.toml",
-        "backed_up",
-        "worktree manifest",
-    ),
-    (
-        PLUGINS_DB,
-        "backed_up",
-        "plugin registry, records and settings",
-    ),
-    (
-        PLUGIN_ARTIFACTS,
-        "backed_up",
-        "installed plugin artifacts, one hash per file",
-    ),
-    (
-        "sessions.sqlite#history_index",
-        "rebuilt",
-        "the history search index is a projection of messages",
-    ),
-    (
-        "host-resources.sqlite3",
-        "excluded",
-        "host-owned registry shared by every profile on the host",
-    ),
-    (
-        "sessions.plugins/staging",
-        "excluded",
-        "transient install scratch",
-    ),
-    (
-        BROWSER_LIBRARY,
-        "backed_up",
-        "named browser partitions, imported bookmarks and history, and held design captures",
-    ),
-    (
-        "browser-import-staging",
-        "excluded",
-        "transient copies of import sources",
-    ),
-    (
-        "sessions.sqlite#service_secrets",
-        "excluded",
-        "secret service environment values; the bundle stores each as [redacted]",
-    ),
-];
-/// How a format-6 bundle treats each profile store. It declares the same
-/// exclusions as format 7.
-pub const COVERAGE_V6: &[(&str, &str, &str)] = &[
-    (
-        "sessions.sqlite",
-        "backed_up",
-        "conversations, attachments, activity and notification deliveries, the MCP catalog, and the skill catalog with its bundle blobs",
-    ),
-    ("sessions.review.sqlite3", "backed_up", "review feedback"),
-    (
-        "sessions.worktrees/lifecycle.sqlite3",
-        "backed_up",
-        "worktree lifecycle ledger; restore fences it",
-    ),
-    (
-        "sessions.worktrees/empty.toml",
-        "backed_up",
-        "worktree manifest",
-    ),
-    (
-        PLUGINS_DB,
-        "backed_up",
-        "plugin registry, records and settings",
-    ),
-    (
-        PLUGIN_ARTIFACTS,
-        "backed_up",
-        "installed plugin artifacts, one hash per file",
-    ),
-    (
-        "sessions.sqlite#history_index",
-        "rebuilt",
-        "the history search index is a projection of messages",
-    ),
-    (
-        "host-resources.sqlite3",
-        "excluded",
-        "host-owned registry shared by every profile on the host",
-    ),
-    (
-        "sessions.plugins/staging",
-        "excluded",
-        "transient install scratch",
-    ),
-    (
-        BROWSER_LIBRARY,
-        "backed_up",
-        "named browser partitions, imported bookmarks and history, and held design captures",
-    ),
-    (
-        "browser-import-staging",
-        "excluded",
-        "transient copies of import sources",
-    ),
-    (
-        "sessions.sqlite#service_secrets",
-        "excluded",
-        "secret service environment values; the bundle stores each as [redacted]",
-    ),
-    (
-        "sessions.plugins.sqlite3#plugin_credentials",
-        "excluded",
-        "plugin credential references to items ADE made; the bundle drops each",
-    ),
-];
 /// How a backup treats each profile store: `backed_up`, `rebuilt` or `excluded`.
 pub const COVERAGE: &[(&str, &str, &str)] = &[
     (
@@ -490,12 +207,9 @@ pub const COVERAGE: &[(&str, &str, &str)] = &[
 ];
 
 pub fn coverage() -> Value {
-    coverage_of(COVERAGE)
-}
-
-fn coverage_of(list: &[(&str, &str, &str)]) -> Value {
     Value::Array(
-        list.iter()
+        COVERAGE
+            .iter()
             .map(|(store, disposition, reason)| {
                 json!({"store":store,"disposition":disposition,"reason":reason})
             })
@@ -532,7 +246,6 @@ pub struct Entry {
 /// A validated manifest.
 #[derive(Debug)]
 pub struct Plan {
-    pub format: i64,
     pub entries: Vec<Entry>,
 }
 
@@ -797,30 +510,19 @@ fn files(value: &Value) -> Result<Vec<FileRecord>> {
 }
 
 /// Validates a backend manifest's structure without touching the filesystem.
-/// It accepts this format and the one before it, each with its own declared
-/// exclusions, and checks every entry's shape. A directory entry's size and
-/// digest must be the sum and tree digest of its files.
+/// It accepts this format alone, with its declared exclusions and coverage,
+/// and checks every entry's shape. A directory entry's size and digest must
+/// be the sum and tree digest of its files.
 pub fn check_manifest(value: &Value) -> Result<Plan> {
     let format = value["format_version"].as_i64().unwrap_or(-1);
-    let (excluded, coverage) = match format {
-        FORMAT => (EXCLUDED, Some(COVERAGE)),
-        6 => (EXCLUDED, Some(COVERAGE_V6)),
-        5 => (EXCLUDED_V5, Some(COVERAGE_V5)),
-        4 => (EXCLUDED_V4, Some(COVERAGE_V4)),
-        3 => (EXCLUDED_V3, Some(COVERAGE_V3)),
-        OLDEST_FORMAT => (EXCLUDED_V2, None),
-        _ => bail!("Unsupported backend backup format or scope"),
-    };
     ensure!(
-        value["scope"] == SCOPE && value["excluded"] == json!(excluded),
-        "Unsupported backend backup format or scope"
+        format == FORMAT && value["scope"] == SCOPE && value["excluded"] == json!(EXCLUDED),
+        "Unsupported backend backup format or scope; this build restores only format {FORMAT} bundles"
     );
-    if let Some(list) = coverage {
-        ensure!(
-            value["coverage"] == coverage_of(list),
-            "Backup coverage does not match this format"
-        );
-    }
+    ensure!(
+        value["coverage"] == coverage(),
+        "Backup coverage does not match this format"
+    );
     let raw = value["entries"]
         .as_array()
         .context("Invalid backup entries")?;
@@ -828,9 +530,7 @@ pub fn check_manifest(value: &Value) -> Result<Plan> {
     let mut entries = Vec::with_capacity(raw.len());
     for entry in raw {
         let name = entry["path"].as_str().context("Invalid backup path")?;
-        let store = store(name)
-            .filter(|store| store.since <= format)
-            .context("Unknown backup path")?;
+        let store = store(name).context("Unknown backup path")?;
         ensure!(
             seen.insert(name) && entry["kind"] == store.kind.name(),
             "Duplicate or invalid backup entry"
@@ -889,7 +589,7 @@ pub fn check_manifest(value: &Value) -> Result<Plan> {
         seen.contains(PLUGINS_DB) == seen.contains(PLUGIN_ARTIFACTS),
         "Backup holds only half of the plugin registry"
     );
-    Ok(Plan { format, entries })
+    Ok(Plan { entries })
 }
 
 #[cfg(test)]
@@ -919,7 +619,7 @@ mod tests {
             "excluded":EXCLUDED,"coverage":coverage()})
     }
     fn core() -> Value {
-        json!({"path":"sessions.sqlite","kind":"sqlite","size":4096,"sha256":sha('a'),"schema":18})
+        json!({"path":"sessions.sqlite","kind":"sqlite","size":4096,"sha256":sha('a'),"schema":ade_daemon::store::SCHEMA_VERSION})
     }
     fn plugins_db() -> Value {
         json!({"path":PLUGINS_DB,"kind":"sqlite","size":4096,"sha256":sha('b'),"schema":0})
@@ -1071,25 +771,20 @@ mod tests {
             directory_entry(&files),
         ]))
         .unwrap();
-        assert_eq!(plan.format, FORMAT);
         assert_eq!(plan.artifact_files(), &files);
         assert!(plan.has(PLUGINS_DB));
 
-        let previous =
-            json!({"format_version":2,"scope":SCOPE,"entries":[core()],"excluded":EXCLUDED_V2});
-        assert_eq!(check_manifest(&previous).unwrap().format, 2);
-        let mut previous_with_plugins = previous.clone();
-        previous_with_plugins["entries"] = json!([core(), plugins_db()]);
-        assert!(check_manifest(&previous_with_plugins).is_err());
-
         let mut wrong_exclusions = manifest(vec![core()]);
-        wrong_exclusions["excluded"] = json!(EXCLUDED_V2);
+        wrong_exclusions["excluded"] = json!(&EXCLUDED[..EXCLUDED.len() - 1]);
+        let mut older = manifest(vec![core()]);
+        older["format_version"] = json!(FORMAT - 1);
         let mut no_coverage = manifest(vec![core()]);
         no_coverage["coverage"] = Value::Null;
         let mut future = manifest(vec![core()]);
         future["format_version"] = json!(FORMAT + 1);
         for (value, expected) in [
             (wrong_exclusions, "format or scope"),
+            (older, "format or scope"),
             (no_coverage, "coverage"),
             (future, "format or scope"),
             (json!({"format_version":1}), "format or scope"),
@@ -1110,16 +805,13 @@ mod tests {
     }
 
     #[test]
-    fn the_browser_library_is_backed_up_from_format_4() {
+    fn the_browser_library_is_backed_up() {
         // The daemon creates the library beside sessions.sqlite; a backup that
         // leaves it out drops the profile's partitions and imports.
         let library = ade_daemon::browser_library::LIBRARY_FILE;
         assert_eq!(library, BROWSER_LIBRARY);
         let entry = store(library).expect("browser library is a backup store");
-        assert_eq!(
-            (entry.kind, entry.schema, entry.since),
-            (Kind::Sqlite, 0, 4)
-        );
+        assert_eq!((entry.kind, entry.schema), (Kind::Sqlite, 0));
         assert!(
             COVERAGE
                 .iter()
@@ -1127,27 +819,12 @@ mod tests {
         );
         let library_entry = json!({"path":library,"kind":"sqlite","size":4096,
             "sha256":sha('e'),"schema":0});
-        let plan = check_manifest(&manifest(vec![core(), library_entry.clone()])).unwrap();
+        let plan = check_manifest(&manifest(vec![core(), library_entry])).unwrap();
         assert!(plan.has(library));
-
-        // A format-3 bundle keeps its own exclusions and coverage, and may not
-        // claim the library.
-        let v3 = |entries: Vec<Value>| {
-            json!({"format_version":3,"scope":SCOPE,"entries":entries,
-                "excluded":EXCLUDED_V3,"coverage":coverage_of(COVERAGE_V3)})
-        };
-        assert_eq!(check_manifest(&v3(vec![core()])).unwrap().format, 3);
-        let error = check_manifest(&v3(vec![core(), library_entry]))
-            .unwrap_err()
-            .to_string();
-        assert!(error.contains("Unknown"), "{error}");
-        let mut v3_with_v4_coverage = v3(vec![core()]);
-        v3_with_v4_coverage["coverage"] = coverage();
-        assert!(check_manifest(&v3_with_v4_coverage).is_err());
     }
 
     #[test]
-    fn format_5_declares_withheld_service_secrets_and_format_4_still_reads() {
+    fn service_secrets_are_declared_withheld() {
         assert!(
             EXCLUDED
                 .iter()
@@ -1156,14 +833,6 @@ mod tests {
         assert!(COVERAGE.iter().any(|(store, disposition, _)| {
             *store == "sessions.sqlite#service_secrets" && *disposition == "excluded"
         }));
-        let v4 = json!({"format_version":4,"scope":SCOPE,"entries":[core()],
-            "excluded":EXCLUDED_V4,"coverage":coverage_of(COVERAGE_V4)});
-        assert_eq!(check_manifest(&v4).unwrap().format, 4);
-        // A format-5 manifest may not drop the secrets exclusion.
-        let mut understated = manifest(vec![core()]);
-        understated["excluded"] = json!(EXCLUDED_V4);
-        assert!(check_manifest(&understated).is_err());
-
         let withheld =
             r#"{"config":{"env":{"TOKEN":"[redacted]","MODE":"dev"},"secret_env":["TOKEN"]}}"#;
         let plain = r#"{"config":{"env":{"MODE":"dev"}}}"#;
@@ -1175,7 +844,7 @@ mod tests {
     }
 
     #[test]
-    fn format_6_declares_dropped_plugin_credentials_and_format_5_still_reads() {
+    fn plugin_credentials_are_declared_dropped() {
         assert!(
             EXCLUDED
                 .iter()
@@ -1184,20 +853,10 @@ mod tests {
         assert!(COVERAGE.iter().any(|(store, disposition, _)| {
             *store == "sessions.plugins.sqlite3#plugin_credentials" && *disposition == "excluded"
         }));
-        let v5 = json!({"format_version":5,"scope":SCOPE,"entries":[core()],
-            "excluded":EXCLUDED_V5,"coverage":coverage_of(COVERAGE_V5)});
-        assert_eq!(check_manifest(&v5).unwrap().format, 5);
-        // A format-6 manifest may not drop the plugin credential exclusion.
-        let mut understated = manifest(vec![core()]);
-        understated["excluded"] = json!(EXCLUDED_V5);
-        assert!(check_manifest(&understated).is_err());
-        let mut uncovered = manifest(vec![core()]);
-        uncovered["coverage"] = coverage_of(COVERAGE_V5);
-        assert!(check_manifest(&uncovered).is_err());
     }
 
     #[test]
-    fn format_7_backs_up_both_receipt_stores_and_format_6_still_reads() {
+    fn both_receipt_stores_are_backed_up() {
         // The envelope store's name comes from the daemon, so they cannot drift.
         let envelope =
             ade_daemon::receipts::envelope_store(std::path::Path::new("sessions.sqlite"));
@@ -1205,10 +864,7 @@ mod tests {
         let entry = |path: &str| json!({"path":path,"kind":"sqlite","size":4096,"sha256":sha('e'),"schema":0});
         for path in [ENVELOPE_DB, BROWSER_OPERATIONS] {
             let store = store(path).expect("receipt store is a backup store");
-            assert_eq!(
-                (store.kind, store.schema, store.since),
-                (Kind::Sqlite, 0, 7)
-            );
+            assert_eq!((store.kind, store.schema), (Kind::Sqlite, 0));
             assert!(COVERAGE.iter().any(|(covered, disposition, _)| {
                 *covered == path && *disposition == "backed_up"
             }));
@@ -1218,21 +874,6 @@ mod tests {
                     .has(path)
             );
         }
-        // A format-6 bundle reads with its own coverage, and may not claim a
-        // receipt store.
-        let v6 = |entries: Vec<Value>| {
-            json!({"format_version":6,"scope":SCOPE,"entries":entries,
-                "excluded":EXCLUDED,"coverage":coverage_of(COVERAGE_V6)})
-        };
-        assert_eq!(check_manifest(&v6(vec![core()])).unwrap().format, 6);
-        let error = check_manifest(&v6(vec![core(), entry(ENVELOPE_DB)]))
-            .unwrap_err()
-            .to_string();
-        assert!(error.contains("Unknown"), "{error}");
-        // A format-7 manifest may not drop the receipt stores from its coverage.
-        let mut understated = manifest(vec![core()]);
-        understated["coverage"] = coverage_of(COVERAGE_V6);
-        assert!(check_manifest(&understated).is_err());
     }
 
     #[test]

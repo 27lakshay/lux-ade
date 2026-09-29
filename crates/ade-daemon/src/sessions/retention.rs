@@ -274,26 +274,12 @@ fn owned_service_log_keys(store: &Store, runtime: &[(String, String)]) -> Result
             owners.push((workspace.id.clone(), extra.clone()));
         }
     }
-    for (table, query) in [
-        (
-            "services",
-            "SELECT workspace_id,json_extract(data,'$.terminal_id') FROM services WHERE json_extract(data,'$.terminal_id') IS NOT NULL",
-        ),
-        (
-            "terminal_creations",
-            "SELECT workspace_id,terminal_id FROM terminal_creations",
-        ),
-    ] {
-        if !has_table(&store.connection, table)? {
-            continue;
-        }
-        let rows: Vec<(String, String)> = store
-            .connection
-            .prepare(query)?
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
-            .collect::<rusqlite::Result<_>>()?;
-        owners.extend(rows);
-    }
+    let services: Vec<(String, String)> = store
+        .connection
+        .prepare("SELECT workspace_id,json_extract(data,'$.terminal_id') FROM services WHERE json_extract(data,'$.terminal_id') IS NOT NULL")?
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    owners.extend(services);
     Ok(owners
         .iter()
         .map(|(workspace, terminal)| ade_runtime::service_logs::key(workspace, terminal))

@@ -722,22 +722,4 @@ mod tests {
         assert!(layout.layout.tabs.is_empty());
         assert_eq!(layout.revision, 2);
     }
-    #[test]
-    #[ignore = "obsolete: fakes schema 6 on a schema-16 database and expects version 7"]
-    fn migration_from_six_keeps_existing_workspace_and_installs_service_tables() {
-        let f = Fixture::new();
-        let store = f.store();
-        let w = f.workspace(&store);
-        store.connection.execute_batch("DROP TABLE service_ports; DROP TABLE services; DELETE FROM schema_migrations WHERE version=7; PRAGMA user_version=6;").unwrap();
-        drop(store);
-        let store = f.store();
-        assert_eq!(store.workspace(&w.id).unwrap().root, w.root);
-        store.configure_service(&w.id, "web", 0, config()).unwrap();
-        assert_eq!(store.services(&w.id).unwrap().len(), 1);
-        let v: i64 = store
-            .connection
-            .pragma_query_value(None, "user_version", |r| r.get(0))
-            .unwrap();
-        assert_eq!(v, 7);
-    }
 }

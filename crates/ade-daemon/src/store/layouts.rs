@@ -18,26 +18,6 @@ const MAX_WINDOWS: i64 = 256;
 const MAX_RECENT: usize = 16;
 const MAX_COLLAPSED: usize = 1024;
 
-/// Creates the window and layout tables; rows from the removed GPUI
-/// prototype's `window.save` are dropped, since no client reads them.
-pub(super) fn migrate(tx: &Connection) -> Result<()> {
-    let prototype = tx
-        .prepare("PRAGMA table_info(windows)")?
-        .query_map([], |row| row.get::<_, String>(1))?
-        .collect::<rusqlite::Result<Vec<_>>>()?
-        .iter()
-        .any(|column| column == "conversation_id");
-    if prototype {
-        tx.execute_batch("DROP TABLE windows;")?;
-    }
-    tx.execute_batch(
-        "CREATE TABLE IF NOT EXISTS windows(id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id), state TEXT NOT NULL CHECK(state IN ('open','closed')), data TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS layouts(window_id TEXT NOT NULL REFERENCES windows(id), workspace_id TEXT NOT NULL REFERENCES workspaces(id), revision INTEGER NOT NULL CHECK(revision>0), data TEXT NOT NULL, last_action TEXT, PRIMARY KEY(window_id,workspace_id));
-        CREATE INDEX IF NOT EXISTS layouts_by_workspace ON layouts(workspace_id);",
-    )?;
-    Ok(())
-}
-
 /// The last action applied to a layout, so its retry from the same revision
 /// returns the same result instead of applying twice.
 #[derive(Serialize, serde::Deserialize, PartialEq)]
