@@ -186,20 +186,7 @@ test('the CLI drives windows, tabs and panes, and reads the layout back', async 
   expect(stale.code).toBe(7)
   expect(stale.json).toMatchObject({ code: 'layout_conflict', recovery: 'reload_layout' })
 
-  // Replacing the whole layout: the default one, as an import would.
-  const replaced = await ok(
-    'layout',
-    'replace',
-    '--layout',
-    JSON.stringify({
-      ...read.layout.layout,
-      tabs: {},
-      root: { type: 'pane', id: 'only', tabs: [], active: null },
-      focused_pane: 'only',
-      maximized: null,
-    }),
-  )
-  expect(shape(replaced.layout.layout.root)).toBe('only')
+  const kept = (await ok('layout', 'get')).layout
 
   // Window state.
   expect((await ok('window', 'show', 'cli-window', second.id)).window).toMatchObject({
@@ -207,7 +194,7 @@ test('the CLI drives windows, tabs and panes, and reads the layout back', async 
     view: { recent_workspaces: [second.id, first.id] },
   })
   // The first workspace's layout is kept while the window shows the second.
-  expect((await ok('layout', 'get', '--workspace', first.id)).layout.layout.root.id).toBe('only')
+  expect((await ok('layout', 'get', '--workspace', first.id)).layout).toEqual(kept)
   expect((await ok('layout', 'get')).layout.revision).toBe(0)
   expect((await ok('window', 'bounds', 'cli-window', '10', '20', '1280', '800')).window).toMatchObject({
     bounds: { x: 10, y: 20, width: 1280, height: 800 },
@@ -282,14 +269,6 @@ test('a replayed layout.apply keeps its revision, and a stale expected_revision 
     }),
   )
   expect(stale.code).toBe('layout_conflict')
-  const replaced = await refusal(
-    profile.call('layout.replace', {
-      window_id: 'w',
-      layout: splitOnce.layout.layout,
-      expected_revision: 1,
-    }),
-  )
-  expect(replaced.code).toBe('layout_conflict')
   expect((await profile.call('layout.get', { window_id: 'w' })).layout).toEqual(toggled.layout)
 })
 

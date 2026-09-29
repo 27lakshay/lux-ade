@@ -15,7 +15,6 @@ import {
 
 type LayoutAction = CallRequest<'layout.apply'>['action']
 type TabTarget = Extract<LayoutAction, { type: 'open_tab' }>['tab']['target']
-type Layout = CallRequest<'layout.replace'>['layout']
 
 export const layoutUsage = `  window list                           List windows, open and closed
   window create WORKSPACE_ID [--id WINDOW_ID]
@@ -31,8 +30,6 @@ export const layoutUsage = `  window list                           List windows
                                         Read a window's panes and tabs for a workspace
   layout apply --action JSON [--window ID] [--workspace ID] [--expected-revision N]
                                         Apply one layout action; a stale revision is refused
-  layout replace --layout JSON [--window ID] [--workspace ID] [--expected-revision N]
-                                        Store a whole layout
   tab open KIND [ID|PATH] [--pane PANE_ID] [--id TAB_ID] [--staged] [--window ID] [--workspace ID]
                                         Open a tab: conversation, terminal or browser ID,
                                         file or diff PATH, or new_conversation
@@ -165,18 +162,15 @@ export async function runLayoutCommand(
       positionals(parsed, 0, 'layout get takes only options')
       return call(socketPath, 'layout.get', await target(socketPath, parsed.options))
     }
-    if (action === 'apply' || action === 'replace') {
-      const option = action === 'apply' ? '--action' : '--layout'
-      const parsed = parseWords(rest, [...TARGET_OPTIONS, option, '--expected-revision'], [], `layout ${action}`)
-      positionals(parsed, 0, `layout ${action} requires ${option} JSON`)
-      const value = jsonObject(parsed.options[option], option)
-      const fields = {
+    if (action === 'apply') {
+      const parsed = parseWords(rest, [...TARGET_OPTIONS, '--action', '--expected-revision'], [], 'layout apply')
+      positionals(parsed, 0, 'layout apply requires --action JSON')
+      const value = jsonObject(parsed.options['--action'], '--action')
+      return call(socketPath, 'layout.apply', {
         ...(await target(socketPath, parsed.options)),
         ...expectedRevision(parsed.options),
-      }
-      return action === 'apply'
-        ? call(socketPath, 'layout.apply', { ...fields, action: value as unknown as LayoutAction })
-        : call(socketPath, 'layout.replace', { ...fields, layout: value as unknown as Layout })
+        action: value as unknown as LayoutAction,
+      })
     }
     return undefined
   }

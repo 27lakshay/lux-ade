@@ -1,4 +1,4 @@
-import type { Layout, LayoutAction, LayoutRecord, Window } from '@ade/contracts'
+import type { LayoutAction, LayoutRecord, Window } from '@ade/contracts'
 
 /**
  * `window.adeHost.layouts`: this window's record and its layouts, in the daemon (`window.*`,
@@ -13,8 +13,6 @@ export interface LayoutsBridge {
   get(workspaceId: string): Promise<LayoutRecord>
   /** `expectedRevision` is required for `move_pane`, `swap_panes` and `dock_pane`. */
   apply(workspaceId: string, action: LayoutAction, expectedRevision?: number): Promise<LayoutOutcome>
-  /** Stores a whole layout: the one-time import of a layout saved before the daemon owned them. */
-  replace(workspaceId: string, layout: Layout, expectedRevision: number): Promise<LayoutOutcome>
   /** Closes a tab, and the shell whose last tab it is; a busy shell refuses unless `force`. */
   closeTab(workspaceId: string, tabId: string, force: boolean): Promise<LayoutOutcome>
   /** Closes a pane and its tabs, and each shell whose last tab it holds, as `closeTab` does. */

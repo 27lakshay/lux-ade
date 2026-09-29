@@ -49,10 +49,6 @@ pub fn operations() -> Vec<OperationSpec> {
             "layout.apply",
             Tier::IdempotentCommand,
         ),
-        OperationSpec::new::<LayoutReplaceRequest, LayoutApplied>(
-            "layout.replace",
-            Tier::IdempotentCommand,
-        ),
         // Closing a shell's last tab ends its process, so these carry an
         // operation ID and a receipt; a retry returns the recorded outcome.
         OperationSpec::new::<TabCloseRequest, LayoutApplied>("tab.close", Tier::EffectCommand),
@@ -564,19 +560,7 @@ pub struct PaneCloseRequest {
     pub force: Option<bool>,
 }
 
-/// `layout.replace`: store a whole layout, such as one imported from an
-/// older client. It must be well formed and its tab targets must exist.
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
-pub struct LayoutReplaceRequest {
-    pub window_id: String,
-    #[serde(default)]
-    pub workspace_id: Option<String>,
-    pub layout: Layout,
-    #[serde(default)]
-    pub expected_revision: Option<u64>,
-}
-
-/// The `layout.apply` and `layout.replace` reply. `changed` is false when
+/// The `layout.apply`, `tab.close` and `pane.close` reply. `changed` is false when
 /// the layout was already so; its revision then stays.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct LayoutApplied {
@@ -703,7 +687,6 @@ mod tests {
             ("layout.apply", "idempotent_command"),
             ("tab.close", "effect_command"),
             ("pane.close", "effect_command"),
-            ("layout.replace", "idempotent_command"),
         ] {
             assert_eq!(spec(op)["tier"], tier, "{op}");
             assert_eq!(spec(op)["domain"], "layout", "{op}");
@@ -735,12 +718,6 @@ mod tests {
             apply.action,
             LayoutAction::OpenTab { pane_id: None, .. }
         ));
-        let layout = serde_json::to_value(crate::layout::default_layout("p1")).unwrap();
-        let replace: LayoutReplaceRequest = request(
-            "layout.replace",
-            json!({"op": "layout.replace", "window_id": "w", "layout": layout}),
-        );
-        assert_eq!(replace.layout.maximized, None);
         reply(
             "window.create",
             &WindowAck {

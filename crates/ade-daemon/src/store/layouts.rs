@@ -695,45 +695,4 @@ impl Store {
             stored: true,
         })
     }
-
-    /// `layout.replace`: stores a whole, well-formed layout whose targets exist.
-    pub fn replace_layout(
-        &self,
-        window_id: &str,
-        workspace_id: Option<&str>,
-        next: Layout,
-        expected: Option<u64>,
-    ) -> Result<LayoutChange> {
-        layout::check(&next)?;
-        let tx = self.transaction()?;
-        let workspace = self.layout_key(&tx, window_id, workspace_id)?;
-        let current = layout(&tx, window_id, &workspace)?;
-        if next == current.layout {
-            return Ok(LayoutChange {
-                layout: current,
-                changed: false,
-                stored: false,
-            });
-        }
-        if let Some(expected) = expected
-            && expected != current.revision
-        {
-            return Err(LayoutError::Conflict {
-                expected,
-                current: current.revision,
-            }
-            .into());
-        }
-        for target in layout::targets(&next) {
-            require_target(&tx, target)?;
-        }
-        refuse_closing_shells(&tx, &current, &next)?;
-        let record = save_layout(&tx, &current, next, None)?;
-        tx.commit()?;
-        Ok(LayoutChange {
-            layout: record,
-            changed: true,
-            stored: true,
-        })
-    }
 }

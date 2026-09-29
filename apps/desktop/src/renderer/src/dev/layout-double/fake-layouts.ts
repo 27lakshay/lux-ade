@@ -117,11 +117,6 @@ export function createFakeLayouts(options: {
       calls.push('layout.apply')
       return change(workspaceId, action, null, expected)
     },
-    replace: async (workspaceId, layout, expected) => {
-      calls.push('layout.replace')
-      if (expected !== record(workspaceId).revision) return refusal('layout_conflict', 'The layout moved on')
-      return ok(store(workspaceId, layout), true)
-    },
     closeTab: async (workspaceId, tabId, force) => {
       calls.push('tab.close')
       return change(workspaceId, { type: 'close_tab', tab_id: tabId }, force)

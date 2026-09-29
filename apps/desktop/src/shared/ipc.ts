@@ -47,7 +47,6 @@ export interface InvokeChannels {
   'ade:window-id': LayoutsBridge['windowId']
   'ade:layout-get': LayoutsBridge['get']
   'ade:layout-apply': LayoutsBridge['apply']
-  'ade:layout-replace': LayoutsBridge['replace']
   'ade:tab-close': LayoutsBridge['closeTab']
   'ade:pane-close': LayoutsBridge['closePane']
   'ade:window-show-workspace': LayoutsBridge['showWorkspace']

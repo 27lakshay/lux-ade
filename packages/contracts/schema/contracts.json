@@ -14647,7 +14647,7 @@
       ]
     },
     "LayoutApplied": {
-      "description": "The `layout.apply` and `layout.replace` reply. `changed` is false when\nthe layout was already so; its revision then stays.",
+      "description": "The `layout.apply`, `tab.close` and `pane.close` reply. `changed` is false when\nthe layout was already so; its revision then stays.",
       "properties": {
         "changed": {
           "type": "boolean"
@@ -14833,43 +14833,6 @@
         "workspace_id",
         "boot_id",
         "revision"
-      ],
-      "type": "object"
-    },
-    "LayoutReplaceRequest": {
-      "additionalProperties": false,
-      "description": "`layout.replace`: store a whole layout, such as one imported from an\nolder client. It must be well formed and its tab targets must exist.",
-      "properties": {
-        "expected_revision": {
-          "default": null,
-          "maximum": 9007199254740991,
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "layout": {
-          "$ref": "#/$defs/Layout"
-        },
-        "op": {
-          "const": "layout.replace"
-        },
-        "window_id": {
-          "type": "string"
-        },
-        "workspace_id": {
-          "default": null,
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "op",
-        "window_id",
-        "layout"
       ],
       "type": "object"
     },
@@ -33592,13 +33555,6 @@
       "domain": "layout",
       "name": "layout.apply",
       "request": "LayoutApplyRequest",
-      "response": "LayoutApplied",
-      "tier": "idempotent_command"
-    },
-    {
-      "domain": "layout",
-      "name": "layout.replace",
-      "request": "LayoutReplaceRequest",
       "response": "LayoutApplied",
       "tier": "idempotent_command"
     },

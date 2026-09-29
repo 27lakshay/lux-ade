@@ -294,7 +294,6 @@ export const operations = {
   "window.set_view_state": { tier: "idempotent_command", domain: "layout", request: "WindowSetViewStateRequest", response: "WindowAck" },
   "layout.get": { tier: "query", domain: "layout", request: "LayoutGetRequest", response: "LayoutReply" },
   "layout.apply": { tier: "idempotent_command", domain: "layout", request: "LayoutApplyRequest", response: "LayoutApplied" },
-  "layout.replace": { tier: "idempotent_command", domain: "layout", request: "LayoutReplaceRequest", response: "LayoutApplied" },
   "tab.close": { tier: "effect_command", domain: "layout", request: "TabCloseRequest", response: "LayoutApplied" },
   "pane.close": { tier: "effect_command", domain: "layout", request: "PaneCloseRequest", response: "LayoutApplied" },
   "settings.get": { tier: "query", domain: "settings", request: "SettingsGetRequest", response: "Settings" },

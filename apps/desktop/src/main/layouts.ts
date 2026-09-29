@@ -1,4 +1,4 @@
-import { DaemonRequestError, type Layout, type LayoutAction, type LayoutRecord } from '@ade/client'
+import { DaemonRequestError, type LayoutAction, type LayoutRecord } from '@ade/client'
 import type { BusyTerminal, LayoutOutcome } from '../shared/bridge/layouts'
 import { daemonCall } from './daemon-call'
 import { handle } from './ipc'
@@ -83,16 +83,6 @@ export function registerLayoutIpc(): void {
         window_id: recordOf(event.sender.id),
         workspace_id: workspace(workspaceId),
         action: object<LayoutAction>(action, 'layout action'),
-        expected_revision: revision(expected),
-      }),
-    ),
-  )
-  handle('ade:layout-replace', (event, workspaceId: unknown, layout: unknown, expected: unknown) =>
-    outcome(() =>
-      daemonCall('layout.replace', {
-        window_id: recordOf(event.sender.id),
-        workspace_id: workspace(workspaceId),
-        layout: object<Layout>(layout, 'layout'),
         expected_revision: revision(expected),
       }),
     ),
