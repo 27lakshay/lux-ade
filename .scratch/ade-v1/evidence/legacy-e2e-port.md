@@ -36,7 +36,15 @@ No product bug was confirmed.
   - the migrated-schema checks compare with the schema a fresh profile has,
     not a fixed 16;
   - the registered backup's exclusions are read from the backend manifest
-    inside the bundle, where ade-control records them.
+    inside the bundle, where ade-control records them;
+  - after the rebase onto `2463a69`, stale review feedback is refused with CLI
+    exit 27 and code `review_anchor_stale` (was 7, `daemon`), and a lifecycle
+    rebind to a renamed saved source says it "belongs to a saved source
+    workspace or repository" (was "different physical repository").
+- **One unexplained failure.** In the post-rebase run, `services/script-runs`
+  "declared pnpm, Bun and Yarn versions…" failed once; I did not capture its
+  message. It passed on the next run and 3 more times with `--repeat-each=3`.
+  The daemon gives each tool `--version` probe 5 s, so load may be the cause.
 - **Two environment adaptations.** A protocol profile has a scratch HOME, so the
   daemon cannot find mise-installed tools. The toolchain tests pass the host's
   real tool directories through `ADE_PROJECT_TOOL_PATHS`, and Corepack runs

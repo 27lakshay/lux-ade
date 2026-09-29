@@ -195,8 +195,8 @@ test('named CLI commands page a large diff and search retained review notes', as
   await waitForIdle(profile, conversationId)
   await repo.write('tracked.txt', 'baseline\nchanged after review\n')
   expect(await sendFeedback('cli-parity-stale', feedback)).toMatchObject({
-    code: 7,
-    json: { code: 'daemon', message: expect.stringMatching(/Stale diff/i) },
+    code: 27,
+    json: { code: 'review_anchor_stale', message: expect.stringMatching(/Stale diff/i) },
   })
   expect(
     await sendFeedback('cli-parity-stale', {
