@@ -29657,13 +29657,6 @@
           "description": "Whether this is the daemon's own workspace: attachments that name no\nworkspace open their terminal here, and it cannot be removed. Set on\nevery reply, never stored.",
           "type": "boolean"
         },
-        "extra_terminals": {
-          "default": [],
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
         "id": {
           "type": "string"
         },
@@ -29693,21 +29686,16 @@
         "root": {
           "type": "string"
         },
-        "terminal_id": {
-          "type": "string"
-        },
         "worktree_lifecycle_needs_rebind": {
           "default": false,
           "type": "boolean"
         }
       },
       "required": [
-        "extra_terminals",
         "id",
         "repository_id",
         "root",
         "name",
-        "terminal_id",
         "needs_rebind",
         "worktree_lifecycle_needs_rebind",
         "project_id",

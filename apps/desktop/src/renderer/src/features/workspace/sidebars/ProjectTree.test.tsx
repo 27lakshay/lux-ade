@@ -16,7 +16,6 @@ const workspace = (id: string, name: string, project_id: string, extra: Partial<
   project_id,
   repository_id: null,
   root: `/code/${name}`,
-  terminal_id: `t-${id}`,
   needs_rebind: false,
   worktree_lifecycle_needs_rebind: false,
   kind: 'folder',

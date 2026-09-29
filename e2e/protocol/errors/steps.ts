@@ -3,7 +3,14 @@
 import { realpath } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { DaemonRequestError } from '../../../packages/client/dist/index.js'
-import { expect, type AdeHarness, type CliResult, type ScratchProfile, type ScratchRepo } from '../fixtures'
+import {
+  type AdeHarness,
+  type CliResult,
+  expect,
+  primaryShell,
+  type ScratchProfile,
+  type ScratchRepo,
+} from '../fixtures'
 
 /** The rejection of `attempt`, which must be the SDK's `DaemonRequestError`. */
 export async function sdkError(attempt: Promise<unknown>): Promise<DaemonRequestError> {
@@ -42,11 +49,12 @@ export async function adopt(profile: ScratchProfile, repoPath: string, tree: str
 /** Open `tree` as a workspace in `profile` and start its shell, which claims the checkout for use. */
 export async function occupy(profile: ScratchProfile, tree: string) {
   const { workspace } = await profile.call('workspace.open', { path: tree })
-  const inspected = await profile.cli('terminal', 'inspect', workspace.id, workspace.terminal_id)
+  const shellId = await primaryShell(profile, workspace.id)
+  const inspected = await profile.cli('terminal', 'inspect', workspace.id, shellId)
   expect(inspected.code, inspected.stderr).toBe(0)
   const metrics = (inspected.json as { metrics: { shell_pid: number; shell_running: boolean } }).metrics
   expect(metrics.shell_running).toBe(true)
-  return { workspace, shellPid: metrics.shell_pid }
+  return { workspace, shellId, shellPid: metrics.shell_pid }
 }
 
 /** Wait until `profile` sees a use claim on `tree`. */

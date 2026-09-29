@@ -50,10 +50,7 @@ impl Store {
             "Start the Conversation before transferring"
         );
         let workspace: WorkspaceRecord = one(&tx, "workspaces", &c.workspace_id)?;
-        ensure!(
-            workspace.extra_terminals.len() < 32,
-            "Workspace terminal limit reached"
-        );
+        records::ensure_room(&tx, &workspace.id)?;
         let terminal_id = new_id("terminal");
         records::insert(
             &tx,
@@ -83,13 +80,10 @@ impl Store {
     pub fn register_script_run(&self, workspace_id: &str, run_id: &str) -> Result<()> {
         ade_core::scripts::run_name(run_id)?;
         let tx = self.transaction()?;
-        let workspace: WorkspaceRecord = one(&tx, "workspaces", workspace_id)?;
+        let _: WorkspaceRecord = one(&tx, "workspaces", workspace_id)?;
+        records::ensure_room(&tx, workspace_id)?;
         ensure!(
-            workspace.extra_terminals.len() < 32,
-            "Workspace terminal limit reached"
-        );
-        ensure!(
-            !workspace.extra_terminals.iter().any(|id| id == run_id),
+            records::load(&tx, run_id)?.is_none(),
             "Script run already exists"
         );
         records::insert(
@@ -105,9 +99,8 @@ impl Store {
     }
     pub fn retire_script_run(&self, workspace_id: &str, run_id: &str) -> Result<()> {
         ade_core::scripts::run_name(run_id)?;
-        let workspace = self.workspace(workspace_id)?;
         ensure!(
-            workspace.extra_terminals.iter().any(|id| id == run_id),
+            self.workspace_has_terminal(workspace_id, run_id)?,
             "Script run is unavailable"
         );
         self.retire_terminal(workspace_id, run_id).map(drop)
@@ -187,11 +180,8 @@ impl Store {
                 }
             }
         }
-        let workspace: WorkspaceRecord = one(&tx, "workspaces", id)?;
-        ensure!(
-            workspace.extra_terminals.len() < 32,
-            "Workspace terminal limit reached"
-        );
+        let _: WorkspaceRecord = one(&tx, "workspaces", id)?;
+        records::ensure_room(&tx, id)?;
         let terminal = new_id("terminal");
         records::insert(
             &tx,
@@ -241,6 +231,22 @@ impl Store {
         let layouts = records::remove(&tx, id, terminal)?.unwrap_or_default();
         tx.commit()?;
         Ok(layouts)
+    }
+    /// A workspace's primary shell.
+    pub fn primary_terminal(&self, workspace_id: &str) -> Result<String> {
+        records::primary(&self.connection, workspace_id)
+    }
+    /// The IDs of a workspace's terminals in creation order.
+    pub fn workspace_terminals(&self, workspace_id: &str) -> Result<Vec<String>> {
+        Ok(records::of_workspace(&self.connection, workspace_id)?
+            .into_iter()
+            .map(|terminal| terminal.id)
+            .collect())
+    }
+    /// Whether `terminal_id` is one of the workspace's terminals.
+    pub fn workspace_has_terminal(&self, workspace_id: &str, terminal_id: &str) -> Result<bool> {
+        Ok(records::load(&self.connection, terminal_id)?
+            .is_some_and(|terminal| terminal.workspace_id == workspace_id))
     }
     /// One terminal's record, or `None` when no terminal has this ID.
     pub fn terminal(&self, id: &str) -> Result<Option<TerminalRecord>> {

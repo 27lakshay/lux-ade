@@ -24,6 +24,7 @@ export {
   type PendingRequest,
 } from './conversations'
 export { isRunning } from './processes'
+export { primaryShell } from './terminals'
 
 /** Owns everything one test starts: its temp root, profiles, repositories and processes. */
 export class AdeHarness {

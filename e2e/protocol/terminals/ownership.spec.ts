@@ -1,20 +1,21 @@
 // F083 and D06: input and resize are fenced by the terminal's incarnation
 // (its run_id), and one attachment owns the viewport while others observe.
-import { expect, test } from '../fixtures'
+import { expect, primaryShell, test } from '../fixtures'
 import { settledExit, terminalMetrics, TerminalStream } from '../fixtures/terminals'
 
 test('two attachments hand viewport ownership over by claim, by input and by detach', async ({ profile }) => {
   const { workspace } = await profile.call('workspace.open', { path: profile.defaultWorkspaceRoot })
-  const first = TerminalStream.open(profile, workspace.id, workspace.terminal_id)
+  const shellId = await primaryShell(profile, workspace.id)
+  const first = TerminalStream.open(profile, workspace.id, shellId)
   const firstSnapshot = await first.snapshot()
-  const second = TerminalStream.open(profile, workspace.id, workspace.terminal_id)
+  const second = TerminalStream.open(profile, workspace.id, shellId)
   const secondSnapshot = await second.snapshot()
   const runId = firstSnapshot.run_id as string
   expect(secondSnapshot.run_id).toBe(runId)
   const a = firstSnapshot.attachment as number
   const b = secondSnapshot.attachment as number
   expect(a).not.toBe(b)
-  const shellPid = (await terminalMetrics(profile, workspace.id, workspace.terminal_id))!.shell_pid
+  const shellPid = (await terminalMetrics(profile, workspace.id, shellId))!.shell_pid
 
   // The first attachment claims the viewport; both see the PTY resize.
   let mark = first.frames.length
@@ -28,7 +29,7 @@ test('two attachments hand viewport ownership over by claim, by input and by det
     'the claimed size',
     (frame) => frame.type === 'terminal_resize' && frame.cols === 120 && frame.rows === 40,
   )
-  expect((await terminalMetrics(profile, workspace.id, workspace.terminal_id))!.resize_owner).toBe(a)
+  expect((await terminalMetrics(profile, workspace.id, shellId))!.resize_owner).toBe(a)
 
   // An observer's plain resize records its size but does not change the PTY.
   mark = second.frames.length
@@ -55,7 +56,7 @@ test('two attachments hand viewport ownership over by claim, by input and by det
     from: firstMark,
   })
   await second.waitForText(/size-b:20 80/)
-  expect((await terminalMetrics(profile, workspace.id, workspace.terminal_id))!.resize_owner).toBe(b)
+  expect((await terminalMetrics(profile, workspace.id, shellId))!.resize_owner).toBe(b)
 
   // The owner detaches: the survivor owns again, its size returns, the shell keeps running.
   const handOff = first.frames.length
@@ -71,15 +72,13 @@ test('two attachments hand viewport ownership over by claim, by input and by det
     (frame) => frame.type === 'terminal_resize' && frame.cols === 120 && frame.rows === 40,
     { from: handOff },
   )
-  const after = (await terminalMetrics(profile, workspace.id, workspace.terminal_id))!
+  const after = (await terminalMetrics(profile, workspace.id, shellId))!
   expect(after).toMatchObject({ shell_running: true, shell_pid: shellPid, run_id: runId, resize_owner: a })
 
   // Closing the last attachment without a detach also releases ownership and leaves the shell running.
   first.close()
-  await expect
-    .poll(async () => (await terminalMetrics(profile, workspace.id, workspace.terminal_id))!.resize_owner)
-    .toBeNull()
-  expect((await terminalMetrics(profile, workspace.id, workspace.terminal_id))!).toMatchObject({
+  await expect.poll(async () => (await terminalMetrics(profile, workspace.id, shellId))!.resize_owner).toBeNull()
+  expect((await terminalMetrics(profile, workspace.id, shellId))!).toMatchObject({
     shell_running: true,
     shell_pid: shellPid,
   })
@@ -89,7 +88,8 @@ test('input and resize naming another incarnation change nothing, and an exited 
   profile,
 }) => {
   const { workspace } = await profile.call('workspace.open', { path: profile.defaultWorkspaceRoot })
-  const target = [workspace.id, workspace.terminal_id] as const
+  const shellId = await primaryShell(profile, workspace.id)
+  const target = [workspace.id, shellId] as const
   const stream = TerminalStream.open(profile, ...target)
   const snapshot = await stream.snapshot()
   const runId = snapshot.run_id as string
@@ -120,7 +120,7 @@ test('input and resize naming another incarnation change nothing, and an exited 
   expectingOld.close()
 
   // Stop the shell: input and resize for the exited incarnation are refused, not written to a dead PTY.
-  await profile.call('terminal.stop', { workspace_id: workspace.id, terminal_id: workspace.terminal_id })
+  await profile.call('terminal.stop', { workspace_id: workspace.id, terminal_id: shellId })
   await settledExit(profile, ...target)
   mark = stream.frames.length
   stream.send({ op: 'input', data: 'echo late\n', run_id: runId })
@@ -137,7 +137,7 @@ test('input and resize naming another incarnation change nothing, and an exited 
   expect(resized.code).not.toBe(0)
 
   // A duplicate stop of the exited incarnation converges.
-  await profile.call('terminal.stop', { workspace_id: workspace.id, terminal_id: workspace.terminal_id })
+  await profile.call('terminal.stop', { workspace_id: workspace.id, terminal_id: shellId })
 
   // Restart: a new incarnation. The old run_id is now stale everywhere, and nothing sent with it reaches the new shell.
   const beforeRestart = (await terminalMetrics(profile, ...target))!
@@ -175,7 +175,8 @@ test('input and resize naming another incarnation change nothing, and an exited 
 
 test('a runtime crash starts a new incarnation and fences the old one', async ({ profile }) => {
   const { workspace } = await profile.call('workspace.open', { path: profile.defaultWorkspaceRoot })
-  const target = [workspace.id, workspace.terminal_id] as const
+  const shellId = await primaryShell(profile, workspace.id)
+  const target = [workspace.id, shellId] as const
   const stream = TerminalStream.open(profile, ...target)
   const runId = (await stream.snapshot()).run_id as string
   stream.send({ op: 'input', data: 'echo "be""fore-crash"\n', run_id: runId })

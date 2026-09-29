@@ -268,11 +268,8 @@ fn skill_blobs(connection: &Connection, entries: &mut Vec<Entry>) -> Result<()> 
 /// runtime terminal could still write or read.
 fn owned_service_log_keys(store: &Store, runtime: &[(String, String)]) -> Result<HashSet<String>> {
     let mut owners: Vec<(String, String)> = runtime.to_vec();
-    for workspace in store.catalog()?.workspaces {
-        owners.push((workspace.id.clone(), workspace.terminal_id.clone()));
-        for extra in &workspace.extra_terminals {
-            owners.push((workspace.id.clone(), extra.clone()));
-        }
+    for terminal in store.catalog()?.terminals {
+        owners.push((terminal.workspace_id, terminal.id));
     }
     let services: Vec<(String, String)> = store
         .connection

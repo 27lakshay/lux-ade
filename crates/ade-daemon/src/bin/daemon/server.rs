@@ -1439,9 +1439,9 @@ impl Host {
                 continue;
             }
             if terminal.metrics["shell_running"] != true {
-                let stored = self.sessions.workspace(&workspace.id)?;
-                if stored.terminal_id != workspace.terminal_id
-                    && !stored.extra_terminals.contains(&workspace.terminal_id)
+                if !self
+                    .sessions
+                    .workspace_has_terminal(&workspace.id, &workspace.terminal_id)?
                 {
                     self.runtime.command(terminal_runtime::Command::Retire {
                         workspace_id: workspace.id,
@@ -1453,8 +1453,9 @@ impl Host {
             let stored = self.sessions.workspace(&workspace.id)?;
             anyhow::ensure!(
                 stored.root == workspace.root
-                    && (stored.terminal_id == workspace.terminal_id
-                        || stored.extra_terminals.contains(&workspace.terminal_id)),
+                    && self
+                        .sessions
+                        .workspace_has_terminal(&workspace.id, &workspace.terminal_id)?,
                 "Runtime terminal does not match durable workspace"
             );
             live.insert(workspace.id.clone());
@@ -1474,25 +1475,21 @@ impl Host {
         anyhow::ensure!(!id.is_empty(), "Choose a workspace folder first");
         let mut leases = self.leases.lock().unwrap();
         self.sessions.ensure_workspace_bound(id)?;
-        let mut workspace = self.sessions.workspace(id)?;
-        let key = if let Some(terminal) = terminal_id {
-            anyhow::ensure!(
-                terminal == workspace.terminal_id
-                    || workspace.extra_terminals.iter().any(|id| id == terminal),
-                "Unknown workspace terminal"
-            );
-            if terminal == workspace.terminal_id {
-                workspace.id.clone()
-            } else {
-                terminal.to_owned()
+        let workspace = self.sessions.workspace(id)?;
+        let primary = self.sessions.primary_terminal(id)?;
+        // The primary shell runs under the workspace's ID; any other terminal
+        // under its own.
+        let (terminal, key) = match terminal_id {
+            Some(terminal) if terminal != primary => {
+                anyhow::ensure!(
+                    self.sessions.workspace_has_terminal(id, terminal)?,
+                    "Unknown workspace terminal"
+                );
+                (terminal.to_owned(), terminal.to_owned())
             }
-        } else {
-            workspace.id.clone()
+            _ => (primary, workspace.id.clone()),
         };
-        if let Some(terminal) = terminal_id {
-            workspace.terminal_id = terminal.into();
-        }
-        let reserved = self.sessions.terminal_reserved(&workspace.terminal_id)?;
+        let reserved = self.sessions.terminal_reserved(&terminal)?;
         anyhow::ensure!(
             !restart || !reserved,
             "Use service.start for a service terminal, or return the Conversation to the GUI"
@@ -1505,7 +1502,7 @@ impl Host {
         };
         self.sessions.ensure_workspace_bound(id)?;
         let ensure = terminal_runtime::Ensure {
-            workspace,
+            workspace: terminal_runtime::Workspace::new(&workspace, &terminal),
             terminal_key: Some(key),
             existing_only: reserved,
             session_subscribers: self.sessions.subscribers.load(Ordering::Relaxed),
@@ -1645,10 +1642,11 @@ impl Host {
         };
         let _leases = self.leases.lock().unwrap();
         self.sessions.ensure_workspace_bound(&workspace)?;
-        let stored = self.sessions.workspace(&workspace)?;
+        self.sessions.workspace(&workspace)?;
         if stop {
             anyhow::ensure!(
-                stored.terminal_id == terminal || stored.extra_terminals.contains(&terminal),
+                self.sessions
+                    .workspace_has_terminal(&workspace, &terminal)?,
                 "Unknown workspace terminal"
             );
             self.runtime.command(terminal_runtime::Command::Stop {
@@ -1905,9 +1903,10 @@ impl Host {
             "terminal.stop" | "terminal.retire" => {
                 let workspace_id = request["workspace_id"].as_str()?;
                 let terminal_id = request["terminal_id"].as_str()?;
-                let workspace = self.sessions.workspace(workspace_id).ok()?;
-                let listed = workspace.terminal_id == terminal_id
-                    || workspace.extra_terminals.iter().any(|id| id == terminal_id);
+                let listed = self
+                    .sessions
+                    .workspace_has_terminal(workspace_id, terminal_id)
+                    .ok()?;
                 if op == "terminal.retire" {
                     return (!listed).then(ack).flatten();
                 }
@@ -2221,10 +2220,10 @@ fn handle_connection(mut stream: UnixStream, host: Arc<Host>, lane: Lane) -> any
             writeln!(stream, "{}", error_response(error))?;
             return Ok(());
         }
-        let workspace = host.sessions.workspace(id)?;
+        let primary = host.sessions.primary_terminal(id)?;
         let key = request["terminal_id"]
             .as_str()
-            .filter(|t| *t != workspace.terminal_id)
+            .filter(|t| *t != primary)
             .unwrap_or(id);
         let mut upstream = host.runtime.terminal(key)?;
         upstream.write_all(first.as_bytes())?;

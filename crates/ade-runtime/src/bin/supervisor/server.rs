@@ -6,7 +6,7 @@ use ade_core::runtime_protocol::{
     terminal::{self, Command as TerminalCommand},
 };
 use ade_runtime::{
-    model::{WorkspaceRecord, now_ms},
+    model::now_ms,
     runtime::{self, PROTOCOL, read_frame, write_frame},
 };
 use anyhow::{Context, Result, ensure};
@@ -24,7 +24,7 @@ use std::{
 };
 
 struct Terminal {
-    workspace: WorkspaceRecord,
+    workspace: ade_core::contract::terminals::runtime::Workspace,
     launch: Option<ade_runtime::terminal_launch::Launch>,
     runtime: Arc<terminal_host::Runtime>,
 }

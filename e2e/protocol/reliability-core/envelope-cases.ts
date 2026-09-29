@@ -361,9 +361,9 @@ export const envelopeCases: EnvelopeCase[] = [
     setup: (ctx) => terminals(ctx, true),
     request: terminalRequest,
     observe: async (ctx, state: Terminals) =>
-      (await ctx.profile.call('catalog.get', {})).catalog.workspaces
-        .find((entry) => entry.id === state.workspaceId)
-        ?.extra_terminals?.includes(state.terminalId) ?? false,
+      (await ctx.profile.call('catalog.get', {})).catalog.terminals.some(
+        (terminal) => terminal.workspace_id === state.workspaceId && terminal.id === state.terminalId,
+      ),
     reconciles: true,
   },
   {

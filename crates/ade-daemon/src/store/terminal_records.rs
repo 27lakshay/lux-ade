@@ -1,12 +1,9 @@
 //! Terminal records: each terminal is stored flat by ID with one owning
 //! workspace (daemon-authority map, "The model").
 //!
-//! The `terminals` table is the source of truth for which terminals a
-//! workspace has. The workspace's `terminal_id` and `extra_terminals` are
-//! derived from it by [`derive`] in the same transaction as every change, and
-//! are kept for one release (removed by ticket 08 of the daemon-authority map).
-//! Every change to a workspace's terminals goes through [`insert`] and
-//! [`remove`].
+//! The `terminals` table is the only record of which terminals a workspace
+//! has; the first shell is marked `primary`. Every change to a workspace's
+//! terminals goes through [`insert`] and [`remove`].
 //!
 //! What runs in a terminal (`status`, `busy`, the foreground command and the
 //! title the program set) is observed from the runtime by [`observe`] and
@@ -237,7 +234,8 @@ pub(crate) fn load(db: &Connection, id: &str) -> Result<Option<Stored>> {
     .transpose()
 }
 
-fn of_workspace(db: &Connection, workspace_id: &str) -> Result<Vec<Stored>> {
+/// A workspace's terminals in creation order.
+pub(crate) fn of_workspace(db: &Connection, workspace_id: &str) -> Result<Vec<Stored>> {
     let mut statement =
         db.prepare("SELECT data FROM terminals WHERE workspace_id=?1 ORDER BY rowid")?;
     statement
@@ -312,6 +310,32 @@ pub(crate) fn save_live(
     Ok((after != before).then_some(after))
 }
 
+/// A workspace's primary shell.
+pub(crate) fn primary(db: &Connection, workspace_id: &str) -> Result<String> {
+    db.query_row(
+        "SELECT id FROM terminals WHERE workspace_id=?1 AND json_extract(data,'$.primary')=1",
+        [workspace_id],
+        |row| row.get(0),
+    )
+    .optional()?
+    .with_context(|| format!("Workspace {workspace_id} has no primary shell"))
+}
+
+/// How many terminals a workspace may have besides its primary shell.
+pub(crate) const MAX_EXTRA: i64 = 32;
+
+/// Refuses another terminal when the workspace has [`MAX_EXTRA`] besides its
+/// primary shell.
+pub(crate) fn ensure_room(db: &Connection, workspace_id: &str) -> Result<()> {
+    let extra: i64 = db.query_row(
+        "SELECT COUNT(*) FROM terminals WHERE workspace_id=?1 AND COALESCE(json_extract(data,'$.primary'),0)=0",
+        [workspace_id],
+        |row| row.get(0),
+    )?;
+    ensure!(extra < MAX_EXTRA, "Workspace terminal limit reached");
+    Ok(())
+}
+
 /// Adds a terminal to its workspace.
 pub(crate) fn insert(tx: &Connection, stored: &Stored) -> Result<()> {
     ensure!(
@@ -319,8 +343,7 @@ pub(crate) fn insert(tx: &Connection, stored: &Stored) -> Result<()> {
         "Terminal {} already exists",
         stored.id
     );
-    write(tx, stored)?;
-    derive(tx, &stored.workspace_id)
+    write(tx, stored)
 }
 
 /// Removes a terminal from its workspace and its tabs from every layout. A
@@ -345,29 +368,7 @@ pub(crate) fn remove(
             id: terminal_id.to_owned(),
         },
     )?;
-    derive(tx, workspace_id)?;
     Ok(Some(layouts))
-}
-
-/// Rewrites a workspace's `terminal_id` and `extra_terminals` from its
-/// terminal records. A workspace without a primary record keeps its
-/// `terminal_id` and gains a record for it.
-pub(crate) fn derive(tx: &Connection, workspace_id: &str) -> Result<()> {
-    let mut workspace: WorkspaceRecord = one(tx, "workspaces", workspace_id)?;
-    let mut terminals = of_workspace(tx, workspace_id)?;
-    if !terminals.iter().any(|terminal| terminal.primary) {
-        let primary = Stored::primary(&workspace.terminal_id, workspace_id);
-        write(tx, &primary)?;
-        terminals.insert(0, primary);
-    }
-    let (primary, extra): (Vec<_>, Vec<_>) = terminals.into_iter().partition(|t| t.primary);
-    workspace.terminal_id = primary[0].id.clone();
-    workspace.extra_terminals = extra.into_iter().map(|terminal| terminal.id).collect();
-    tx.execute(
-        "UPDATE workspaces SET terminal_id=?2,data=?3 WHERE id=?1",
-        params![workspace_id, workspace.terminal_id, encode(&workspace)?],
-    )?;
-    Ok(())
 }
 
 #[cfg(test)]
@@ -377,10 +378,11 @@ mod tests {
 
     fn entry(metrics: Value, activity: Activity) -> Terminal {
         Terminal {
-            workspace: serde_json::from_value(json!({
-                "id": "w", "repository_id": null, "root": "/tmp/w", "name": "w", "terminal_id": "t",
-            }))
-            .unwrap(),
+            workspace: runtime::Workspace {
+                id: "w".into(),
+                root: "/tmp/w".into(),
+                terminal_id: "t".into(),
+            },
             metrics,
             activity,
         }
@@ -501,11 +503,12 @@ mod tests {
     }
 
     #[test]
-    fn records_own_the_workspace_terminal_fields() {
+    fn a_workspace_starts_with_a_primary_shell_and_keeps_one() {
         let scratch = Scratch::new();
         let store = scratch.open();
         let workspace = store.workspace_open(&scratch.root(), None).unwrap();
-        let primary = store.terminal(&workspace.terminal_id).unwrap().unwrap();
+        let first = store.primary_terminal(&workspace.id).unwrap();
+        let primary = store.terminal(&first).unwrap().unwrap();
         assert!(primary.primary && primary.kind == TerminalKind::Shell);
         assert_eq!(primary.status, TerminalStatus::NotStarted);
 
@@ -513,10 +516,9 @@ mod tests {
             .create_terminal(&workspace.id, None, Some("Logs"))
             .unwrap();
         let plain = store.create_terminal(&workspace.id, None, None).unwrap();
-        let listed = |store: &Store| store.workspace(&workspace.id).unwrap();
         assert_eq!(
-            listed(&store).extra_terminals,
-            vec![named.clone(), plain.clone()]
+            store.workspace_terminals(&workspace.id).unwrap(),
+            vec![first.clone(), named.clone(), plain.clone()]
         );
         assert_eq!(store.terminal(&named).unwrap().unwrap().title, "Logs");
         let ids: Vec<_> = store
@@ -526,21 +528,34 @@ mod tests {
             .into_iter()
             .map(|terminal| terminal.id)
             .collect();
-        assert_eq!(
-            ids,
-            vec![workspace.terminal_id.clone(), named.clone(), plain.clone()]
-        );
+        assert_eq!(ids, vec![first.clone(), named.clone(), plain.clone()]);
 
         // Retiring the primary shell gives the workspace a new one.
-        store
-            .retire_terminal(&workspace.id, &workspace.terminal_id)
-            .unwrap();
-        let replaced = listed(&store).terminal_id;
-        assert_ne!(replaced, workspace.terminal_id);
-        assert!(store.terminal(&workspace.terminal_id).unwrap().is_none());
+        store.retire_terminal(&workspace.id, &first).unwrap();
+        let replaced = store.primary_terminal(&workspace.id).unwrap();
+        assert_ne!(replaced, first);
+        assert!(store.terminal(&first).unwrap().is_none());
+        assert!(!store.workspace_has_terminal(&workspace.id, &first).unwrap());
         assert!(store.terminal(&replaced).unwrap().unwrap().primary);
         store.retire_terminal(&workspace.id, &named).unwrap();
-        assert_eq!(listed(&store).extra_terminals, vec![plain]);
+        assert_eq!(
+            store.workspace_terminals(&workspace.id).unwrap(),
+            vec![plain, replaced]
+        );
+    }
+
+    #[test]
+    fn a_workspace_holds_at_most_32_terminals_besides_its_primary_shell() {
+        let scratch = Scratch::new();
+        let store = scratch.open();
+        let workspace = store.workspace_open(&scratch.root(), None).unwrap();
+        for _ in 0..MAX_EXTRA {
+            store.create_terminal(&workspace.id, None, None).unwrap();
+        }
+        let refused = store
+            .create_terminal(&workspace.id, None, None)
+            .unwrap_err();
+        assert_eq!(refused.to_string(), "Workspace terminal limit reached");
     }
 
     #[test]
@@ -548,31 +563,28 @@ mod tests {
         let scratch = Scratch::new();
         let store = scratch.open();
         let workspace = store.workspace_open(&scratch.root(), None).unwrap();
+        let primary = store.primary_terminal(&workspace.id).unwrap();
         let running = Live {
             status: TerminalStatus::Running,
             program: Some("zsh".into()),
             ..Default::default()
         };
         let changed = store
-            .save_terminal_state(&workspace.terminal_id, running.clone())
+            .save_terminal_state(&primary, running.clone())
             .unwrap()
             .unwrap();
         assert_eq!(changed.status, TerminalStatus::Running);
         assert_eq!(changed.title, "zsh");
         assert!(
             store
-                .save_terminal_state(&workspace.terminal_id, running)
+                .save_terminal_state(&primary, running)
                 .unwrap()
                 .is_none()
         );
         drop(store);
         let store = scratch.open();
         assert_eq!(
-            store
-                .terminal(&workspace.terminal_id)
-                .unwrap()
-                .unwrap()
-                .status,
+            store.terminal(&primary).unwrap().unwrap().status,
             TerminalStatus::Running
         );
     }
@@ -587,7 +599,7 @@ mod tests {
         let scratch = Scratch::new();
         let store = scratch.open();
         let workspace = store.workspace_open(&scratch.root(), None).unwrap();
-        let id = &workspace.terminal_id;
+        let id = &store.primary_terminal(&workspace.id).unwrap();
         let running = Live {
             status: TerminalStatus::Running,
             program: Some("zsh".into()),

@@ -6,7 +6,7 @@
 import { mkdir, realpath, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { CallRequest, DailyUseResponse } from '../../../packages/client/dist/index.js'
-import { expect, test, type ScratchProfile } from '../fixtures'
+import { expect, primaryShell, type ScratchProfile, test } from '../fixtures'
 import { subscribeFeed } from '../fixtures/feed'
 import { configureService, nodeService, writeServicePrograms } from '../fixtures/services'
 import { TerminalStream } from '../fixtures/terminals'
@@ -21,10 +21,12 @@ type CliReply = {
 }
 
 /** A new plain folder under the test's temp root, opened as a workspace. */
+/** Open a new folder as a workspace; `shell` is its primary shell. */
 async function workspace(profile: ScratchProfile, name: string) {
   const path = join(profile.root, 'folders', name)
   await mkdir(path, { recursive: true })
-  return (await profile.call('workspace.open', { path: await realpath(path) })).workspace
+  const { workspace } = await profile.call('workspace.open', { path: await realpath(path) })
+  return { ...workspace, shell: await primaryShell(profile, workspace.id) }
 }
 
 /** The error a rejected SDK call raised, with its daemon code. */
@@ -52,7 +54,7 @@ function pane(node: LayoutNode, id: string): Extract<LayoutNode, { type: 'pane' 
 }
 
 test('every layout action applies through the SDK, and layout.get reads back each result', async ({ profile }) => {
-  const { id: workspaceId, terminal_id: terminalId } = await workspace(profile, 'actions')
+  const { id: workspaceId, shell: terminalId } = await workspace(profile, 'actions')
   const created = await profile.call('window.create', { window_id: 'w1', workspace_id: workspaceId })
   expect(created.window).toMatchObject({ id: 'w1', workspace_id: workspaceId, state: 'open', bounds: null })
   const fresh = await profile.call('layout.get', { window_id: 'w1' })
@@ -148,7 +150,7 @@ test('the CLI drives windows, tabs and panes, and reads the layout back', async 
   })
   expect((await ok('window', 'list')).windows).toHaveLength(1)
   // Commands without --window act on the only open window.
-  const opened = await ok('tab', 'open', 'terminal', first.terminal_id, '--id', 'shell')
+  const opened = await ok('tab', 'open', 'terminal', first.shell, '--id', 'shell')
   expect(opened.layout.revision).toBe(1)
   const split = await ok('pane', 'split', 'pane-main', '--direction', 'row', '--id', 'right')
   expect(shape(split.layout.layout.root)).toBe('row(pane-main,right)')
@@ -160,7 +162,7 @@ test('the CLI drives windows, tabs and panes, and reads the layout back', async 
   // The shell's only tab: tab close ends the shell too, as terminal.close would.
   const closed = await ok('tab', 'close', 'shell')
   expect(closed.layout.layout.tabs.shell).toBeUndefined()
-  expect((await profile.call('catalog.get', {})).catalog.terminals.map((t) => t.id)).not.toContain(first.terminal_id)
+  expect((await profile.call('catalog.get', {})).catalog.terminals.map((t) => t.id)).not.toContain(first.shell)
   const paneClosed = await ok('pane', 'close', 'right')
   // The shell's pane emptied and went; closing the last pane empties it.
   expect((await ok('layout', 'get')).layout.layout.tabs).toEqual({})
@@ -226,7 +228,7 @@ test('the CLI drives windows, tabs and panes, and reads the layout back', async 
 test('a replayed layout.apply keeps its revision, and a stale expected_revision is refused as a conflict', async ({
   profile,
 }) => {
-  const { id: workspaceId, terminal_id: terminalId } = await workspace(profile, 'replay')
+  const { id: workspaceId, shell: terminalId } = await workspace(profile, 'replay')
   await profile.call('window.create', { window_id: 'w', workspace_id: workspaceId })
   // A command that names its new tab or pane: the retry finds it made.
   const open = {
@@ -292,7 +294,7 @@ test('a replayed layout.apply keeps its revision, and a stale expected_revision 
 })
 
 test('windows and layouts survive a daemon restart', async ({ profile }) => {
-  const { id: workspaceId, terminal_id: terminalId } = await workspace(profile, 'restart')
+  const { id: workspaceId, shell: terminalId } = await workspace(profile, 'restart')
   await profile.call('window.create', {
     window_id: 'kept',
     workspace_id: workspaceId,
@@ -332,7 +334,7 @@ test('removing a workspace deletes its layouts and moves its windows, and the fe
   await profile.call('window.create', { window_id: 'moving', workspace_id: removed.id })
   await profile.call('layout.apply', {
     window_id: 'moving',
-    action: { type: 'open_tab', tab: { id: 'shell', target: { kind: 'terminal', id: removed.terminal_id } } },
+    action: { type: 'open_tab', tab: { id: 'shell', target: { kind: 'terminal', id: removed.shell } } },
   })
   const feed = await subscribeFeed(profile)
   await feed.connected()
@@ -621,7 +623,10 @@ test('removing a service, or the workspace of a shown terminal, publishes the la
   await profile.call('window.create', { window_id: 'v', workspace_id: other.id })
   await profile.call('layout.apply', {
     window_id: 'v',
-    action: { type: 'open_tab', tab: { id: 'remote', target: { kind: 'terminal', id: home.terminal_id } } },
+    action: {
+      type: 'open_tab',
+      tab: { id: 'remote', target: { kind: 'terminal', id: await primaryShell(profile, home.id) } },
+    },
   })
   const feed = await subscribeFeed(profile)
   await feed.connected()

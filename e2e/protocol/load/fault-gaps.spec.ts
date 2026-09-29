@@ -13,7 +13,7 @@ import { chmod, mkdir } from 'node:fs/promises'
 import { createServer, type Server } from 'node:net'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { expect, prompts, send, startConversation, test, type ScratchProfile } from '../fixtures'
+import { expect, primaryShell, prompts, type ScratchProfile, send, startConversation, test } from '../fixtures'
 import { ownerStorageProfile, fixedBrowserProfile } from '../fixtures/browser-owner'
 import { rawReply } from '../fixtures/raw-reply'
 import { socketReply } from '../fixtures/sockets'
@@ -273,7 +273,8 @@ test('fault class 9: a daemon of an older runtime protocol cannot claim the live
   profile,
 }) => {
   const { workspace } = await profile.call('workspace.open', { path: profile.defaultWorkspaceRoot })
-  const target = [workspace.id, workspace.terminal_id] as const
+  const shellId = await primaryShell(profile, workspace.id)
+  const target = [workspace.id, shellId] as const
   const before = (await terminalMetrics(profile, ...target))!
   const runtime = (await socketReply(profile.runtimeSocket, { op: 'hello' })).frame!
   const instance = runtime.instance_id as string

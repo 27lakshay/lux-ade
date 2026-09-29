@@ -51,8 +51,8 @@ test('a closed view, a daemon kill and a graceful restart leave the run, its too
   const repositoryId = await adopt(observer, repo.path, tree)
   const launch = await launchShell(worker, tree)
   expect(launch.launched).toBe(true)
-  const { workspace } = launch
-  const shell = [workspace.id, workspace.terminal_id] as const
+  const { workspace, shellId } = launch
+  const shell = [workspace.id, shellId] as const
   const [claim] = await claimsOn(worker, tree)
   expect(claim).toMatchObject({ mode: 'shared', purpose: 'use', state: 'active', owner_live: true, mine: true })
 
@@ -160,7 +160,7 @@ test('a closed view, a daemon kill and a graceful restart leave the run, its too
     shell_running: true,
   })
   // The claim goes only when the work that holds it stops: the shell and the provider run.
-  await worker.call('terminal.stop', { workspace_id: workspace.id, terminal_id: workspace.terminal_id })
+  await worker.call('terminal.stop', { workspace_id: workspace.id, terminal_id: shellId })
   await worker.call('agent.disconnect', { conversation_id: conversationId })
   await expect.poll(async () => (await claimsOn(observer, tree)).length).toBe(0)
 })

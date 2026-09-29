@@ -45,9 +45,11 @@ async function terminalTarget(socketPath: string, workspaceId: string, terminalI
   if (!Array.isArray(workspaces)) throw new CliError('protocol', 'Daemon catalog has no workspaces.')
   const workspace = workspaces.find((value) => value && typeof value === 'object' && value.id === workspaceId)
   if (!workspace) throw new CliError('invalid_request', 'Workspace is absent from the selected profile.')
-  const owned =
-    workspace.terminal_id === terminalId ||
-    (Array.isArray(workspace.extra_terminals) && workspace.extra_terminals.includes(terminalId))
+  const terminals = result.terminals
+  if (!Array.isArray(terminals)) throw new CliError('protocol', 'Daemon catalog has no terminals.')
+  const owned = terminals.some(
+    (value) => value && typeof value === 'object' && value.id === terminalId && value.workspace_id === workspaceId,
+  )
   if (!owned) throw new CliError('invalid_request', 'Terminal is absent from the selected workspace.')
 }
 
@@ -299,10 +301,9 @@ export async function runTerminalCommand(
     if (!Array.isArray(records)) throw new CliError('protocol', 'Daemon catalog has no terminals.')
     return {
       type: 'terminals',
-      // `terminal_id` repeats `id` for scripts written against the older list.
-      terminals: records
-        .filter((item) => item && typeof item === 'object' && (!rest[0] || item.workspace_id === rest[0]))
-        .map((item) => ({ ...item, terminal_id: item.id })),
+      terminals: records.filter(
+        (item) => item && typeof item === 'object' && (!rest[0] || item.workspace_id === rest[0]),
+      ),
     }
   }
   if (area === 'terminal' && action === 'create') {

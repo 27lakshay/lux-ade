@@ -521,7 +521,7 @@ pub mod runtime {
         Restart(Ensure),
         #[serde(rename = "terminal.launch")]
         Launch {
-            workspace: WorkspaceRecord,
+            workspace: Workspace,
             /// The runtime key; absent means the workspace ID.
             #[serde(default, skip_serializing_if = "Option::is_none")]
             terminal_key: Option<String>,
@@ -531,11 +531,30 @@ pub mod runtime {
         },
     }
 
+    /// The terminal a runtime command names: its workspace's ID and folder,
+    /// and the terminal's own ID.
+    #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+    pub struct Workspace {
+        pub id: String,
+        pub root: String,
+        pub terminal_id: String,
+    }
+
+    impl Workspace {
+        pub fn new(workspace: &WorkspaceRecord, terminal_id: &str) -> Self {
+            Self {
+                id: workspace.id.clone(),
+                root: workspace.root.clone(),
+                terminal_id: terminal_id.to_owned(),
+            }
+        }
+    }
+
     /// Start a terminal's shell if it is absent (`terminal.ensure`) or exited
     /// (`terminal.restart`). `existing_only` refuses to start a new shell.
     #[derive(Serialize, Deserialize, Clone, Debug)]
     pub struct Ensure {
-        pub workspace: WorkspaceRecord,
+        pub workspace: Workspace,
         /// The runtime key; absent means the workspace ID.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub terminal_key: Option<String>,
@@ -561,7 +580,7 @@ pub mod runtime {
     /// metrics object (`shell_running`, `transfer_id`, `shell_pid`, ...).
     #[derive(Serialize, Deserialize, Clone, Debug)]
     pub struct Terminal {
-        pub workspace: WorkspaceRecord,
+        pub workspace: Workspace,
         #[serde(default)]
         pub metrics: Value,
         #[serde(default)]
@@ -834,10 +853,11 @@ mod tests {
 
     #[test]
     fn runtime_commands_keep_their_wire_shape() {
-        let workspace: crate::model::WorkspaceRecord = serde_json::from_value(json!({
-            "id": "w", "repository_id": null, "root": "/tmp/w", "name": "w", "terminal_id": "t",
-        }))
-        .unwrap();
+        let workspace = runtime::Workspace {
+            id: "w".into(),
+            root: "/tmp/w".into(),
+            terminal_id: "t".into(),
+        };
         assert_eq!(
             runtime::Command::List.to_value(),
             json!({"op": "terminal.list"})

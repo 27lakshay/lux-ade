@@ -6,7 +6,7 @@ import { execFile } from 'node:child_process'
 import { createServer } from 'node:net'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { expect, test } from '../fixtures'
+import { expect, primaryShell, test } from '../fixtures'
 import { binaries } from '../fixtures/environment'
 
 const run = promisify(execFile)
@@ -80,7 +80,7 @@ test('CLI distinguishes an unavailable socket from an incompatible daemon protoc
 
 test('terminal attach preserves signal exit status and restores the local TTY', async ({ profile }) => {
   const workspace = (await profile.call('catalog.get', {})).catalog.workspaces[0]!
-  const terminalId = workspace.terminal_id!
+  const terminalId = await primaryShell(profile, workspace.id)
   const inspect = async () =>
     (await profile.cli('terminal', 'inspect', workspace.id, terminalId)).json!.metrics as {
       shell_pid: number

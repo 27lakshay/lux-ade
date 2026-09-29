@@ -109,6 +109,18 @@ impl Sessions {
         }
         Ok(())
     }
+    /// A workspace's primary shell.
+    pub fn primary_terminal(&self, workspace: &str) -> Result<String> {
+        self.data.lock().unwrap().store.primary_terminal(workspace)
+    }
+    /// Whether `terminal` is one of the workspace's terminals.
+    pub fn workspace_has_terminal(&self, workspace: &str, terminal: &str) -> Result<bool> {
+        self.data
+            .lock()
+            .unwrap()
+            .store
+            .workspace_has_terminal(workspace, terminal)
+    }
     pub fn terminal_reserved(&self, terminal: &str) -> Result<bool> {
         self.data.lock().unwrap().store.terminal_reserved(terminal)
     }

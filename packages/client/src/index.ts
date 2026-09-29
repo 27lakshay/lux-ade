@@ -108,13 +108,6 @@ export interface Workspace {
   root: string
   /** The name ADE shows; `workspace.rename` changes it, never the folder. */
   name: string
-  terminal_id: string
-  /**
-   * The workspace's other terminals: extra shells, service terminals and
-   * script runs. The SDK's catalog parser always sets it; it is optional only
-   * so hand-built fixtures stay valid.
-   */
-  extra_terminals?: string[]
   /**
    * The workspace's repository, or null for a plain folder.
    * @deprecated Read `project_id`, which a plain folder has too; kept for one release.
@@ -281,7 +274,7 @@ function stringFields(value: unknown, keys: string[]): string[] | null {
 }
 
 function parseWorkspace(value: unknown): Workspace | null {
-  const fields = stringFields(value, ['id', 'root', 'name', 'terminal_id'])
+  const fields = stringFields(value, ['id', 'root', 'name'])
   const source = record(value)
   if (!fields || !source) return null
   const repositoryId = source.repository_id
@@ -292,8 +285,6 @@ function parseWorkspace(value: unknown): Workspace | null {
     typeof source.worktree_lifecycle_needs_rebind !== 'boolean'
   )
     return null
-  const extraTerminals = source.extra_terminals ?? []
-  if (!Array.isArray(extraTerminals) || !extraTerminals.every((id) => requiredString(id) !== null)) return null
   const projectId = source.project_id ?? null
   if (projectId !== null && typeof projectId !== 'string') return null
   const kind = source.kind ?? null
@@ -306,8 +297,6 @@ function parseWorkspace(value: unknown): Workspace | null {
     id: fields[0],
     root: fields[1],
     name: fields[2],
-    terminal_id: fields[3],
-    extra_terminals: extraTerminals as string[],
     repository_id: repositoryId ?? null,
     needs_rebind: source.needs_rebind === true,
     worktree_lifecycle_needs_rebind: source.worktree_lifecycle_needs_rebind === true,

@@ -295,18 +295,17 @@ impl Sessions {
         agents.sort();
         Ok(agents)
     }
-    /// Retires a removed workspace's terminals from its record, once, and
-    /// releases the worktree leases its script runs held. Returns the record
-    /// as it now stands; the caller releases the runtime state of every
-    /// terminal it no longer lists.
-    pub fn retire_removed_terminals(&self, id: &str) -> Result<WorkspaceRecord> {
+    /// Retires a removed workspace's terminal records, once, and releases the
+    /// worktree leases its script runs held. The caller then releases the
+    /// runtime state of every terminal the workspace no longer has.
+    pub fn retire_removed_terminals(&self, id: &str) -> Result<()> {
         let mut d = self.data.lock().unwrap();
         let (retired, layouts) = d.store.retire_removed_terminal_tabs(id)?;
         for terminal in retired {
             d.terminal_leases.remove(&terminal);
         }
         self.layouts_changed(&mut d, &layouts);
-        d.store.workspace(id)
+        Ok(())
     }
     pub fn has_pending_rebind(&self) -> Result<bool> {
         if self.worktrees.has_pending_rebind()? {

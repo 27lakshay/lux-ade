@@ -2,7 +2,7 @@
 // system; none sleeps.
 import { access, realpath } from 'node:fs/promises'
 import { join } from 'node:path'
-import { expect, type AdeHarness, type ScratchProfile, type ScratchRepo } from '../fixtures'
+import { type AdeHarness, expect, primaryShell, type ScratchProfile, type ScratchRepo } from '../fixtures'
 import { rawReply } from '../fixtures/raw-reply'
 
 let refreshes = 0
@@ -57,7 +57,8 @@ export async function adopt(profile: ScratchProfile, repoPath: string, tree: str
 /** Open `tree` as a workspace and start its terminal shell through the CLI. Returns the shell's PID. */
 export async function launchShell(profile: ScratchProfile, tree: string) {
   const { workspace } = await profile.call('workspace.open', { path: tree })
-  const inspected = await profile.cli('terminal', 'inspect', workspace.id, workspace.terminal_id)
+  const shellId = await primaryShell(profile, workspace.id)
+  const inspected = await profile.cli('terminal', 'inspect', workspace.id, shellId)
   expect(inspected.code, inspected.stderr).toBe(0)
   const metrics = (inspected.json as { metrics: { shell_pid: number; shell_running: boolean } }).metrics
   expect(metrics.shell_running).toBe(true)

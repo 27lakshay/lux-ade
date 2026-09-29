@@ -183,10 +183,12 @@ impl Sessions {
                 first_row,
             } => {
                 same_workspace(source)?;
-                let workspace = self.data.lock().unwrap().store.workspace(source)?;
                 ensure!(
-                    workspace.terminal_id == *terminal_id
-                        || workspace.extra_terminals.contains(terminal_id),
+                    self.data
+                        .lock()
+                        .unwrap()
+                        .store
+                        .workspace_has_terminal(source, terminal_id)?,
                     "The workspace has no terminal with this ID"
                 );
                 let body = core::bound(&client_text(text)?, BODY_LIMIT, Keep::Tail);

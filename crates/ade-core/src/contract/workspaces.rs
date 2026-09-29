@@ -401,8 +401,8 @@ mod tests {
 
     fn workspace() -> Value {
         json!({
-            "extra_terminals": [], "id": "workspace_1", "repository_id": null,
-            "root": "/tmp/project", "name": "project", "terminal_id": "terminal_1",
+            "id": "workspace_1", "repository_id": null,
+            "root": "/tmp/project", "name": "project",
             "needs_rebind": false, "worktree_lifecycle_needs_rebind": false,
             "project_id": "project_1", "kind": "folder", "branch": null,
             "default": false, "ade_owned": false,

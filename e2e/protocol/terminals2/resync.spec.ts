@@ -10,7 +10,7 @@ import { createServer } from 'node:net'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { Worker } from 'node:worker_threads'
-import { expect, test, type ScratchProfile } from '../fixtures'
+import { expect, primaryShell, type ScratchProfile, test } from '../fixtures'
 import { binaries } from '../fixtures/environment'
 import type { ProcessLedger } from '../fixtures/processes'
 import { attachThroughTty, clientSdk, terminalMetrics, TerminalStream, type TerminalFrame } from '../fixtures/terminals'
@@ -71,7 +71,8 @@ async function slowViewer(profile: ScratchProfile, workspaceId: string, terminal
 
 async function openTerminal(profile: ScratchProfile) {
   const { workspace } = await profile.call('workspace.open', { path: profile.defaultWorkspaceRoot })
-  const target = [workspace.id, workspace.terminal_id] as const
+  const shellId = await primaryShell(profile, workspace.id)
+  const target = [workspace.id, shellId] as const
   const stream = TerminalStream.open(profile, ...target)
   const runId = (await stream.snapshot()).run_id as string
   const shellPid = (await terminalMetrics(profile, ...target))!.shell_pid

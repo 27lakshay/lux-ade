@@ -9,12 +9,13 @@ import { basename, dirname, join } from 'node:path'
 import {
   expect,
   isRunning,
+  primaryShell,
   prompts,
+  type ScratchProfile,
   send,
   startConversation,
   test,
   waitForIdle,
-  type ScratchProfile,
 } from '../fixtures'
 import { subscribeFeed } from '../fixtures/feed'
 import { terminalMetrics, TerminalStream } from '../fixtures/terminals'
@@ -111,18 +112,19 @@ test('remove hides the workspace, stops its terminals and Agent, keeps its files
   await send(profile, conversationId, prompts.turn)
   await waitForIdle(profile, conversationId)
   const { workspace } = await profile.call('workspace.open', { path })
+  const shellId = await primaryShell(profile, workspace.id)
   const { terminal_id: extraId } = await profile.call('terminal.create', {
     workspace_id: workspaceId,
     operation_id: operationId('extra'),
   })
-  const primary = TerminalStream.open(profile, workspaceId, workspace.terminal_id)
+  const primary = TerminalStream.open(profile, workspaceId, shellId)
   const extra = TerminalStream.open(profile, workspaceId, extraId)
   await primary.snapshot()
   await extra.snapshot()
   const shells = await Promise.all(
-    [workspace.terminal_id, extraId].map(async (id) => (await terminalMetrics(profile, workspaceId, id))!.shell_pid),
+    [shellId, extraId].map(async (id) => (await terminalMetrics(profile, workspaceId, id))!.shell_pid),
   )
-  expect((await runningShells(profile, workspaceId)).sort()).toEqual([workspace.terminal_id, extraId].sort())
+  expect((await runningShells(profile, workspaceId)).sort()).toEqual([shellId, extraId].sort())
 
   const id = operationId('remove')
   const removed = await profile.cli('--operation-id', id, 'workspace', 'remove', workspaceId)
@@ -159,9 +161,11 @@ test('remove hides the workspace, stops its terminals and Agent, keeps its files
   expect((await catalog(profile)).workspaces.map((item) => item.id)).not.toContain(workspaceId)
   const reopened = await profile.call('workspace.open', { path })
   expect(reopened.workspace.id).toBe(workspaceId)
-  expect(reopened.workspace.terminal_id).not.toBe(workspace.terminal_id)
-  expect(reopened.workspace.extra_terminals).toEqual([])
   const restored = await catalog(profile)
+  const reopenedShells = restored.terminals.filter((terminal) => terminal.workspace_id === workspaceId)
+  expect(reopenedShells).toHaveLength(1)
+  expect(reopenedShells[0]).toMatchObject({ primary: true })
+  expect(reopenedShells[0]!.id).not.toBe(shellId)
   expect(restored.workspaces.map((item) => item.id)).toContain(workspaceId)
   expect(restored.conversations.find((item) => item.id === conversationId)).toMatchObject({
     workspace_id: workspaceId,
@@ -257,12 +261,11 @@ test('the catalog lists each repository once, named after its checkout folder, f
   ])
   expect(basename(repo.path)).toBe('shop')
 
-  // The SDK's catalog parser keeps the repositories and each workspace's extra terminals.
+  // The SDK's catalog parser keeps the repositories.
   const feed = await subscribeFeed(profile)
   await feed.connected()
   const state = feed.client.getState().catalog!
   expect(state.repositories).toEqual(listed.repositories)
-  expect(state.workspaces.find((item) => item.id === main.id)?.extra_terminals).toEqual([])
   feed.stop()
 
   // A repository leaves the catalog with the last of its workspaces.

@@ -12,7 +12,7 @@ import { binaries } from './environment'
 import type { ScratchProfile } from './profile'
 import { turnReply } from './providers'
 import { configureService, nodeService, waitForReadiness, writeServicePrograms } from './services'
-import { TerminalStream } from './terminals'
+import { primaryShell, TerminalStream } from './terminals'
 import { expect } from '@playwright/test'
 
 export type Workload = {
@@ -35,6 +35,7 @@ export async function startWorkload(
   shape: LoadShape,
 ): Promise<Workload> {
   const { workspace } = await profile.call('workspace.open', { path: workspacePath })
+  const shellId = await primaryShell(profile, workspace.id)
   const conversations = await Promise.all(
     Array.from({ length: shape.agents }, async () => {
       const conversationId = (
@@ -55,7 +56,7 @@ export async function startWorkload(
     }),
   )
 
-  const terminalIds = [workspace.terminal_id]
+  const terminalIds = [shellId]
   for (let index = 1; index < shape.terminals; index++) {
     terminalIds.push((await profile.call('terminal.create', { workspace_id: workspace.id })).terminal_id)
   }

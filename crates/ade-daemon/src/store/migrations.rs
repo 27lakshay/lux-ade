@@ -10,7 +10,7 @@ pub const SCHEMA_VERSION: i64 = 21;
 /// runtime recovery, receipts and others) add them with `IF NOT EXISTS`.
 const SCHEMA: &str = "
     CREATE TABLE repositories(id TEXT PRIMARY KEY, root TEXT NOT NULL UNIQUE, data TEXT NOT NULL);
-    CREATE TABLE workspaces(id TEXT PRIMARY KEY, repository_id TEXT REFERENCES repositories(id), root TEXT NOT NULL UNIQUE, terminal_id TEXT NOT NULL UNIQUE, data TEXT NOT NULL);
+    CREATE TABLE workspaces(id TEXT PRIMARY KEY, repository_id TEXT REFERENCES repositories(id), root TEXT NOT NULL UNIQUE, data TEXT NOT NULL);
     CREATE TABLE conversations(id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id), data TEXT NOT NULL);
     CREATE TABLE messages(id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES conversations(id), provider_item_id TEXT, sequence INTEGER NOT NULL CHECK(sequence>0), data TEXT NOT NULL, UNIQUE(conversation_id,sequence), UNIQUE(conversation_id,provider_item_id));
     CREATE TABLE requests(id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES conversations(id), status TEXT NOT NULL, data TEXT NOT NULL);

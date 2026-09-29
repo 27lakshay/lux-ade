@@ -13,13 +13,10 @@ pub struct Repository {
 }
 #[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
 pub struct WorkspaceRecord {
-    #[serde(default)]
-    pub extra_terminals: Vec<String>,
     pub id: String,
     pub repository_id: Option<String>,
     pub root: String,
     pub name: String,
-    pub terminal_id: String,
     #[serde(default)]
     pub needs_rebind: bool,
     #[serde(default)]

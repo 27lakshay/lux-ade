@@ -4,7 +4,7 @@
 // reported as exited, no input is replayed, and live output continues. Every
 // client, through the SDK and through the CLI, sees the same limit.
 import { access, writeFile } from 'node:fs/promises'
-import { expect, test } from '../fixtures'
+import { expect, primaryShell, test } from '../fixtures'
 import { terminalMetrics, TerminalStream } from '../fixtures/terminals'
 
 test('terminal output past the replay bound while the daemon is down is reported as incomplete, not as an exit', async ({
@@ -12,7 +12,8 @@ test('terminal output past the replay bound while the daemon is down is reported
 }) => {
   test.setTimeout(120_000)
   const { workspace } = await profile.call('workspace.open', { path: profile.defaultWorkspaceRoot })
-  const target = [workspace.id, workspace.terminal_id] as const
+  const shellId = await primaryShell(profile, workspace.id)
+  const target = [workspace.id, shellId] as const
   const first = TerminalStream.open(profile, ...target)
   const snapshot = await first.snapshot()
   const runId = snapshot.run_id as string

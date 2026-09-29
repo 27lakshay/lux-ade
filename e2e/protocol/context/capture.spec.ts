@@ -4,7 +4,15 @@
 // receives, and a repeated capture never reads its source again.
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { expect, startConversation, test, waitForIdle, type ScratchProfile, type ScratchRepo } from '../fixtures'
+import {
+  expect,
+  primaryShell,
+  startConversation,
+  test,
+  waitForIdle,
+  type ScratchProfile,
+  type ScratchRepo,
+} from '../fixtures'
 import { contextCaptureReply, startBrowserOwner } from '../fixtures/browser-owner'
 import { configureService, nodeService, writeServicePrograms } from '../fixtures/services'
 import { codexInputs, sha256, snapshot, waitForPrompts } from './helpers'
@@ -14,8 +22,7 @@ const source = Array.from({ length: 10 }, (_, index) => `line ${index + 1}`).joi
 async function codexOnRepo(profile: ScratchProfile, repo: ScratchRepo) {
   await repo.commit('Add source', { 'src/app.ts': source })
   const { workspaceId, conversationId } = await startConversation(profile, 'codex', repo.path)
-  const workspace = (await profile.call('workspace.open', { path: repo.path })).workspace
-  return { workspaceId, conversationId, terminalId: workspace.terminal_id }
+  return { workspaceId, conversationId, terminalId: await primaryShell(profile, workspaceId) }
 }
 
 /** Capture and return the reply, failing with the daemon's message. */

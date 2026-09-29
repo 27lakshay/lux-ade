@@ -1,12 +1,13 @@
 // F083 and 07-S10: terminal.stop is proven only by an empty process tree. A
 // shell's exit says nothing about a child that ignores SIGTERM and SIGHUP, so
 // the stop must escalate and report the tree's verdict, not the shell's status.
-import { expect, isRunning, test } from '../fixtures'
+import { expect, isRunning, primaryShell, test } from '../fixtures'
 import { settledExit, terminalMetrics, TerminalStream } from '../fixtures/terminals'
 
 test('a stop settles as exited only after a child that ignores TERM and HUP is gone', async ({ ade, profile }) => {
   const { workspace } = await profile.call('workspace.open', { path: profile.defaultWorkspaceRoot })
-  const target = [workspace.id, workspace.terminal_id] as const
+  const shellId = await primaryShell(profile, workspace.id)
+  const target = [workspace.id, shellId] as const
   const stream = TerminalStream.open(profile, ...target)
   const runId = (await stream.snapshot()).run_id as string
   // A background child that ignores the signals a shell hang-up and a polite stop send.
@@ -56,7 +57,7 @@ test('a stopped extra terminal can be retired, and a running one cannot', async 
   expect(retired.code, retired.stderr).toBe(0)
   expect(await terminalMetrics(profile, ...target)).toBeUndefined()
   const catalog = await profile.call('catalog.get', {})
-  expect(catalog.catalog.workspaces.find((entry) => entry.id === workspace.id)?.extra_terminals).toEqual([])
+  expect(catalog.catalog.terminals.filter((entry) => entry.workspace_id === workspace.id && !entry.primary)).toEqual([])
   // The receipt still names the terminal it created.
   const receipt = await profile.cli('terminal', 'operation', workspace.id, 'retire-me')
   expect(receipt.json).toMatchObject({ terminal_id: terminalId })

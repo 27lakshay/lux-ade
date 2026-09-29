@@ -4780,7 +4780,6 @@ export interface WorkspaceRecord {
    * every reply, never stored.
    */
   default: boolean
-  extra_terminals: string[]
   id: string
   /**
    * Whether this is a repository's primary checkout, a linked worktree or
@@ -4797,7 +4796,6 @@ export interface WorkspaceRecord {
   project_id: string
   repository_id: string | null
   root: string
-  terminal_id: string
   worktree_lifecycle_needs_rebind: boolean
   [k: string]: unknown
 }

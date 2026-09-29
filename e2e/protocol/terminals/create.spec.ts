@@ -2,7 +2,7 @@
 // terminal.create with an operation ID is an effect command: a duplicate or a
 // retry after a lost reply returns the same terminal, the receipt survives a
 // daemon crash, and a reused ID for another workspace is a conflict.
-import { expect, test } from '../fixtures'
+import { expect, primaryShell, test } from '../fixtures'
 import { TerminalStream } from '../fixtures/terminals'
 
 test('terminal create returns a receipt that a duplicate, a lookup and a daemon crash all resolve to one terminal', async ({
@@ -10,13 +10,14 @@ test('terminal create returns a receipt that a duplicate, a lookup and a daemon 
   repo,
 }) => {
   const { workspace } = await profile.call('workspace.open', { path: profile.defaultWorkspaceRoot })
+  const shellId = await primaryShell(profile, workspace.id)
 
   const created = await profile.cli('terminal', 'create', workspace.id, '--request-id', 'create-once')
   expect(created.code, created.stderr).toBe(0)
   expect(created.json).toMatchObject({ type: 'ack', request_id: 'create-once' })
   const terminalId = created.json!.terminal_id as string
   expect(terminalId).toMatch(/^terminal/)
-  expect(terminalId).not.toBe(workspace.terminal_id)
+  expect(terminalId).not.toBe(shellId)
 
   // A retry after a lost reply reuses the ID and gets the same terminal, not a second one.
   const duplicate = await profile.cli('terminal', 'create', workspace.id, '--request-id', 'create-once')
@@ -36,10 +37,10 @@ test('terminal create returns a receipt that a duplicate, a lookup and a daemon 
 
   const listed = await profile.cli('terminal', 'list')
   expect(listed.code, listed.stderr).toBe(0)
-  const ours = (listed.json!.terminals as Array<{ workspace_id: string; terminal_id: string }>).filter(
+  const ours = (listed.json!.terminals as Array<{ workspace_id: string; id: string }>).filter(
     (entry) => entry.workspace_id === workspace.id,
   )
-  expect(ours.map((entry) => entry.terminal_id).sort()).toEqual([workspace.terminal_id, terminalId].sort())
+  expect(ours.map((entry) => entry.id).sort()).toEqual([shellId, terminalId].sort())
 
   // The same ID for another workspace is a conflict and creates nothing there.
   const other = (await profile.call('workspace.open', { path: repo.path })).workspace
@@ -49,7 +50,7 @@ test('terminal create returns a receipt that a duplicate, a lookup and a daemon 
   const otherReceipt = await profile.cli('terminal', 'operation', other.id, 'create-once')
   expect(otherReceipt.code).not.toBe(0)
   const catalog = await profile.call('catalog.get', {})
-  expect(catalog.catalog.workspaces.find((entry) => entry.id === other.id)?.extra_terminals ?? []).toEqual([])
+  expect(catalog.catalog.terminals.filter((entry) => entry.workspace_id === other.id && !entry.primary)).toEqual([])
 
   // The receipt is durable: after a daemon crash the lookup and a replay still name the same terminal.
   await profile.restartDaemon('kill')
@@ -58,7 +59,11 @@ test('terminal create returns a receipt that a duplicate, a lookup and a daemon 
   const replay = await profile.call('terminal.create', { workspace_id: workspace.id, operation_id: 'create-once' })
   expect(replay.terminal_id).toBe(terminalId)
   const restored = await profile.call('catalog.get', {})
-  expect(restored.catalog.workspaces.find((entry) => entry.id === workspace.id)?.extra_terminals).toEqual([terminalId])
+  expect(
+    restored.catalog.terminals
+      .filter((entry) => entry.workspace_id === workspace.id && !entry.primary)
+      .map((entry) => entry.id),
+  ).toEqual([terminalId])
 
   // The created terminal runs a real shell that takes input.
   const stream = TerminalStream.open(profile, workspace.id, terminalId)
@@ -92,8 +97,9 @@ test('terminal create without an operation ID makes a new terminal each time, an
   )
   expect(refused).toMatch(/request ID/i)
   const catalog = await profile.call('catalog.get', {})
-  expect(catalog.catalog.workspaces.find((entry) => entry.id === workspace.id)?.extra_terminals).toEqual([
-    first.terminal_id,
-    second.terminal_id,
-  ])
+  expect(
+    catalog.catalog.terminals
+      .filter((entry) => entry.workspace_id === workspace.id && !entry.primary)
+      .map((entry) => entry.id),
+  ).toEqual([first.terminal_id, second.terminal_id])
 })

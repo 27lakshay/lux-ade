@@ -38,12 +38,11 @@ impl Host {
             self.stop_removed_terminals(id)?;
             // The record first, as `terminal.retire` does: runtime state of a
             // terminal the record no longer lists is then safe to release.
-            let record = self.sessions.retire_removed_terminals(id)?;
+            self.sessions.retire_removed_terminals(id)?;
             for terminal in self.runtime_terminals()? {
                 let terminal_id = terminal.workspace.terminal_id;
                 if terminal.workspace.id == id
-                    && terminal_id != record.terminal_id
-                    && !record.extra_terminals.contains(&terminal_id)
+                    && !self.sessions.workspace_has_terminal(id, &terminal_id)?
                 {
                     self.runtime.command(terminal_runtime::Command::Retire {
                         workspace_id: id.to_owned(),

@@ -1,4 +1,5 @@
-use ade_runtime::model::{WorkspaceRecord, new_id};
+use ade_core::contract::terminals::runtime::Workspace;
+use ade_runtime::model::new_id;
 use ade_runtime::terminal_ownership::{self as ownership, Decision, Intent, Viewport, Viewports};
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use serde_json::{Value, json};
@@ -815,7 +816,7 @@ fn identities(shutdown: &ade_runtime::descendants::Shutdown) -> Vec<(i32, u64)> 
 /// tree is killed.
 const SHELL_STOP_GRACE: Duration = Duration::from_secs(2);
 pub fn spawn_runtime(
-    workspace: &WorkspaceRecord,
+    workspace: &Workspace,
     launch: Option<&ade_runtime::terminal_launch::Launch>,
     data_directory: &std::path::Path,
 ) -> anyhow::Result<Runtime> {

@@ -472,10 +472,7 @@ impl Store {
         }
         let w = self.workspace(workspace)?;
         if service.terminal_id.is_none() {
-            ensure!(
-                w.extra_terminals.len() < 32,
-                "Workspace terminal limit reached"
-            );
+            crate::store::terminal_records::ensure_room(&tx, &w.id)?;
             let id = crate::model::new_id("terminal");
             crate::store::terminal_records::insert(
                 &tx,
@@ -712,12 +709,7 @@ mod tests {
         );
         store.remove_service(&w.id, "web", 1).unwrap();
         assert!(!store.terminal_reserved(&owner.terminal_id).unwrap());
-        let catalog = store.catalog().unwrap();
-        assert!(
-            !catalog.workspaces[0]
-                .extra_terminals
-                .contains(&owner.terminal_id)
-        );
+        assert!(store.terminal(&owner.terminal_id).unwrap().is_none());
         let layout = store.layout("service-window", None).unwrap();
         assert!(layout.layout.tabs.is_empty());
         assert_eq!(layout.revision, 2);

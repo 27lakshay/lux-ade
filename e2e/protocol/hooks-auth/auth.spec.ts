@@ -10,7 +10,7 @@
 import { rm, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
-import { expect, test, type ScratchProfile } from '../fixtures'
+import { expect, primaryShell, type ScratchProfile, test } from '../fixtures'
 import { socketAccess, socketReply } from '../fixtures/sockets'
 import { terminalMetrics, TerminalStream } from '../fixtures/terminals'
 
@@ -52,7 +52,8 @@ test('the daemon refuses a peer that is not the profile user before any terminal
 }) => {
   const { profile, daemonForeign } = await authProfile(ade)
   const { workspace } = await profile.call('workspace.open', { path: profile.defaultWorkspaceRoot })
-  const target = [workspace.id, workspace.terminal_id] as const
+  const shellId = await primaryShell(profile, workspace.id)
+  const target = [workspace.id, shellId] as const
   const before = (await terminalMetrics(profile, ...target))!
   const listed = (await profile.cli('terminal', 'list')).json
 
@@ -77,9 +78,9 @@ test('the daemon refuses a peer that is not the profile user before any terminal
     await expect(
       profile.call('terminal.create', { workspace_id: workspace.id, operation_id: 'foreign-sdk' }),
     ).rejects.toThrow(/unauthenticated/)
-    await expect(
-      profile.call('terminal.stop', { workspace_id: workspace.id, terminal_id: workspace.terminal_id }),
-    ).rejects.toThrow(/unauthenticated/)
+    await expect(profile.call('terminal.stop', { workspace_id: workspace.id, terminal_id: shellId })).rejects.toThrow(
+      /unauthenticated/,
+    )
     // A terminal stream gets no snapshot.
     const stream = TerminalStream.open(profile, ...target)
     await stream.waitForClose()
@@ -121,7 +122,8 @@ test('the runtime refuses a foreign peer outright, and fences a same-user peer t
 }) => {
   const { profile, runtimeForeign } = await authProfile(ade)
   const { workspace } = await profile.call('workspace.open', { path: profile.defaultWorkspaceRoot })
-  const target = [workspace.id, workspace.terminal_id] as const
+  const shellId = await primaryShell(profile, workspace.id)
+  const target = [workspace.id, shellId] as const
   const before = (await terminalMetrics(profile, ...target))!
   const runtime = await socketReply(profile.runtimeSocket, { op: 'hello' })
   const instance = runtime.frame!.instance_id as string

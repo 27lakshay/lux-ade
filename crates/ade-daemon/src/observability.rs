@@ -400,7 +400,7 @@ pub fn host_key() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ade_core::model::WorkspaceRecord;
+    use ade_core::contract::terminals::runtime::Workspace;
     use serde_json::json;
 
     #[test]
@@ -518,20 +518,10 @@ mod tests {
 
     fn terminal(id: &str, metrics: Value) -> Terminal {
         Terminal {
-            workspace: WorkspaceRecord {
-                extra_terminals: vec![],
+            workspace: Workspace {
                 id: "workspace_1".into(),
-                repository_id: None,
                 root: "/private/root".into(),
-                name: "Private name".into(),
                 terminal_id: id.into(),
-                needs_rebind: false,
-                worktree_lifecycle_needs_rebind: false,
-                project_id: "project_1".into(),
-                kind: Default::default(),
-                branch: None,
-                default: false,
-                ade_owned: false,
             },
             metrics,
             activity: Default::default(),

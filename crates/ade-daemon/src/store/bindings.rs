@@ -740,7 +740,6 @@ impl Store {
                 || !binding_matches(&tx, "repository", id, &repository.root)?;
         }
         let mut workspace = WorkspaceRecord {
-            extra_terminals: Vec::new(),
             id: new_id("workspace"),
             repository_id,
             root: root.into(),
@@ -751,7 +750,6 @@ impl Store {
                 .and_then(|s| s.to_str())
                 .unwrap_or(root)
                 .into(),
-            terminal_id: new_id("terminal"),
             project_id: String::new(),
             kind: Default::default(),
             branch: None,
@@ -760,19 +758,18 @@ impl Store {
         };
         workspace.project_id = super::projects::project_of(&workspace);
         tx.execute(
-            "INSERT INTO workspaces VALUES(?1,?2,?3,?4,?5)",
+            "INSERT INTO workspaces VALUES(?1,?2,?3,?4)",
             params![
                 workspace.id,
                 workspace.repository_id,
                 workspace.root,
-                workspace.terminal_id,
                 encode(&workspace)?
             ],
         )?;
         write_binding(&tx, "workspace", &workspace.id, &workspace.root)?;
         super::terminal_records::insert(
             &tx,
-            &super::terminal_records::Stored::primary(&workspace.terminal_id, &workspace.id),
+            &super::terminal_records::Stored::primary(&new_id("terminal"), &workspace.id),
         )?;
         // The lifecycle hook commits with the new workspace (F058).
         crate::hooks::enqueue(
@@ -920,16 +917,16 @@ impl Store {
             Some(1) => return Ok((Vec::new(), Vec::new())),
             Some(_) => {}
         }
-        let workspace: WorkspaceRecord = one(&tx, "workspaces", id)?;
+        let _: WorkspaceRecord = one(&tx, "workspaces", id)?;
         let services: Vec<String> = self
             .services(id)?
             .into_iter()
             .filter_map(|service| service.terminal_id)
             .collect();
-        let retired: Vec<String> = std::iter::once(&workspace.terminal_id)
-            .chain(&workspace.extra_terminals)
+        let retired: Vec<String> = super::terminal_records::of_workspace(&tx, id)?
+            .into_iter()
+            .map(|terminal| terminal.id)
             .filter(|terminal| !services.contains(terminal))
-            .cloned()
             .collect();
         let mut layouts = Vec::new();
         for terminal in &retired {

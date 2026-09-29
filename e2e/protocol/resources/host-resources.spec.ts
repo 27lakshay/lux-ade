@@ -66,7 +66,7 @@ test('a profile cannot remove a checkout another profile works in, by its path o
 
   // Once the worker stops its shell, its claim goes and the removal is admitted
   // under the same operation ID: a refusal left no receipt behind.
-  await worker.call('terminal.stop', { workspace_id: launch.workspace.id, terminal_id: launch.workspace.terminal_id })
+  await worker.call('terminal.stop', { workspace_id: launch.workspace.id, terminal_id: launch.shellId })
   await expect.poll(async () => (await claimsOn(remover, tree)).length).toBe(0)
   const admitted = await removeTree(remover, repositoryId, 'remove-shared', tree)
   expect(admitted.type).toBe('worktree_state')
@@ -197,7 +197,7 @@ test('an escaped descendant keeps the checkout quarantined after its profile die
     'terminal',
     'send',
     launch.workspace.id,
-    launch.workspace.terminal_id,
+    launch.shellId,
     `nohup sh -c 'echo $$ > ${pidFile}; while [ ! -f ${release} ]; do sleep 0.1; done' >/dev/null 2>&1 &`,
   )
   expect(sent.code, sent.stderr).toBe(0)

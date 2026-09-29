@@ -366,8 +366,9 @@ impl Sessions {
                 if d.store.ensure_workspace_bound(&workspace.id).is_err() {
                     continue;
                 }
-                for run_id in workspace
-                    .extra_terminals
+                for run_id in d
+                    .store
+                    .workspace_terminals(&workspace.id)?
                     .iter()
                     .filter(|id| ade_core::scripts::run_name(id).is_ok())
                 {
@@ -804,8 +805,17 @@ impl Sessions {
                 self.settle_unresolved(&mut d, &key, resolution);
                 Ok(())
             };
+            let terminals = self
+                .data
+                .lock()
+                .unwrap()
+                .store
+                .workspace_terminals(&workspace.id)?;
             return crate::scripts::command(
-                workspace.clone(),
+                crate::scripts::ScriptWorkspace {
+                    workspace: workspace.clone(),
+                    terminals,
+                },
                 &host,
                 &self.runtime,
                 self.subscribers.load(Ordering::Relaxed),

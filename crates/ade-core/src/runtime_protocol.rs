@@ -420,7 +420,7 @@ pub fn decode<T: serde::de::DeserializeOwned>(request: &Value) -> Result<T, Stri
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::WorkspaceRecord;
+    use crate::contract::terminals::runtime::Workspace;
     use serde_json::json;
 
     /// Encodes `typed`, compares it with the frame the untyped call site wrote,
@@ -438,11 +438,12 @@ mod tests {
         assert_eq!(serde_json::from_value::<T>(expected).unwrap(), typed);
     }
 
-    fn workspace() -> WorkspaceRecord {
-        serde_json::from_value(json!({
-            "id": "w", "repository_id": null, "root": "/tmp/w", "name": "w", "terminal_id": "t",
-        }))
-        .unwrap()
+    fn workspace() -> Workspace {
+        Workspace {
+            id: "w".into(),
+            root: "/tmp/w".into(),
+            terminal_id: "t".into(),
+        }
     }
 
     #[test]

@@ -8,7 +8,7 @@ import { execFileSync } from 'node:child_process'
 import { writeFileSync } from 'node:fs'
 import { createConnection, type Socket } from 'node:net'
 import { join } from 'node:path'
-import { expect, test, type ScratchProfile } from '../fixtures'
+import { expect, primaryShell, type ScratchProfile, test } from '../fixtures'
 import { terminalMetrics, TerminalStream, type TerminalFrame } from '../fixtures/terminals'
 
 /** The live-frame offset a snapshot is taken at. */
@@ -141,7 +141,8 @@ class SlowViewer {
 test('attachments opened during a flood each get their snapshot, then live output in order', async ({ profile }) => {
   test.setTimeout(120_000)
   const { workspace } = await profile.call('workspace.open', { path: profile.defaultWorkspaceRoot })
-  const target = [workspace.id, workspace.terminal_id] as const
+  const shellId = await primaryShell(profile, workspace.id)
+  const target = [workspace.id, shellId] as const
   const driver = TerminalStream.open(profile, ...target)
   const runId = (await driver.snapshot()).run_id as string
   const stop = join(profile.root, 'flood-stop')
@@ -188,7 +189,8 @@ test('a viewer slower than the flood is resynchronized from fresh snapshots, nev
 }) => {
   test.setTimeout(180_000)
   const { workspace } = await profile.call('workspace.open', { path: profile.defaultWorkspaceRoot })
-  const target = [workspace.id, workspace.terminal_id] as const
+  const shellId = await primaryShell(profile, workspace.id)
+  const target = [workspace.id, shellId] as const
   const driver = TerminalStream.open(profile, ...target)
   const runId = (await driver.snapshot()).run_id as string
   const before = (await terminalMetrics(profile, ...target))!

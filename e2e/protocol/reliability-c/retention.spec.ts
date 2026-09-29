@@ -12,11 +12,12 @@ import {
   conversationStatus,
   expect,
   isRunning,
+  primaryShell,
   prompts,
+  type ScratchProfile,
   send,
   startConversation,
   test,
-  type ScratchProfile,
 } from '../fixtures'
 import { control, nextProfileDataDirectory } from '../fixtures/control'
 import { configureService, nodeService, waitForReadiness, writeServicePrograms } from '../fixtures/services'
@@ -77,7 +78,8 @@ test('retention during a backup, upload finalization and active execution remove
   await send(profile, held.conversationId, prompts.hold)
   await expect.poll(() => conversationStatus(profile, held.conversationId)).toBe('running')
   const { workspace } = await profile.call('workspace.open', { path: repo.path })
-  const shell = await profile.cli('terminal', 'inspect', workspace.id, workspace.terminal_id)
+  const shellId = await primaryShell(profile, workspace.id)
+  const shell = await profile.cli('terminal', 'inspect', workspace.id, shellId)
   expect(shell.code, shell.stderr).toBe(0)
   const shellPid = (shell.json as { metrics: { shell_pid: number } }).metrics.shell_pid
   const logsBefore = new Set(await logNames(profile))

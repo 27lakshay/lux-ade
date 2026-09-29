@@ -13,10 +13,8 @@ fn terminal_reservation_is_atomic_durable_and_fences_prompt_admission() {
     let owner = owned.terminal_owner.unwrap();
     assert!(
         store
-            .workspace(&w.id)
+            .workspace_has_terminal(&w.id, &owner.terminal_id)
             .unwrap()
-            .extra_terminals
-            .contains(&owner.terminal_id)
     );
     assert_eq!(
         store
@@ -560,6 +558,7 @@ fn reopen_retains_identity_history_resume_and_windows() {
     let db = Database::new();
     let store = db.open();
     let (workspace, mut conversation) = fixture(&store);
+    let primary = store.primary_terminal(&workspace.id).unwrap();
     let original = store
         .begin_turn(&conversation.id, "submission-1", "prompt")
         .unwrap();
@@ -588,7 +587,7 @@ fn reopen_retains_identity_history_resume_and_windows() {
         .unwrap();
     assert_eq!(workspace.id, reopened.id);
     assert_eq!(workspace.repository_id, reopened.repository_id);
-    assert_eq!(workspace.terminal_id, reopened.terminal_id);
+    assert_eq!(primary, store.primary_terminal(&reopened.id).unwrap());
     assert_eq!(
         store
             .conversation(&conversation.id)
@@ -965,18 +964,22 @@ fn a_removed_workspace_leaves_the_catalog_and_returns_with_its_conversations() {
     );
 
     // Terminals retire once: the primary gets a fresh ID.
+    let primary = store.primary_terminal(&workspace.id).unwrap();
     let extra = store.create_terminal(&workspace.id, None, None).unwrap();
     let retired = store.retire_removed_terminals(&workspace.id).unwrap();
-    assert_eq!(retired, vec![workspace.terminal_id.clone(), extra]);
+    assert_eq!(retired, vec![primary.clone(), extra]);
     assert!(
         store
             .retire_removed_terminals(&workspace.id)
             .unwrap()
             .is_empty()
     );
-    let record = store.workspace(&workspace.id).unwrap();
-    assert_ne!(record.terminal_id, workspace.terminal_id);
-    assert!(record.extra_terminals.is_empty());
+    let replaced = store.primary_terminal(&workspace.id).unwrap();
+    assert_ne!(replaced, primary);
+    assert_eq!(
+        store.workspace_terminals(&workspace.id).unwrap(),
+        vec![replaced]
+    );
 
     // The removal survives a restart; reopening restores the same identity.
     drop(store);

@@ -204,6 +204,14 @@ export type TerminalMetrics = Record<string, unknown> & {
   exit_status?: Record<string, unknown>
 }
 
+/** A workspace's primary shell: its terminal record marked `primary`. */
+export async function primaryShell(profile: Pick<ScratchProfile, 'call'>, workspaceId: string): Promise<string> {
+  const { catalog } = await profile.call('catalog.get', {})
+  const shell = catalog.terminals.find((terminal) => terminal.workspace_id === workspaceId && terminal.primary)
+  if (!shell) throw new Error(`Workspace ${workspaceId} has no primary shell`)
+  return shell.id
+}
+
 /** A terminal's runtime metrics from runtime.status, or undefined when the runtime has no such terminal. */
 export async function terminalMetrics(
   profile: ScratchProfile,

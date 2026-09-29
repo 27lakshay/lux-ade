@@ -3,7 +3,7 @@
 // query or the file system; none sleeps.
 import { access, realpath } from 'node:fs/promises'
 import { join } from 'node:path'
-import { expect, type AdeHarness, type ScratchProfile, type ScratchRepo } from '../fixtures'
+import { type AdeHarness, expect, primaryShell, type ScratchProfile, type ScratchRepo } from '../fixtures'
 import { rawReply } from '../fixtures/raw-reply'
 
 type Profile = ScratchProfile
@@ -66,13 +66,18 @@ export async function launchShell(profile: Profile, tree: string) {
   return startShell(profile, workspace)
 }
 
-/** Start an opened workspace's terminal shell through the CLI. A refusal is returned, not thrown. */
-export async function startShell(profile: Profile, workspace: { id: string; terminal_id: string }) {
-  const inspected = await profile.cli('terminal', 'inspect', workspace.id, workspace.terminal_id)
-  if (inspected.code !== 0) return { workspace, launched: false as const, error: inspected.json ?? inspected.stderr }
+/**
+ * Start an opened workspace's primary shell through the CLI. A refusal is
+ * returned, not thrown.
+ */
+export async function startShell(profile: Profile, workspace: { id: string }) {
+  const shellId = await primaryShell(profile, workspace.id)
+  const inspected = await profile.cli('terminal', 'inspect', workspace.id, shellId)
+  if (inspected.code !== 0)
+    return { workspace, shellId, launched: false as const, error: inspected.json ?? inspected.stderr }
   const metrics = (inspected.json as { metrics: { shell_pid: number; shell_running: boolean } }).metrics
   expect(metrics.shell_running).toBe(true)
-  return { workspace, launched: true as const, shellPid: metrics.shell_pid }
+  return { workspace, shellId, launched: true as const, shellPid: metrics.shell_pid }
 }
 
 /** `worktree.remove` over the raw protocol, so the typed error code is visible. */

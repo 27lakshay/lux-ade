@@ -118,8 +118,7 @@ fn held_by(connection: &Connection, resource: &PlacedResource) -> Result<Option<
             .optional()?,
         PlacedResource::Terminal { terminal_id, .. } => connection
             .query_row(
-                // A workspace's primary terminal, or one of its extra terminals.
-                "SELECT id FROM workspaces WHERE json_extract(data,'$.terminal_id')=?1 UNION ALL SELECT workspaces.id FROM workspaces, json_each(workspaces.data,'$.extra_terminals') AS terminal WHERE terminal.value=?1 LIMIT 1",
+                "SELECT workspace_id FROM terminals WHERE id=?1",
                 [terminal_id],
                 |row| row.get(0),
             )

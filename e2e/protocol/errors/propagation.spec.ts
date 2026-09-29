@@ -19,7 +19,7 @@ test('a host_resource_conflict keeps its code and recovery through the SDK and t
   } = await startHostProfiles(ade, 2)
   const tree = await externalTree(ade, repo, 'shared')
   const repositoryId = await adopt(remover, repo.path, tree)
-  const { workspace, shellPid } = await occupy(worker, tree)
+  const { workspace, shellId, shellPid } = await occupy(worker, tree)
   await waitForClaim(remover, tree)
   const remove = (operationId: string) => ({
     repository_id: repositoryId,
@@ -70,7 +70,7 @@ test('a host_resource_conflict keeps its code and recovery through the SDK and t
   const claims = (await remover.call('resources.inspect', { path: tree, resource: 'checkout' })).claims
   expect(claims).toHaveLength(1)
   expect(frame.message).toContain(claims[0].id)
-  await worker.call('terminal.stop', { workspace_id: workspace.id, terminal_id: workspace.terminal_id })
+  await worker.call('terminal.stop', { workspace_id: workspace.id, terminal_id: shellId })
   await expect
     .poll(async () => (await remover.call('resources.inspect', { path: tree, resource: 'checkout' })).claims.length)
     .toBe(0)

@@ -10,7 +10,16 @@
 import { rm, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
-import { expect, isRunning, prompts, send, startConversation, test, type ScratchProfile } from '../fixtures'
+import {
+  expect,
+  isRunning,
+  primaryShell,
+  prompts,
+  type ScratchProfile,
+  send,
+  startConversation,
+  test,
+} from '../fixtures'
 import { socketAccess, socketReply } from '../fixtures/sockets'
 import {
   configureService,
@@ -182,14 +191,15 @@ test('terminal.stop and service.stop sent while a connection flood fills the pro
   await waitForReadiness(profile, workspace.id, 'web', 'tcp_listening')
   const { conversationId } = await startConversation(profile, 'codex', repo.path)
   const shell = (await profile.call('workspace.open', { path: profile.defaultWorkspaceRoot })).workspace
+  const shellId = await primaryShell(profile, shell.id)
   let shellPid: number | null = null
   await expect
-    .poll(async () => (shellPid = (await terminalMetrics(profile, shell.id, shell.terminal_id))?.shell_pid ?? null))
+    .poll(async () => (shellPid = (await terminalMetrics(profile, shell.id, shellId))?.shell_pid ?? null))
     .not.toBeNull()
 
   const full = await fillBacklog(profile, conversationId)
   const stops = Promise.all([
-    profile.call('terminal.stop', { workspace_id: shell.id, terminal_id: shell.terminal_id }),
+    profile.call('terminal.stop', { workspace_id: shell.id, terminal_id: shellId }),
     profile.call('service.stop', { workspace_id: workspace.id, name: 'web' }),
   ])
   stops.catch(() => undefined)
@@ -202,7 +212,7 @@ test('terminal.stop and service.stop sent while a connection flood fills the pro
   expectNoneLost(await full.replies)
   expect(terminal.type).toBe('ack')
   expect(service.service.terminal_owner).toBeNull()
-  await settledExit(profile, shell.id, shell.terminal_id)
+  await settledExit(profile, shell.id, shellId)
   expect(await isRunning(shellPid!)).toBe(false)
   expect(await isRunning(serviceShell)).toBe(false)
   expect(await serviceState(profile, workspace.id, 'web')).toBe('stopped')

@@ -133,10 +133,17 @@ fn output_coverage(metrics: &Value, durable: &Value) -> OutputCoverage {
     }
 }
 
+/// The workspace a `script.*` operation runs in, with its terminal IDs; a
+/// script run is one of them.
+pub struct ScriptWorkspace {
+    pub workspace: WorkspaceRecord,
+    pub terminals: Vec<String>,
+}
+
 /// Runs one `script.*` operation for a workspace on `host`, the execution
 /// host its placement resolves to.
 pub fn command(
-    workspace: WorkspaceRecord,
+    target: ScriptWorkspace,
     host: &ExecutionHost,
     runtime: &Supervisor,
     subscribers: usize,
@@ -144,6 +151,10 @@ pub fn command(
     register: &impl Fn(&str) -> Result<()>,
     retire: &impl Fn(&str) -> Result<()>,
 ) -> Result<Value> {
+    let ScriptWorkspace {
+        workspace,
+        terminals,
+    } = target;
     let root = Path::new(&workspace.root);
     match request["op"].as_str().unwrap_or("") {
         "script.list" => {
@@ -164,7 +175,7 @@ pub fn command(
                 .filter_map(|terminal| {
                     let run_id = terminal["workspace"]["terminal_id"].as_str()?;
                     (terminal["workspace"]["id"] == workspace.id
-                        && workspace.extra_terminals.iter().any(|id| id == run_id)
+                        && terminals.iter().any(|id| id == run_id)
                         && run_name(run_id).is_ok())
                     .then(|| run_state(terminal, run_id))
                 })
@@ -237,11 +248,11 @@ pub fn command(
                 env,
                 cwd,
             };
-            let mut workspace = workspace;
-            workspace.terminal_id = run_id.clone();
             register(&run_id)?;
             let result = match runtime.command(TerminalCommand::Launch {
-                workspace: workspace.clone(),
+                workspace: ade_core::contract::terminals::runtime::Workspace::new(
+                    &workspace, &run_id,
+                ),
                 terminal_key: Some(run_id.clone()),
                 launch,
                 session_subscribers: subscribers,
@@ -279,7 +290,7 @@ pub fn command(
             let run_id = inspect.run_id.as_str();
             run_name(run_id)?;
             ensure!(
-                workspace.extra_terminals.iter().any(|id| id == run_id),
+                terminals.iter().any(|id| id == run_id),
                 "Script run is unavailable"
             );
             let limit = inspect.tail_bytes.unwrap_or(8192);
@@ -324,7 +335,7 @@ pub fn command(
             let run_id = stop.run_id.as_str();
             run_name(run_id)?;
             ensure!(
-                workspace.extra_terminals.iter().any(|id| id == run_id),
+                terminals.iter().any(|id| id == run_id),
                 "Script run is unavailable"
             );
             let catalogue = runtime.command(TerminalCommand::List)?;
@@ -366,7 +377,7 @@ pub fn command(
             let run_id = retire_request.run_id.as_str();
             run_name(run_id)?;
             ensure!(
-                workspace.extra_terminals.iter().any(|id| id == run_id),
+                terminals.iter().any(|id| id == run_id),
                 "Script run is unavailable"
             );
             let catalogue = runtime.command(TerminalCommand::List)?;

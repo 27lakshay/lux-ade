@@ -5,7 +5,7 @@
 // DOM, fit and focus stay with Electron E2E.
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { expect, isRunning, test } from '../fixtures'
+import { expect, isRunning, primaryShell, test } from '../fixtures'
 import { terminalMetrics } from '../fixtures/terminals'
 import { openView } from './viewer'
 
@@ -36,7 +36,8 @@ test("a full-screen program survives detach and a daemon kill, and the window's 
   profile,
 }) => {
   const { workspace } = await profile.call('workspace.open', { path: profile.defaultWorkspaceRoot })
-  const target = [workspace.id, workspace.terminal_id] as const
+  const shellId = await primaryShell(profile, workspace.id)
+  const target = [workspace.id, shellId] as const
   const script = join(profile.root, 'full_screen.py')
   writeFileSync(script, fullScreenProgram)
 

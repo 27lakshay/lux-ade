@@ -2,7 +2,7 @@
 // Reattaching restores it from xterm-replay-v1: the raw PTY output from process
 // start with every resize, in order and without gaps. Past the bounded replay
 // the snapshot says recovery is incomplete instead of inventing a screen.
-import { expect, isRunning, test } from '../fixtures'
+import { expect, isRunning, primaryShell, test } from '../fixtures'
 import {
   attachThroughTty,
   clientSdk,
@@ -33,7 +33,8 @@ for (const mode of ['kill', 'graceful'] as const) {
     profile,
   }) => {
     const { workspace } = await profile.call('workspace.open', { path: profile.defaultWorkspaceRoot })
-    const target = [workspace.id, workspace.terminal_id] as const
+    const shellId = await primaryShell(profile, workspace.id)
+    const target = [workspace.id, shellId] as const
     const stream = TerminalStream.open(profile, ...target)
     const runId = (await stream.snapshot()).run_id as string
     stream.send({ op: 'resize', cols: 90, rows: 25, width_px: 0, height_px: 0, claim: true, run_id: runId })
@@ -96,7 +97,8 @@ test('replay past its bound reports incomplete recovery without replaying input 
   profile,
 }) => {
   const { workspace } = await profile.call('workspace.open', { path: profile.defaultWorkspaceRoot })
-  const target = [workspace.id, workspace.terminal_id] as const
+  const shellId = await primaryShell(profile, workspace.id)
+  const target = [workspace.id, shellId] as const
   const first = TerminalStream.open(profile, ...target)
   const snapshot = await first.snapshot()
   const runId = snapshot.run_id as string
@@ -134,7 +136,8 @@ test('replay past its bound reports incomplete recovery without replaying input 
 
 test('detach leaves the shell and its program running, from the SDK and from the CLI', async ({ ade, profile }) => {
   const { workspace } = await profile.call('workspace.open', { path: profile.defaultWorkspaceRoot })
-  const target = [workspace.id, workspace.terminal_id] as const
+  const shellId = await primaryShell(profile, workspace.id)
+  const target = [workspace.id, shellId] as const
   const { openTerminalConnection } = await clientSdk()
 
   // SDK: attach, claim the viewport, start a program, detach.

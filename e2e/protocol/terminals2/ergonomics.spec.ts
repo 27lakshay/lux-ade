@@ -6,7 +6,7 @@
 // drawing need a DOM and stay with Electron E2E.
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { expect, test } from '../fixtures'
+import { expect, primaryShell, test } from '../fixtures'
 import { replayText, terminalMetrics, TerminalStream } from '../fixtures/terminals'
 import { openView } from './viewer'
 
@@ -32,7 +32,8 @@ test("Unicode reaches the view byte for byte and CJK and combining text take the
   profile,
 }) => {
   const { workspace } = await profile.call('workspace.open', { path: profile.defaultWorkspaceRoot })
-  const target = [workspace.id, workspace.terminal_id] as const
+  const shellId = await primaryShell(profile, workspace.id)
+  const target = [workspace.id, shellId] as const
   const view = await openView(profile, ...target)
   const runId = view.connection.incarnation()
   const shellPid = (await terminalMetrics(profile, ...target))!.shell_pid
@@ -81,7 +82,8 @@ test("Unicode reaches the view byte for byte and CJK and combining text take the
 test('an emoji takes the same cells in the view as in the runtime terminal', async ({ profile }) => {
   // U+1F600 is two cells wide in the runtime's Ghostty; the view runs the same Ghostty.
   const { workspace } = await profile.call('workspace.open', { path: profile.defaultWorkspaceRoot })
-  const target = [workspace.id, workspace.terminal_id] as const
+  const shellId = await primaryShell(profile, workspace.id)
+  const target = [workspace.id, shellId] as const
   const view = await openView(profile, ...target)
   view.connection.input(unicodeLine('emoji', '😀'))
   const screen = await view.until('the emoji line', (state) => state.lines.some((line) => line.includes('emoji:😀|')))
@@ -113,7 +115,8 @@ termios.tcsetattr(0, termios.TCSADRAIN, saved)
 
 test('the view does not answer a terminal query the runtime already answered (D06)', async ({ profile }) => {
   const { workspace } = await profile.call('workspace.open', { path: profile.defaultWorkspaceRoot })
-  const target = [workspace.id, workspace.terminal_id] as const
+  const shellId = await primaryShell(profile, workspace.id)
+  const target = [workspace.id, shellId] as const
   const script = join(profile.root, 'query.py')
   writeFileSync(script, queryProgram)
   const view = await openView(profile, ...target)

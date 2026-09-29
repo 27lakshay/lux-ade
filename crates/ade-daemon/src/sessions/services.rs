@@ -1302,7 +1302,7 @@ impl Sessions {
         // Phase 3, under the lock: re-check what phase 1 read, then commit the
         // durable reservation. It fences editing, removal and replacement runs
         // while the launch below runs without the lock.
-        let (service, owner, mut w) = {
+        let (service, owner, w) = {
             let mut d = self.data.lock().unwrap();
             ensure!(!d.draining, "Application daemon is restarting");
             Self::ensure_lease_resolved(&d, &lease_key)?;
@@ -1341,10 +1341,12 @@ impl Sessions {
         };
         // Phase 4, without the lock: launch under the durable reservation.
         let launch = service.launch(&w.root, &host, &peer_endpoints, &secrets)?;
-        w.terminal_id = owner.terminal_id.clone();
         ports.dispatch()?;
         let result = self.runtime.command(TerminalCommand::Launch {
-            workspace: w,
+            workspace: ade_core::contract::terminals::runtime::Workspace::new(
+                &w,
+                &owner.terminal_id,
+            ),
             terminal_key: Some(owner.terminal_id.clone()),
             launch,
             session_subscribers: self.subscribers.load(Ordering::Relaxed),

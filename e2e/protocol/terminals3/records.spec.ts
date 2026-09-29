@@ -3,13 +3,13 @@
 // foreground command. The runtime reads busy from the PTY's foreground process
 // group; `terminal.close` is one daemon rule that refuses a busy terminal
 // until the caller forces it.
-import { expect, test, type ScratchProfile } from '../fixtures'
+import { expect, primaryShell, type ScratchProfile, test } from '../fixtures'
 import { subscribeFeed } from '../fixtures/feed'
 import { terminalMetrics, TerminalStream } from '../fixtures/terminals'
 
 type Catalog = Awaited<ReturnType<ScratchProfile['call']>> & {
   catalog: {
-    workspaces: Array<{ id: string; terminal_id: string; extra_terminals?: string[] }>
+    workspaces: Array<{ id: string }>
     terminals: Array<Record<string, unknown> & { id: string; workspace_id: string }>
   }
 }
@@ -34,6 +34,7 @@ async function refusal(promise: Promise<unknown>): Promise<{ code: string; detai
 /** Open a workspace and add a shell to it, attached and ready for input. */
 async function shell(profile: ScratchProfile, title?: string) {
   const { workspace } = await profile.call('workspace.open', { path: profile.defaultWorkspaceRoot })
+  const shellId = await primaryShell(profile, workspace.id)
   const { terminal_id: terminalId } = await profile.call('terminal.create', {
     workspace_id: workspace.id,
     ...(title ? { title } : {}),
@@ -42,7 +43,7 @@ async function shell(profile: ScratchProfile, title?: string) {
   const runId = (await stream.snapshot()).run_id as string
   stream.send({ op: 'input', run_id: runId, data: 'echo "rea""dy"\n' })
   await stream.waitForText(/ready/)
-  return { workspace, terminalId, stream, runId }
+  return { workspace, shellId, terminalId, stream, runId }
 }
 
 test('a shell is idle, sleep makes it busy and names it, and close is refused until forced', async ({ profile }) => {
@@ -78,7 +79,7 @@ test('a shell is idle, sleep makes it busy and names it, and close is refused un
   const listed = await profile.cli('terminal', 'list', workspace.id)
   expect(listed.code, listed.stderr).toBe(0)
   expect(listed.json!.terminals).toContainEqual(
-    expect.objectContaining({ id: terminalId, terminal_id: terminalId, busy: true, foreground: 'sleep' }),
+    expect.objectContaining({ id: terminalId, busy: true, foreground: 'sleep' }),
   )
 
   // Closing is refused while sleep runs, through the SDK and the CLI alike.
@@ -95,14 +96,13 @@ test('a shell is idle, sleep makes it busy and names it, and close is refused un
   expect(forced.code, forced.stderr).toBe(0)
   const after = await catalog(profile)
   expect(after.terminals.map((terminal) => terminal.id)).not.toContain(terminalId)
-  expect(after.workspaces.find((entry) => entry.id === workspace.id)?.extra_terminals).not.toContain(terminalId)
   expect(await terminalMetrics(profile, workspace.id, terminalId)).toBeUndefined()
   stream.close()
   feed.stop()
 })
 
 test('an exited shell reports its code, and records survive a daemon restart', async ({ profile }) => {
-  const { workspace, terminalId, stream, runId } = await shell(profile, 'Tests')
+  const { workspace, shellId, terminalId, stream, runId } = await shell(profile, 'Tests')
   stream.send({ op: 'input', run_id: runId, data: 'exit 3\n' })
   await expect
     .poll(async () => record(profile, terminalId))
@@ -117,14 +117,9 @@ test('an exited shell reports its code, and records survive a daemon restart', a
     status: 'exited',
     exit_code: 3,
   })
-  // The workspace's terminal fields are derived from the records.
+  // The workspace keeps exactly one primary shell.
   const primary = restored.terminals.filter((terminal) => terminal.workspace_id === workspace.id && terminal.primary)
-  expect(primary.map((terminal) => terminal.id)).toEqual([workspace.terminal_id])
-  expect(restored.workspaces.find((entry) => entry.id === workspace.id)?.extra_terminals).toEqual(
-    restored.terminals
-      .filter((terminal) => terminal.workspace_id === workspace.id && !terminal.primary)
-      .map((terminal) => terminal.id),
-  )
+  expect(primary.map((terminal) => terminal.id)).toEqual([shellId])
 
   // An exited shell is not busy, so it closes without force.
   const closed = await profile.cli('terminal', 'close', terminalId)
@@ -138,23 +133,23 @@ test('closing the primary shell gives the workspace a new one, and a close repla
 }) => {
   // Not the daemon's own workspace, whose primary shell starts with the daemon.
   const { workspace } = await profile.call('workspace.open', { path: repo.path })
-  expect(await record(profile, workspace.terminal_id)).toMatchObject({
+  const shellId = await primaryShell(profile, workspace.id)
+  expect(await record(profile, shellId)).toMatchObject({
     kind: 'shell',
     primary: true,
     status: 'not_started',
     title: 'Shell',
   })
 
-  await profile.call('terminal.close', { operation_id: 'close-primary', terminal_id: workspace.terminal_id })
+  await profile.call('terminal.close', { operation_id: 'close-primary', terminal_id: shellId })
   // The same operation ID and payload returns the recorded outcome.
-  await profile.call('terminal.close', { operation_id: 'close-primary', terminal_id: workspace.terminal_id })
+  await profile.call('terminal.close', { operation_id: 'close-primary', terminal_id: shellId })
   const after = await catalog(profile)
   const replacement = after.terminals.find((terminal) => terminal.workspace_id === workspace.id && terminal.primary)
   expect(replacement).toMatchObject({ kind: 'shell', status: 'not_started' })
-  expect(replacement!.id).not.toBe(workspace.terminal_id)
-  expect(after.workspaces.find((entry) => entry.id === workspace.id)?.terminal_id).toBe(replacement!.id)
+  expect(replacement!.id).not.toBe(shellId)
 
-  const unknown = await profile.cli('terminal', 'close', workspace.terminal_id)
+  const unknown = await profile.cli('terminal', 'close', shellId)
   expect(unknown.code).not.toBe(0)
   expect(unknown.json?.message).toMatch(/does not exist/)
 })

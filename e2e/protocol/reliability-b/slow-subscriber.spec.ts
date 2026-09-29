@@ -10,14 +10,15 @@ import { join } from 'node:path'
 import { access } from 'node:fs/promises'
 import {
   expect,
+  primaryShell,
   prompts,
+  type ScratchProfile,
   send,
   startConversation,
   test,
   turnReply,
   waitForIdle,
   waitForMessage,
-  type ScratchProfile,
 } from '../fixtures'
 import { subscribeFeed } from '../fixtures/feed'
 import { mockDirectory } from '../fixtures/providers'
@@ -154,7 +155,8 @@ test('a terminal viewer that stops reading is cut off with its output intact whi
 }) => {
   test.setTimeout(120_000)
   const { workspace } = await profile.call('workspace.open', { path: profile.defaultWorkspaceRoot })
-  const target = [workspace.id, workspace.terminal_id] as const
+  const shellId = await primaryShell(profile, workspace.id)
+  const target = [workspace.id, shellId] as const
   const live = TerminalStream.open(profile, ...target)
   const runId = (await live.snapshot()).run_id as string
   const stuck = await RawFeed.openTerminal(profile.socket, ...target)

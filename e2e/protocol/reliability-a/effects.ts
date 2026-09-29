@@ -273,10 +273,8 @@ export const effectCases: EffectCase[] = [
       workspace_id: altered ? state.otherId : state.workspaceId,
     }),
     effect: async (context, state: { workspaceId: string }) =>
-      (
-        (await context.profile.call('catalog.get', {})).catalog.workspaces.find(
-          (entry) => entry.id === state.workspaceId,
-        )?.extra_terminals ?? []
+      (await context.profile.call('catalog.get', {})).catalog.terminals.filter(
+        (terminal) => terminal.workspace_id === state.workspaceId && !terminal.primary,
       ).length,
   },
   {
