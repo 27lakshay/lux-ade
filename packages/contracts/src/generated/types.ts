@@ -4,6 +4,7 @@ export type ContractDefinition =
   | Account
   | AccountAck
   | AccountChoice
+  | AccountContext
   | AccountCreateRequest
   | AccountDisableRequest
   | AccountDisabled
@@ -953,6 +954,10 @@ export type AccountChoice =
       mode: 'ambient'
       [k: string]: unknown
     }
+/**
+ * Which login a Conversation's Agent runs under.
+ */
+export type AccountContext = 'managed' | 'ambient'
 /**
  * Whether ADE still owes the new native session the transferred context.
  */
@@ -4591,7 +4596,7 @@ export interface Catalogue {
   [k: string]: unknown
 }
 export interface Conversation {
-  account_context: string
+  account_context: AccountContext
   account_id: string | null
   active_turn_id: string | null
   /**
@@ -4625,7 +4630,6 @@ export interface Conversation {
   runtime_run: string | null
   runtime_submission: string | null
   status: string
-  terminal_owner: TerminalOwner | null
   title: string
   /**
    * Whether the Conversation has a message the person did not write
@@ -4636,12 +4640,6 @@ export interface Conversation {
   unread: boolean
   updated_at: number
   workspace_id: string
-  [k: string]: unknown
-}
-export interface TerminalOwner {
-  runtime_instance: string
-  terminal_id: string
-  transfer_id: string
   [k: string]: unknown
 }
 /**
@@ -4674,7 +4672,6 @@ export interface TerminalRecord {
    * such as a command started from the shell. Closing asks first.
    */
   busy: boolean
-  conversation_id: string | null
   /**
    * Set when `status` is `exited` and the process reported a code. A
    * process ended by a signal reports 128 plus the signal number.
@@ -12550,6 +12547,12 @@ export interface Service {
   workspace_id: string
   [k: string]: unknown
 }
+export interface TerminalOwner {
+  runtime_instance: string
+  terminal_id: string
+  transfer_id: string
+  [k: string]: unknown
+}
 /**
  * The `service_changed` feed frame, sent when a run starts or stops.
  */
@@ -14294,11 +14297,10 @@ export interface WorkspaceRebindRequest {
  * without touching its files.
  *
  * - Refused with `workspace_remove_blocked` while a Conversation turn runs, a
- *   Conversation is handed to a terminal, a service runs, a script run is
- *   still running, or the workspace is the daemon's default. The error frame
- *   carries `blockers`: `[{kind, id, label}]`, where `kind` is
- *   `conversation_running`, `conversation_in_terminal`, `service_running`,
- *   `script_running` or `default_workspace`.
+ *   service runs, a script run is still running, or the workspace is the
+ *   daemon's default. The error frame carries `blockers`:
+ *   `[{kind, id, label}]`, where `kind` is `conversation_running`,
+ *   `service_running`, `script_running` or `default_workspace`.
  * - Otherwise it disconnects the workspace's idle Agents, records the
  *   removal, stops every terminal (primary, extra and exited script runs)
  *   and retires all but service terminals, so no process or worktree lease

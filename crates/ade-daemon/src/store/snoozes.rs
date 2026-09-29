@@ -260,7 +260,7 @@ mod tests {
         let conversation: Conversation = serde_json::from_value(serde_json::json!({
             "id": "conversation_1", "workspace_id": "workspace_1", "title": "Fix login",
             "provider": "codex", "provider_thread_id": null, "status": "running",
-            "active_turn_id": "turn_1", "error": null, "updated_at": 1,
+            "active_turn_id": "turn_1", "error": null, "updated_at": 1, "account_context": "ambient",
         }))
         .unwrap();
         let recorded = wake_activity(&conversation, &snooze(500, 10));

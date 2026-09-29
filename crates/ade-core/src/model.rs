@@ -70,8 +70,6 @@ pub enum Attention {
 #[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
 pub struct Conversation {
     #[serde(default)]
-    pub terminal_owner: Option<TerminalOwner>,
-    #[serde(default)]
     pub queue_paused: bool,
     /// The turn that was active when the person resumed the queue. That
     /// turn's interruption or failure then leaves the queue running, so a
@@ -90,8 +88,7 @@ pub struct Conversation {
     pub provider: String,
     #[serde(default)]
     pub account_id: Option<String>,
-    #[serde(default = "legacy_ambient_account_context")]
-    pub account_context: String,
+    pub account_context: AccountContext,
     #[serde(default)]
     #[schemars(with = "serde_json::Value")]
     pub provider_config: crate::provider::Config,
@@ -132,8 +129,14 @@ impl Conversation {
         }
     }
 }
-fn legacy_ambient_account_context() -> String {
-    "legacy_ambient".into()
+/// Which login a Conversation's Agent runs under.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AccountContext {
+    /// A profile account (`account_id`), with its own native home.
+    Managed,
+    /// The provider's own login on this machine; `account_id` is null.
+    Ambient,
 }
 
 /// Profile-owned account metadata. Credentials remain with the native provider.

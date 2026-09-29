@@ -109,11 +109,10 @@ pub struct WorkspaceRenameRequest {
 /// without touching its files.
 ///
 /// - Refused with `workspace_remove_blocked` while a Conversation turn runs, a
-///   Conversation is handed to a terminal, a service runs, a script run is
-///   still running, or the workspace is the daemon's default. The error frame
-///   carries `blockers`: `[{kind, id, label}]`, where `kind` is
-///   `conversation_running`, `conversation_in_terminal`, `service_running`,
-///   `script_running` or `default_workspace`.
+///   service runs, a script run is still running, or the workspace is the
+///   daemon's default. The error frame carries `blockers`:
+///   `[{kind, id, label}]`, where `kind` is `conversation_running`,
+///   `service_running`, `script_running` or `default_workspace`.
 /// - Otherwise it disconnects the workspace's idle Agents, records the
 ///   removal, stops every terminal (primary, extra and exited script runs)
 ///   and retires all but service terminals, so no process or worktree lease

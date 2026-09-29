@@ -385,17 +385,12 @@ impl Sessions {
                     }
                 }
             }
-            // A Conversation handed to a terminal holds that terminal's lease;
-            // its runtime Agent, if any, is covered by it.
             let mut records = HashMap::new();
             let mut observed_agents = Vec::new();
             for (agent, spec, commands) in agent_records {
                 if let Ok(c) = d.store.conversation(&agent.conversation_id) {
                     let w = d.store.workspace(&c.workspace_id)?;
                     d.store.ensure_workspace_bound(&w.id)?;
-                    if c.terminal_owner.is_some() {
-                        continue;
-                    }
                 }
                 records.insert(agent.conversation_id.clone(), (spec, commands));
                 observed_agents.push(agent);
@@ -405,11 +400,6 @@ impl Sessions {
                     continue;
                 }
                 let w = d.store.workspace(&c.workspace_id)?;
-                if c.terminal_owner.is_some() {
-                    d.terminal_leases
-                        .insert(c.id.clone(), self.worktrees.lease(&w.root)?);
-                    continue;
-                }
                 if c.runtime_run.is_some() || records.contains_key(&c.id) {
                     claims.push(leases::Claim {
                         key: leases::LeaseKey::Agent(c.id.clone()),

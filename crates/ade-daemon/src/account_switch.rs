@@ -40,7 +40,6 @@ pub struct Facts<'a> {
     pub open_requests: usize,
     pub queued: usize,
     pub queue_paused: bool,
-    pub terminal_owned: bool,
     pub imported: bool,
     pub lease_unresolved: bool,
     pub draining: bool,
@@ -109,9 +108,6 @@ fn check(
     }
     if facts.open_requests > 0 {
         return refuse("Answer the Agent's open questions and approvals first");
-    }
-    if facts.terminal_owned {
-        return refuse("Return this conversation from its terminal first");
     }
     if facts.lease_unresolved {
         return refuse(
@@ -265,7 +261,6 @@ mod tests {
             open_requests: 0,
             queued: 0,
             queue_paused: false,
-            terminal_owned: false,
             imported: false,
             lease_unresolved: false,
             draining: false,
@@ -360,10 +355,6 @@ mod tests {
         };
         assert!(matches!(decide(&paused, None), Decision::Eligible(_)));
         for f in [
-            Facts {
-                terminal_owned: true,
-                ..facts()
-            },
             Facts {
                 lease_unresolved: true,
                 ..facts()

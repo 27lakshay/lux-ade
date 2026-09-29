@@ -28,8 +28,6 @@ export function blockerText({ kind, label }: Blocker): string {
   switch (kind) {
     case 'conversation_running':
       return `“${label}” is running`
-    case 'conversation_in_terminal':
-      return `“${label}” is open in a terminal`
     case 'service_running':
     case 'script_running':
       return `${label} is running`

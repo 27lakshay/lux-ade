@@ -269,7 +269,6 @@ fn observe(
         current_submission: child.runtime_submission.as_deref(),
         queue_paused: child.queue_paused,
         error: child.error.as_deref(),
-        terminal_owned: child.terminal_owner.is_some(),
         pending_requests,
     };
     Ok(policy::resolve_wait(

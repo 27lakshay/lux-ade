@@ -651,7 +651,7 @@ mod tests {
         serde_json::from_value(json!({
             "id": "c", "workspace_id": "w", "title": "Fix build", "provider": "codex",
             "provider_thread_id": "thread", "status": status, "active_turn_id": "turn",
-            "error": null, "updated_at": 7,
+            "error": null, "updated_at": 7, "account_context": "ambient",
         }))
         .unwrap()
     }

@@ -48,8 +48,6 @@ pub enum TerminalKind {
     Service,
     /// A script run's terminal (`script_run_id`).
     Script,
-    /// A Conversation handed to a terminal (`conversation_id`).
-    Conversation,
 }
 
 /// Whether a terminal's process runs.
@@ -101,8 +99,6 @@ pub struct TerminalRecord {
     pub service_id: Option<String>,
     #[serde(default)]
     pub script_run_id: Option<String>,
-    #[serde(default)]
-    pub conversation_id: Option<String>,
 }
 
 wire_tag!(TerminalChangedTag, "terminal_changed");
@@ -832,7 +828,6 @@ mod tests {
             primary: true,
             service_id: None,
             script_run_id: None,
-            conversation_id: None,
         };
         let wire = serde_json::to_value(&record).unwrap();
         assert_eq!(wire["status"], "exited");

@@ -2,50 +2,6 @@ use super::*;
 use ade_core::contract::layout::{LayoutAction, Tab, TabTarget, WindowState};
 use ade_core::model::ProjectKind;
 #[test]
-fn terminal_reservation_is_atomic_durable_and_fences_prompt_admission() {
-    let db = Database::new();
-    let store = db.open();
-    let (w, mut c) = fixture(&store);
-    c.provider_thread_id = Some("native-session".into());
-    c.status = "ready".into();
-    store.commit_conversation(&c, &[], &[]).unwrap();
-    store.enqueue(&c.id, "queued", "Keep queued").unwrap();
-    let owned = store.reserve_terminal(&c.id, "runtime").unwrap();
-    let owner = owned.terminal_owner.unwrap();
-    assert!(
-        store
-            .workspace_has_terminal(&w.id, &owner.terminal_id)
-            .unwrap()
-    );
-    assert_eq!(
-        store
-            .reserve_terminal(&c.id, "runtime")
-            .unwrap()
-            .terminal_owner
-            .unwrap()
-            .transfer_id,
-        owner.transfer_id
-    );
-    drop(store);
-    let store = db.open();
-    store.recover_interrupted().unwrap();
-    assert!(store.conversation(&c.id).unwrap().queue_paused);
-    assert!(store.terminal_reserved(&owner.terminal_id).unwrap());
-    assert!(store.queue_heads().unwrap().is_empty());
-    assert!(
-        store
-            .begin_turn(&c.id, "manual", "Cannot race the terminal")
-            .is_err()
-    );
-    assert!(
-        store
-            .begin_queued_turn(&c.id, "queued", "Keep queued")
-            .is_err()
-    );
-    assert_eq!(store.queued(&c.id).unwrap().len(), 1);
-    assert!(store.message("manual").unwrap().is_none());
-}
-#[test]
 fn queue_consumption_is_atomic_ordered_and_not_replayed_after_restart() {
     let db = Database::new();
     let store = db.open();

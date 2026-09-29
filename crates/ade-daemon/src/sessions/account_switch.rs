@@ -63,7 +63,6 @@ impl Gathered {
             open_requests: self.open_requests,
             queued: self.queued,
             queue_paused: c.queue_paused,
-            terminal_owned: c.terminal_owner.is_some(),
             imported: c.status == crate::history::import::IMPORTED_STATUS,
             lease_unresolved: self.lease_unresolved,
             draining: self.draining,
@@ -362,7 +361,7 @@ impl Sessions {
             .map(|account| account.generation);
         let mut next = prior.clone();
         next.account_id = Some(gathered.target.id.clone());
-        next.account_context = "managed".into();
+        next.account_context = crate::model::AccountContext::Managed;
         if continuity == SwitchContinuity::NewNativeSession {
             next.provider_thread_id = None;
             next.runtime_cursor = 0;

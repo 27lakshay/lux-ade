@@ -4,7 +4,6 @@ import { DaemonRequestError } from './request.js'
 
 export type WorkspaceRemoveBlockerKind =
   | 'conversation_running'
-  | 'conversation_in_terminal'
   | 'service_running'
   | 'script_running'
   | 'default_workspace'

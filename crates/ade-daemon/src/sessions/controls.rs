@@ -300,7 +300,6 @@ impl Live {
             status: &c.status,
             active_turn: c.active_turn_id.as_deref(),
             connected: self.rpc.is_some(),
-            terminal_owned: c.terminal_owner.is_some(),
         }
     }
 }

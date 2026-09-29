@@ -73,7 +73,7 @@ test('accounts have durable, distinct profile homes and conversations keep their
   const ambient = await create('Earlier behavior')
   expect(firstConversation).toMatchObject({ account_id: first.id, account_context: 'managed' })
   expect(secondConversation).toMatchObject({ account_id: second.id, account_context: 'managed' })
-  expect(ambient).toMatchObject({ account_id: null, account_context: 'legacy_ambient' })
+  expect(ambient).toMatchObject({ account_id: null, account_context: 'ambient' })
 
   await profile.stop()
   await started(profile)
@@ -86,7 +86,7 @@ test('accounts have durable, distinct profile homes and conversations keep their
     expect((await profile.call('conversation.get', { conversation_id: conversation.id })).conversation).toMatchObject({
       id: conversation.id,
       account_id: expected,
-      account_context: expected ? 'managed' : 'legacy_ambient',
+      account_context: expected ? 'managed' : 'ambient',
     })
   }
 

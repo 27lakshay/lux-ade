@@ -836,8 +836,8 @@ impl Store {
         tx.commit()?;
         Ok(workspace)
     }
-    /// What the profile database knows blocks removing the workspace: busy or
-    /// terminal-owned Conversations and running services. The daemon adds the
+    /// What the profile database knows blocks removing the workspace: busy
+    /// Conversations and running services. The daemon adds the
     /// runtime's script runs and its default workspace.
     pub fn workspace_remove_blockers(&self, id: &str) -> Result<Vec<RemoveBlocker>> {
         let conversations: Vec<Conversation> = self
@@ -850,9 +850,7 @@ impl Store {
             .collect::<Result<_>>()?;
         let mut blockers = Vec::new();
         for conversation in conversations {
-            let kind = if conversation.terminal_owner.is_some() {
-                RemoveBlockerKind::ConversationInTerminal
-            } else if BUSY.contains(&conversation.status.as_str())
+            let kind = if BUSY.contains(&conversation.status.as_str())
                 || conversation.active_turn_id.is_some()
             {
                 RemoveBlockerKind::ConversationRunning

@@ -20,8 +20,6 @@ pub struct Facts<'a> {
     pub active_turn: Option<&'a str>,
     /// The daemon holds a live runtime connection to the Conversation's Agent.
     pub connected: bool,
-    /// The Conversation was handed to a terminal, which the daemon cannot steer.
-    pub terminal_owned: bool,
 }
 
 /// The native method an adapter calls for `control`, or why it has none.
@@ -85,9 +83,6 @@ fn busy(status: &str) -> bool {
 /// Why the Conversation's state refuses `control` now, if it does.
 fn state_refusal(facts: &Facts, control: ConversationControl) -> Option<&'static str> {
     use ConversationControl::*;
-    if facts.terminal_owned {
-        return Some("The Conversation runs in a terminal; ADE does not control it there");
-    }
     match control {
         Steer if facts.status == "cancelling" => Some("The running turn is being cancelled"),
         Steer if !matches!(facts.status, "running" | "waiting") || facts.active_turn.is_none() => {
@@ -144,7 +139,6 @@ mod tests {
             status,
             active_turn: matches!(status, "running" | "waiting" | "cancelling").then_some("turn_1"),
             connected: true,
-            terminal_owned: false,
         }
     }
 
@@ -277,12 +271,5 @@ mod tests {
             )
             .available
         );
-        let terminal = Facts {
-            terminal_owned: true,
-            ..facts("codex", "ready")
-        };
-        for control in [Steer, Compact, RewindFiles] {
-            assert!(!decide(&terminal, control).available);
-        }
     }
 }

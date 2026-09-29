@@ -97,7 +97,6 @@ export const terminalRecord = (id: string, title: string, fields: Partial<Termin
   primary: false,
   service_id: null,
   script_run_id: null,
-  conversation_id: null,
   ...fields,
 })
 

@@ -35,47 +35,15 @@ fn creation(result: &Value) -> Result<(String, String)> {
 }
 
 impl Store {
-    pub fn reserve_terminal(&self, id: &str, instance: &str) -> Result<Conversation> {
-        let tx = self.transaction()?;
-        let mut c: Conversation = live_conversation(&tx, id)?;
-        if c.terminal_owner.is_some() {
-            return Ok(c);
-        }
-        ensure!(
-            !BUSY.contains(&c.status.as_str()) && c.active_turn_id.is_none(),
-            "Cancel the active turn before transferring"
-        );
-        ensure!(
-            c.provider_thread_id.is_some(),
-            "Start the Conversation before transferring"
-        );
-        let workspace: WorkspaceRecord = one(&tx, "workspaces", &c.workspace_id)?;
-        records::ensure_room(&tx, &workspace.id)?;
-        let terminal_id = new_id("terminal");
-        records::insert(
-            &tx,
-            &Stored {
-                conversation_id: Some(c.id.clone()),
-                ..Stored::new(&terminal_id, &workspace.id, TerminalKind::Conversation)
-            },
-        )?;
-        c.terminal_owner = Some(TerminalOwner {
-            terminal_id,
-            transfer_id: new_id("transfer"),
-            runtime_instance: instance.into(),
-        });
-        c.queue_paused = true;
-        c.status = "terminal".into();
-        c.updated_at = now_ms();
-        write_conversation(&tx, &c)?;
-        tx.commit()?;
-        Ok(c)
-    }
     pub fn terminal_reserved(&self, terminal: &str) -> Result<bool> {
         if ade_core::scripts::run_name(terminal).is_ok() {
             return Ok(true);
         }
-        Ok(self.connection.query_row("SELECT EXISTS(SELECT 1 FROM conversations WHERE json_extract(data,'$.terminal_owner.terminal_id')=?1 UNION ALL SELECT 1 FROM services WHERE json_extract(data,'$.terminal_id')=?1)", [terminal], |row| row.get(0))?)
+        Ok(self.connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM services WHERE json_extract(data,'$.terminal_id')=?1)",
+            [terminal],
+            |row| row.get(0),
+        )?)
     }
     pub fn register_script_run(&self, workspace_id: &str, run_id: &str) -> Result<()> {
         ade_core::scripts::run_name(run_id)?;

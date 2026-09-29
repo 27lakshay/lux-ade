@@ -132,6 +132,21 @@
         }
       ]
     },
+    "AccountContext": {
+      "description": "Which login a Conversation's Agent runs under.",
+      "oneOf": [
+        {
+          "const": "managed",
+          "description": "A profile account (`account_id`), with its own native home.",
+          "type": "string"
+        },
+        {
+          "const": "ambient",
+          "description": "The provider's own login on this machine; `account_id` is null.",
+          "type": "string"
+        }
+      ]
+    },
     "AccountCreateRequest": {
       "additionalProperties": false,
       "description": "`account.create`: register a new native account home for a provider.",
@@ -7352,8 +7367,7 @@
     "Conversation": {
       "properties": {
         "account_context": {
-          "default": "legacy_ambient",
-          "type": "string"
+          "$ref": "#/$defs/AccountContext"
         },
         "account_id": {
           "default": null,
@@ -7448,17 +7462,6 @@
         "status": {
           "type": "string"
         },
-        "terminal_owner": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/TerminalOwner"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
         "title": {
           "type": "string"
         },
@@ -7477,7 +7480,6 @@
         }
       },
       "required": [
-        "terminal_owner",
         "queue_paused",
         "runtime_run",
         "runtime_cursor",
@@ -27932,13 +27934,6 @@
           "description": "A process other than the terminal's own program holds its foreground,\nsuch as a command started from the shell. Closing asks first.",
           "type": "boolean"
         },
-        "conversation_id": {
-          "default": null,
-          "type": [
-            "string",
-            "null"
-          ]
-        },
         "exit_code": {
           "default": null,
           "description": "Set when `status` is `exited` and the process reported a code. A\nprocess ended by a signal reports 128 plus the signal number.",
@@ -28006,8 +28001,7 @@
         "foreground",
         "primary",
         "service_id",
-        "script_run_id",
-        "conversation_id"
+        "script_run_id"
       ],
       "type": "object"
     },
@@ -29851,7 +29845,7 @@
     },
     "WorkspaceRemoveRequest": {
       "additionalProperties": false,
-      "description": "`workspace.remove` (\"Remove from ADE\"): hide a workspace from the catalog\nwithout touching its files.\n\n- Refused with `workspace_remove_blocked` while a Conversation turn runs, a\n  Conversation is handed to a terminal, a service runs, a script run is\n  still running, or the workspace is the daemon's default. The error frame\n  carries `blockers`: `[{kind, id, label}]`, where `kind` is\n  `conversation_running`, `conversation_in_terminal`, `service_running`,\n  `script_running` or `default_workspace`.\n- Otherwise it disconnects the workspace's idle Agents, records the\n  removal, stops every terminal (primary, extra and exited script runs)\n  and retires all but service terminals, so no process or worktree lease\n  remains. A later `worktree.remove` of the folder sees no `active_work`.\n- The record stays, so Conversations keep their workspace. They leave the\n  catalog with it. `workspace.open` on the same folder restores the same\n  workspace ID and its Conversations.\n- Removing a removed workspace succeeds and changes nothing. An unknown ID\n  is `workspace_not_found`.",
+      "description": "`workspace.remove` (\"Remove from ADE\"): hide a workspace from the catalog\nwithout touching its files.\n\n- Refused with `workspace_remove_blocked` while a Conversation turn runs, a\n  service runs, a script run is still running, or the workspace is the\n  daemon's default. The error frame carries `blockers`:\n  `[{kind, id, label}]`, where `kind` is `conversation_running`,\n  `service_running`, `script_running` or `default_workspace`.\n- Otherwise it disconnects the workspace's idle Agents, records the\n  removal, stops every terminal (primary, extra and exited script runs)\n  and retires all but service terminals, so no process or worktree lease\n  remains. A later `worktree.remove` of the folder sees no `active_work`.\n- The record stays, so Conversations keep their workspace. They leave the\n  catalog with it. `workspace.open` on the same folder restores the same\n  workspace ID and its Conversations.\n- Removing a removed workspace succeeds and changes nothing. An unknown ID\n  is `workspace_not_found`.",
       "properties": {
         "op": {
           "const": "workspace.remove"

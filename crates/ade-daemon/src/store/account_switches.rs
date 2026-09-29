@@ -142,7 +142,7 @@ impl Store {
                 && next.workspace_id == prior.workspace_id
                 && next.provider == prior.provider
                 && next.account_id.as_deref() == Some(commit.record.to_account_id.as_str())
-                && next.account_context == "managed",
+                && next.account_context == crate::model::AccountContext::Managed,
             "Invalid account switch"
         );
         let account: Account = one(&tx, "accounts", &commit.record.to_account_id)?;

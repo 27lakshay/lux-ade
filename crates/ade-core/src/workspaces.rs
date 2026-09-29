@@ -71,8 +71,6 @@ pub fn project_name(common: &str) -> String {
 pub enum RemoveBlockerKind {
     /// A Conversation turn is starting, running, waiting or cancelling.
     ConversationRunning,
-    /// A Conversation is handed to a terminal.
-    ConversationInTerminal,
     /// A service is running or starting.
     ServiceRunning,
     /// A package script run is still running.

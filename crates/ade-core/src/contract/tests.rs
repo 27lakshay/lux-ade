@@ -66,7 +66,7 @@ fn conversation() -> Conversation {
     serde_json::from_value(json!({
         "id": "conversation_1", "workspace_id": "workspace_1", "title": "Title",
         "provider": "codex", "provider_thread_id": null, "status": "idle",
-        "active_turn_id": null, "error": null, "updated_at": 1,
+        "active_turn_id": null, "error": null, "updated_at": 1, "account_context": "ambient",
     }))
     .unwrap()
 }

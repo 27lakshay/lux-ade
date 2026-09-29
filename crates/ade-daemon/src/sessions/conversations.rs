@@ -20,15 +20,12 @@ use ade_core::contract::conversations::{
 ///
 /// An imported conversation stays read-only: marking it "disconnected" would
 /// let a later send start a fresh native session under imported history.
-fn disconnect_refusal(status: &str, terminal_owned: bool) -> Option<String> {
+fn disconnect_refusal(status: &str) -> Option<String> {
     if status == crate::history::import::IMPORTED_STATUS {
         return Some(format!(
             "This conversation is an imported native session and is read-only: {}",
             crate::history::import::RESUME_UNAVAILABLE
         ));
-    }
-    if terminal_owned {
-        return Some("Return this Conversation from its terminal before disconnecting".into());
     }
     if matches!(status, "starting" | "running" | "waiting" | "cancelling") {
         return Some("Cancel the active turn before disconnecting".into());
@@ -52,7 +49,7 @@ impl Sessions {
     pub(super) fn disconnect(&self, id: &str) -> Result<()> {
         let mut d = self.data.lock().unwrap();
         let c = d.store.conversation(id)?;
-        if let Some(refusal) = disconnect_refusal(&c.status, c.terminal_owner.is_some()) {
+        if let Some(refusal) = disconnect_refusal(&c.status) {
             bail!(refusal);
         }
         // The provider stop can take a full shutdown escalation, so it
@@ -659,10 +656,6 @@ impl Sessions {
                     } else {
                         c.active_turn_id.clone()
                     };
-                    ensure!(
-                        c.queue_paused || c.terminal_owner.is_none(),
-                        "Return this Conversation from its terminal before unpausing"
-                    );
                     if c.error
                         .as_deref()
                         .is_some_and(|message| message.starts_with("Prompt queue paused:"))
@@ -718,18 +711,17 @@ mod tests {
 
     #[test]
     fn an_imported_conversation_is_never_disconnected_into_a_sendable_one() {
-        let refusal = disconnect_refusal(crate::history::import::IMPORTED_STATUS, false);
+        let refusal = disconnect_refusal(crate::history::import::IMPORTED_STATUS);
         assert!(refusal.is_some_and(|reason| reason.contains("read-only")));
     }
 
     #[test]
-    fn disconnect_keeps_its_terminal_and_active_turn_refusals() {
-        assert!(disconnect_refusal("ready", true).is_some());
+    fn disconnect_keeps_its_active_turn_refusals() {
         for busy in ["starting", "running", "waiting", "cancelling"] {
-            assert!(disconnect_refusal(busy, false).is_some());
+            assert!(disconnect_refusal(busy).is_some());
         }
         for idle in ["idle", "ready", "error", "interrupted", "disconnected"] {
-            assert_eq!(disconnect_refusal(idle, false), None);
+            assert_eq!(disconnect_refusal(idle), None);
         }
     }
 }

@@ -30,7 +30,6 @@ const terminal = (fields = {}) => ({
   primary: true,
   service_id: null,
   script_run_id: null,
-  conversation_id: null,
   ...fields,
 })
 

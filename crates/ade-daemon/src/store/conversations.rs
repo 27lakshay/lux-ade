@@ -95,10 +95,6 @@ pub fn delete_conversation(
         !BUSY.contains(&conversation.status.as_str()) && conversation.active_turn_id.is_none(),
         "Cancel the active turn before deleting this Conversation"
     );
-    ensure!(
-        conversation.terminal_owner.is_none(),
-        "Return this Conversation from its terminal before deleting it"
-    );
     let layouts = super::layouts::remove_target(
         db,
         &ade_core::contract::layout::TabTarget::Conversation { id: id.to_owned() },
@@ -243,7 +239,6 @@ impl Store {
         }
         check_text(title)?;
         let conversation = Conversation {
-            terminal_owner: None,
             queue_paused: false,
             queue_resumed_during: None,
             runtime_run: None,
@@ -255,11 +250,10 @@ impl Store {
             provider: provider.into(),
             account_id: account_id.map(str::to_owned),
             account_context: if account_id.is_some() {
-                "managed"
+                crate::model::AccountContext::Managed
             } else {
-                "legacy_ambient"
-            }
-            .into(),
+                crate::model::AccountContext::Ambient
+            },
             provider_config,
             provider_thread_id: None,
             status: "idle".into(),
@@ -574,7 +568,7 @@ impl Store {
         Ok(())
     }
     pub fn queue_heads(&self) -> Result<Vec<QueuedPrompt>> {
-        self.connection.prepare("SELECT q.id,q.conversation_id,q.text,q.status,q.attachments FROM queued_prompts q JOIN conversations c ON c.id=q.conversation_id WHERE q.status='queued' AND c.workspace_id NOT IN (SELECT workspace_id FROM workspace_tombstones) AND json_extract(c.data,'$.terminal_owner') IS NULL AND COALESCE(json_extract(c.data,'$.queue_paused'),0)=0 AND json_extract(c.data,'$.status') IN ('idle','ready','interrupted','error') AND q.rowid=(SELECT MIN(h.rowid) FROM queued_prompts h WHERE h.conversation_id=q.conversation_id AND h.status='queued') ORDER BY q.rowid LIMIT 16")?
+        self.connection.prepare("SELECT q.id,q.conversation_id,q.text,q.status,q.attachments FROM queued_prompts q JOIN conversations c ON c.id=q.conversation_id WHERE q.status='queued' AND c.workspace_id NOT IN (SELECT workspace_id FROM workspace_tombstones) AND COALESCE(json_extract(c.data,'$.queue_paused'),0)=0 AND json_extract(c.data,'$.status') IN ('idle','ready','interrupted','error') AND q.rowid=(SELECT MIN(h.rowid) FROM queued_prompts h WHERE h.conversation_id=q.conversation_id AND h.status='queued') ORDER BY q.rowid LIMIT 16")?
             .query_map([],|row| Ok(QueuedPrompt {id:row.get(0)?,conversation_id:row.get(1)?,text:row.get(2)?,status:row.get(3)?,attachments:attachment_row(row,4)?}))?
             .collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
     }
@@ -629,10 +623,6 @@ impl Store {
         validate_attachments(&self.connection, conversation_id, attachments)?;
         let tx = self.transaction()?;
         let mut conversation: Conversation = live_conversation(&tx, conversation_id)?;
-        ensure!(
-            conversation.terminal_owner.is_none(),
-            "Return this Conversation from its terminal before sending"
-        );
         let entry: Option<(String, String, String, Vec<Attachment>)> = tx
             .query_row(
                 "SELECT conversation_id,text,status,attachments FROM queued_prompts WHERE id=?1",

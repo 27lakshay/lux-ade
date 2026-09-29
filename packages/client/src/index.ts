@@ -145,7 +145,7 @@ export interface Conversation {
   provider: string
   status: string
   account_id?: string | null
-  account_context?: 'managed' | 'legacy_ambient'
+  account_context?: 'managed' | 'ambient'
   /**
    * Whether the Conversation needs the person, as the daemon derives it from
    * its status and open requests. Set when the daemon sends it.
@@ -163,7 +163,7 @@ export interface Conversation {
  * What a terminal runs; see `TerminalRecord` in `@ade/contracts`. A newer
  * daemon may send a kind or status this SDK does not know; it is kept as sent.
  */
-export type TerminalKind = 'shell' | 'service' | 'script' | 'conversation' | (string & {})
+export type TerminalKind = 'shell' | 'service' | 'script' | (string & {})
 export type TerminalStatus = 'not_started' | 'running' | 'exited' | 'stopped' | (string & {})
 
 /**
@@ -182,7 +182,6 @@ export interface Terminal {
   primary: boolean
   service_id: string | null
   script_run_id: string | null
-  conversation_id: string | null
 }
 
 export type Attention = 'idle' | 'running' | 'needs_you' | 'error'
@@ -280,7 +279,7 @@ function parseConversation(value: unknown): Conversation | null {
   if (!fields || typeof title !== 'string') return null
   const accountId = link(source?.account_id)
   const accountContext = source?.account_context
-  if (accountContext !== 'managed' && accountContext !== 'legacy_ambient') return null
+  if (accountContext !== 'managed' && accountContext !== 'ambient') return null
   const attention = source?.attention
   const unread = source?.unread
   const parent = link(source?.parent_conversation_id)
@@ -311,9 +310,9 @@ function parseTerminal(value: unknown): Terminal | null {
   const exitCode = source.exit_code
   if (exitCode !== null && !Number.isInteger(exitCode)) return null
   if (typeof source.busy !== 'boolean' || typeof source.primary !== 'boolean') return null
-  const links = [source.foreground, source.service_id, source.script_run_id, source.conversation_id].map(link)
+  const links = [source.foreground, source.service_id, source.script_run_id].map(link)
   if (links.includes(false)) return null
-  const [foreground, serviceId, scriptRunId, conversationId] = links as (string | null)[]
+  const [foreground, serviceId, scriptRunId] = links as (string | null)[]
   return {
     id: fields[0],
     workspace_id: fields[1],
@@ -326,7 +325,6 @@ function parseTerminal(value: unknown): Terminal | null {
     primary: source.primary,
     service_id: serviceId,
     script_run_id: scriptRunId,
-    conversation_id: conversationId,
   }
 }
 

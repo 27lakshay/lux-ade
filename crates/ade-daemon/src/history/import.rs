@@ -479,7 +479,6 @@ pub fn commit(
         Plan::Refuse(reason) => bail!(reason),
         Plan::Create => {
             let conversation = Conversation {
-                terminal_owner: None,
                 queue_paused: false,
                 queue_resumed_during: None,
                 runtime_run: None,
@@ -492,7 +491,7 @@ pub fn commit(
                 }),
                 provider: provider.into(),
                 account_id: None,
-                account_context: "legacy_ambient".into(),
+                account_context: crate::model::AccountContext::Ambient,
                 provider_config: Default::default(),
                 provider_thread_id: None,
                 status: IMPORTED_STATUS.into(),

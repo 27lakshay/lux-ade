@@ -408,10 +408,6 @@ impl Sessions {
                 &c,
                 d.agents.get(id).and_then(|agent| agent.account_generation),
             )?;
-            ensure!(
-                c.terminal_owner.is_none(),
-                "Return this Conversation from its terminal before resuming"
-            );
             Self::ensure_lease_resolved(&d, &super::leases::LeaseKey::Agent(id.to_owned()))?;
             Self::ensure_not_stopping(&d, id)?;
             if let Some(agent) = d.agents.get(id) {

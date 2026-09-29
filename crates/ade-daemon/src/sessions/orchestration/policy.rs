@@ -239,7 +239,6 @@ pub struct ChildView<'a> {
     pub current_submission: Option<&'a str>,
     pub queue_paused: bool,
     pub error: Option<&'a str>,
-    pub terminal_owned: bool,
     /// Provider requests still awaiting an answer.
     pub pending_requests: Vec<String>,
 }
@@ -277,9 +276,6 @@ fn observe(message_id: &str, progress: Progress, child: &ChildView) -> WaitState
     match progress {
         Progress::Cancelled => blocked("The queued message was cancelled before submission"),
         Progress::Missing => blocked("The message is neither queued nor recorded"),
-        Progress::Queued if child.terminal_owned => {
-            blocked("The child Conversation is handed to a terminal")
-        }
         Progress::Queued if child.queue_paused => WaitState::Blocked {
             reason: child
                 .error
@@ -346,7 +342,6 @@ mod tests {
             current_submission: Some("m1"),
             queue_paused: false,
             error: None,
-            terminal_owned: false,
             pending_requests: Vec::new(),
         }
     }
@@ -611,12 +606,6 @@ mod tests {
                 (WaitState::Blocked { .. }, true)
             ));
         }
-        let mut terminal = view("terminal");
-        terminal.terminal_owned = true;
-        assert!(matches!(
-            resolve_wait("m9", Progress::Queued, Some(&terminal), 0, 10).0,
-            WaitState::Blocked { .. }
-        ));
         assert!(matches!(
             resolve_wait("m9", Progress::Cancelled, Some(&idle), 0, 10).0,
             WaitState::Blocked { .. }

@@ -33,8 +33,6 @@ pub(crate) struct Stored {
     #[serde(default)]
     pub script_run_id: Option<String>,
     #[serde(default)]
-    pub conversation_id: Option<String>,
-    #[serde(default)]
     pub live: Live,
 }
 
@@ -68,7 +66,6 @@ impl Stored {
             label: None,
             service_id: None,
             script_run_id: None,
-            conversation_id: None,
             live: Live::default(),
         }
     }
@@ -94,7 +91,6 @@ impl Stored {
                     TerminalKind::Shell => "Shell",
                     TerminalKind::Service => "Service",
                     TerminalKind::Script => "Script",
-                    TerminalKind::Conversation => "Conversation",
                 }
                 .into()
             });
@@ -110,7 +106,6 @@ impl Stored {
             primary: self.primary,
             service_id: self.service_id.clone(),
             script_run_id: self.script_run_id.clone(),
-            conversation_id: self.conversation_id.clone(),
         }
     }
 }
