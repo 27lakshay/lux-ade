@@ -25,11 +25,12 @@ pnpm test:e2e:protocol:only boot --grep "restart"
 
 ## Writing a spec
 
-Put `<area>.spec.ts` in this directory. Import `test` and `expect` from
-`./fixtures`, not from `@playwright/test`; only that `test` runs the cleanup.
+Put a spec in the subdirectory for its area (`<area>/<topic>.spec.ts`, such as
+`workspaces/navigator.spec.ts`). Import `test` and `expect` from `../fixtures`, not from
+`@playwright/test`; only that `test` runs the cleanup.
 
 ```ts
-import { expect, prompts, send, startConversation, test, waitForMessage } from './fixtures'
+import { expect, prompts, send, startConversation, test, waitForMessage } from '../fixtures'
 
 test('a Codex turn reaches the transcript', async ({ profile, repo }) => {
   const { conversationId } = await startConversation(profile, 'codex', repo.path)

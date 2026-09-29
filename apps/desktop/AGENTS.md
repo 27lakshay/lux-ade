@@ -49,9 +49,9 @@ claiming a UI change works.
   - `model/`: the layout is the daemon's: each window is a daemon window record, and each of its
     workspaces has a layout record the daemon changes (`layout.apply`, `tab.close`, `pane.close`).
     The renderer holds those records by revision (`layout-store.ts`, `layout-sync.ts`), draws them,
-    and sends one command when a gesture ends; it keeps no reducer and saves no layout. Old
-    localStorage layouts are imported once (`layout-import.ts`). The TS reducer survives only as a
-    test and `?bench` double (`dev/layout-double/`, kept faithful by lane A's shared vectors; the
+    and sends one command when a gesture ends; it keeps no reducer and saves no layout. The TS
+    reducer survives only as a test and `?bench` double (`dev/layout-double/`, kept faithful by
+    lane A's shared vectors in `reducer.test.ts`; the
     `ade/no-layout-double` lint rule keeps it out of the app). Native-menu and palette commands
     live in `layout-commands.ts`.
   - Limits keep every layout tidy, and are enforced, not advised:
@@ -93,7 +93,8 @@ claiming a UI change works.
       Tab strips are tab lists: one Tab stop, arrows, Home and End move and select. Keyboard focus
       entering a pane makes it the focused pane. Gutters are named ("Resize navigator"), and
       Escape on one returns to the focused pane.
-    - `layout.property.test.ts` runs random action sequences against the reducer's invariants.
+    - The daemon's layout core carries the invariants (property tests in `crates/ade-core`); the
+      desktop double runs the same shared vectors.
   - `content/`: every tab's content renders once into its own element (`hosts.ts`,
     `ContentHosts.tsx`); panes attach the element, so moving a tab never remounts it. Content of
     the recently used workspaces stays mounted; how many is `keepMounted` in the layout store (3).
@@ -232,8 +233,9 @@ claiming a UI change works.
   title-case and vague button labels.
 - Status: `<Status state="needsYou" />` (`idle`, `running`, `needsYou`, `error`, `done`) is the only
   status mark. Amber means "needs you" and nothing else.
-- Shortcuts: `<Shortcut appCommand="command-palette" />` for native-menu commands (keys from
-  `APP_COMMAND_KEYS` in `src/shared/app-commands.ts`, which the menu also binds), or
+- Shortcuts: `<Shortcut appCommand="command-palette" />` for native-menu commands (keys from the
+  profile's keybindings setting in the daemon, `app/keybindings.ts`, which main binds to the menu;
+  `APP_COMMAND_KEYS` are only the defaults shown before the daemon answers), or
   `<Shortcut keys={service.keybindingFor(id)} />` for command-service bindings. Never type a
   shortcut label by hand.
 - `src/renderer/src/components/ui` is the stock shadcn/ui kit on Base UI (Nova preset, all

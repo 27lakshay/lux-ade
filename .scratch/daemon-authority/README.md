@@ -42,7 +42,7 @@ The coordinator decided (2026-09-29), each recorded as D18 in
 | 3 | Plain folders are projects too; `workspace.project_id` is never null | One tree shape: every workspace has a project |
 | 4 | One project ID for the catalog and the worktree lifecycle | Today `repo_…` and `repository_…` name the same repository |
 | 5 | Closing a tab follows its target: a terminal tab closes the terminal (refused with `terminal_busy` unless confirmed); a conversation, file, diff or browser tab only leaves the layout | The daemon owns the rule, so the CLI behaves the same |
-| 6 | Per-window view state (collapsed projects, recent workspaces) is stored with the window; focus, scroll, hover and drag state stay local | A second UI attached to the window sees the same tree; transient state needs no round trip |
+| 6 | Per-window view state (collapsed projects, recent workspaces) is stored with the window, and which pane is focused with the layout; keyboard focus inside a pane, scroll, hover and drag state stay local | A second UI attached to the window sees the same tree; transient state needs no round trip |
 | 7 | Appearance, motion, typography and keybindings are profile settings in the daemon; Electron main keeps only a startup copy for the first paint | Preferences are durable state |
 | 8 | A child Conversation is listed under the workspace it runs in, with a link to its parent; the parent lists its children | Ownership stays single; the link carries the relationship |
 | 9 | Layouts saved in localStorage are imported once into the daemon, then the local copy is deleted | Keeps the author's layouts through the switch |

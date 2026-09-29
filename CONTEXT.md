@@ -1,8 +1,8 @@
 # ADE domain context
 
-The current application is a Rust/GPUI prototype. The planned successor uses an
-Electron/React frontend with independent Rust state and execution processes.
-Specifications describe intended behavior, not verified implementation status.
+ADE is an Electron/React desktop app over a Rust profile daemon and runtime. The daemon owns every
+durable record and rule, so the CLI, the SDK and any UI drive the same state; the desktop presents
+it. Specifications describe intended behavior, not verified implementation status.
 
 | Term | Meaning |
 |---|---|
@@ -34,7 +34,8 @@ Specifications describe intended behavior, not verified implementation status.
 Use the [v1 spec index](.scratch/ade-v1/README.md) and
 [requirements register](.scratch/ade-v1/requirements.md) for scope. Use the
 [architecture proposal](docs/proposed-architecture.md) for ownership and recovery
-rules, and [current architecture](docs/architecture.md) to locate existing code.
+rules, and the [daemon authority map](.scratch/daemon-authority/README.md) for the flat model of
+records and who owns what. `docs/architecture.md` describes the removed GPUI prototype.
 Record later material decisions in the spec's decision register and relevant
 specification; never silently infer that a package candidate or prototype behavior
 settles a product requirement.
