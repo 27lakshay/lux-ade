@@ -4612,7 +4612,6 @@ export interface Conversation {
    */
   unread: boolean
   updated_at: number
-  view_terminal: TerminalOwner | null
   workspace_id: string
   [k: string]: unknown
 }

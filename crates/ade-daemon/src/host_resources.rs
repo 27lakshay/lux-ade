@@ -442,8 +442,8 @@ pub fn may_resolve(claim: &Claim, confirm_path: &str) -> Result<()> {
 pub enum AcceptOutcome {
     /// It ran; `rebound` says the daemon now uses a different registry.
     Ran { rebound: bool },
-    /// The ID was accepted before; the reply it recorded, if any.
-    Replayed(Option<Value>),
+    /// The ID was accepted before; the reply it recorded.
+    Replayed(Value),
 }
 
 /// Why the registry refuses new claims.
@@ -1436,38 +1436,15 @@ impl HostResources {
             Admission::New => {}
             Admission::Replay(receipt) => {
                 // R002: the recorded reply, not the registry as it reads now.
+                // The removal and its reply commit together, so a receipt
+                // without a reply never removed anything it can prove.
                 if let Some(reply) = receipts::recorded_reply(&receipt) {
                     return Ok(reply);
                 }
-                return match receipt.status {
-                    // An earlier build committed the removal as acknowledged
-                    // and recorded the reply in a second write. The removal
-                    // is known to have happened, so the reply is the registry
-                    // as it reads now, recorded once so every later retry
-                    // returns the same.
-                    Status::Acknowledged => {
-                        let reply = serde_json::to_value(self.state_in(open, &tx)?)?;
-                        receipts::settle(
-                            &tx,
-                            &request.operation_id,
-                            Status::Settled,
-                            Some(&json!({"reply": reply})),
-                            now_ms(),
-                        )?;
-                        tx.commit()?;
-                        Ok(reply)
-                    }
-                    // Settled by an earlier build that recorded only a summary.
-                    Status::Settled => {
-                        drop(tx);
-                        drop(guard);
-                        Ok(serde_json::to_value(self.inspect(None)?)?)
-                    }
-                    Status::Accepted | Status::Dispatched | Status::Unknown => bail!(
-                        "{OP} {} was interrupted; its outcome is unknown and it will not run again. Inspect resources before resolving under a new operation ID",
-                        request.operation_id
-                    ),
-                };
+                bail!(
+                    "{OP} {} was interrupted; its outcome is unknown and it will not run again. Inspect resources before resolving under a new operation ID",
+                    request.operation_id
+                );
             }
             Admission::Conflict => {
                 bail!("Operation ID was already used for different parameters")
@@ -1537,7 +1514,7 @@ impl HostResources {
             Admission::New => {}
             Admission::Replay(receipt) => {
                 if let Some(reply) = receipts::recorded_reply(&receipt) {
-                    return Ok(AcceptOutcome::Replayed(Some(reply)));
+                    return Ok(AcceptOutcome::Replayed(reply));
                 }
                 return match receipt.status {
                     // The binding committed as acknowledged, and the daemon
@@ -1555,14 +1532,14 @@ impl HostResources {
                             now_ms(),
                         )?;
                         tx.commit()?;
-                        Ok(AcceptOutcome::Replayed(Some(reply)))
+                        Ok(AcceptOutcome::Replayed(reply))
                     }
-                    // Settled by an earlier build that recorded only a summary.
-                    Status::Settled => Ok(AcceptOutcome::Replayed(None)),
-                    Status::Accepted | Status::Dispatched | Status::Unknown => bail!(
-                        "resources.registry.accept {} was interrupted; its outcome is unknown and it will not run again. Inspect resources before accepting under a new operation ID",
-                        request.operation_id
-                    ),
+                    Status::Accepted | Status::Dispatched | Status::Settled | Status::Unknown => {
+                        bail!(
+                            "resources.registry.accept {} was interrupted; its outcome is unknown and it will not run again. Inspect resources before accepting under a new operation ID",
+                            request.operation_id
+                        )
+                    }
                 };
             }
             Admission::Conflict => bail!("Operation ID was already used for different parameters"),

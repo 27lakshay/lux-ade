@@ -23,10 +23,6 @@ export async function filesHolding(profile: ScratchProfile, secret: string): Pro
   return holding
 }
 
-export function sessionsDatabase(profile: ScratchProfile): string {
-  return join(profile.dataDirectory, 'sessions.sqlite')
-}
-
 export function pluginsDatabase(profile: ScratchProfile): string {
   return join(profile.dataDirectory, 'sessions.plugins.sqlite3')
 }

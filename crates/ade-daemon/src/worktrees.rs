@@ -1291,12 +1291,8 @@ impl Worktrees {
                 valid("confirm_registry", &accept.confirm_registry)?;
                 let mut d = self.data.lock().unwrap();
                 match self.resources.accept(&d.db, &accept)? {
-                    crate::host_resources::AcceptOutcome::Replayed(Some(recorded)) => {
+                    crate::host_resources::AcceptOutcome::Replayed(recorded) => {
                         return Ok(recorded);
-                    }
-                    crate::host_resources::AcceptOutcome::Replayed(None) => {
-                        drop(d);
-                        return reply(&self.resources.inspect(None)?);
                     }
                     crate::host_resources::AcceptOutcome::Ran { rebound: true } => {
                         // Claims taken before recovery live in the old registry.

@@ -33,11 +33,8 @@ struct Key {
 struct Record {
     key: Key,
     port: u16,
-    #[serde(default)]
     service_identity: String,
-    #[serde(default)]
     target_port: u16,
-    #[serde(default)]
     route_id: String,
     daemon_socket: PathBuf,
 }
@@ -66,21 +63,7 @@ pub(super) struct Manager {
 impl Manager {
     pub(super) fn open(directory: &Path) -> Result<Self> {
         let file = directory.join("service-proxies.json");
-        let (mut saved, mut corrupt) = read_registry(&file)?;
-        if saved.iter().any(|record| record.route_id.is_empty()) {
-            for record in &mut saved {
-                if record.route_id.is_empty() {
-                    record.route_id = format!("route_{}", uuid::Uuid::new_v4());
-                }
-            }
-            if let Err(error) = persist_values(&file, &saved) {
-                corrupt = Some(Corrupt {
-                    sha256: sha256_file(&file)?,
-                    reason: format!("Cannot backfill stable proxy route identities: {error}"),
-                });
-                saved.clear();
-            }
-        }
+        let (saved, corrupt) = read_registry(&file)?;
         let manager = Self {
             file,
             records: Mutex::new(HashMap::new()),
@@ -664,7 +647,8 @@ fn read_registry(file: &Path) -> Result<(Vec<Record>, Option<Corrupt>)> {
                 || record.key.service_name.is_empty()
                 || record.key.port_variable.is_empty()
                 || !keys.insert(record.key.clone())
-                || (!record.route_id.is_empty() && !route_ids.insert(record.route_id.clone()))
+                || record.route_id.is_empty()
+                || !route_ids.insert(record.route_id.clone())
         })
     {
         return Ok((

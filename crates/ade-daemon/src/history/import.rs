@@ -479,7 +479,6 @@ pub fn commit(
         Plan::Refuse(reason) => bail!(reason),
         Plan::Create => {
             let conversation = Conversation {
-                view_terminal: None,
                 terminal_owner: None,
                 queue_paused: false,
                 queue_resumed_during: None,

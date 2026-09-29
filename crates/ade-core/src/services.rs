@@ -197,9 +197,9 @@ impl Config {
     /// against the stored configuration. Afterwards every secret shows as
     /// [`REDACTED`] in `env` and has a reference in `secret_refs`, except the
     /// ones returned: values the daemon must move into the Keychain before it
-    /// saves. A secret sent as [`REDACTED`] keeps its stored reference, or a
-    /// value stored before references existed; with neither it is refused, so
-    /// the placeholder never stands in for a value.
+    /// saves. A secret sent as [`REDACTED`] keeps its stored reference;
+    /// without one it is refused, so the placeholder never stands in for a
+    /// value.
     pub fn plan_secrets(&mut self, stored: Option<&Config>) -> Result<Vec<(String, String)>> {
         for (key, reference) in &self.secret_refs {
             if self.env.get(key).is_some_and(|value| value != REDACTED) {
@@ -237,35 +237,19 @@ impl Config {
                 self.secret_refs.insert(key.clone(), reference.clone());
                 continue;
             }
-            match stored.and_then(|stored| stored.env.get(key)) {
-                Some(kept) if kept == REDACTED => {
-                    bail!("Secret {key} was withheld from a backup; send its value")
-                }
-                // A value stored before references existed moves into the
-                // Keychain on this save.
-                Some(kept) => pending.push((key.clone(), kept.clone())),
-                None => bail!("Secret {key} has no stored value; send its value"),
+            if stored
+                .and_then(|stored| stored.env.get(key))
+                .is_some_and(|kept| kept == REDACTED)
+            {
+                bail!("Secret {key} was withheld from a backup; send its value")
             }
+            bail!("Secret {key} has no stored value; send its value")
         }
         Ok(pending)
     }
-    /// The secrets a stored record still holds in plain text: values saved
-    /// before references existed. Opening the profile moves each into the
-    /// Keychain.
-    pub fn legacy_secret_values(&self) -> Vec<(String, String)> {
-        self.secret_env
-            .iter()
-            .filter(|key| !self.secret_refs.contains_key(*key))
-            .filter_map(|key| {
-                let value = self.env.get(key)?;
-                (value != REDACTED).then(|| (key.clone(), value.clone()))
-            })
-            .collect()
-    }
     /// Refuses a launch while any secret has no reference. A backup drops the
     /// references to items ADE owns, so a restored service has nothing to
-    /// resolve until its secrets are configured again. A value still stored
-    /// in plain text is never launched from the database.
+    /// resolve until its secrets are configured again.
     pub fn ensure_secrets_present(&self) -> Result<()> {
         for key in &self.secret_env {
             if self.secret_refs.contains_key(key) {
@@ -276,9 +260,7 @@ impl Config {
                     "Secret {key} was withheld from a backup; configure its value before starting the service"
                 );
             }
-            bail!(
-                "Secret {key} is still stored in plain text because it could not be moved to the Keychain; configure its value before starting the service"
-            );
+            bail!("Secret {key} has no reference; configure its value before starting the service");
         }
         Ok(())
     }
@@ -520,26 +502,6 @@ mod tests {
     }
 
     #[test]
-    fn a_value_stored_before_references_is_never_launched_and_moves_on_the_next_save() {
-        let legacy = config(&[("TOKEN", "s3cret")], &["TOKEN"]);
-        assert_eq!(
-            legacy.legacy_secret_values(),
-            vec![("TOKEN".into(), "s3cret".into())]
-        );
-        let error = legacy.ensure_secrets_present().unwrap_err().to_string();
-        assert!(error.contains("still stored in plain text"), "{error}");
-        // Saving the redacted view moves the stored value.
-        let mut resaved = legacy.redacted();
-        assert_eq!(
-            resaved.plan_secrets(Some(&legacy)).unwrap(),
-            vec![("TOKEN".into(), "s3cret".into())]
-        );
-        let migrated = saved(legacy.clone(), None, "m");
-        assert!(migrated.legacy_secret_values().is_empty());
-        migrated.ensure_secrets_present().unwrap();
-    }
-
-    #[test]
     fn a_backup_copy_withholds_every_secret_value_and_a_restored_service_cannot_start_until_resent()
     {
         let mut stored = saved(
@@ -553,15 +515,15 @@ mod tests {
         stored.secret_env.insert("USER".into());
         stored.env.insert("USER".into(), REDACTED.into());
         stored.validate().unwrap();
-        // A legacy record with the value in plain text.
-        let legacy = config(&[("TOKEN", "s3cret"), ("MODE", "dev")], &["TOKEN"]);
-        let mut legacy_record = serde_json::json!({"name": "api", "revision": 3, "config": legacy});
-        assert!(holds_secret_values(&legacy_record));
-        withhold_secret_values(&mut legacy_record).unwrap();
-        assert!(!holds_secret_values(&legacy_record));
-        assert!(!legacy_record.to_string().contains("s3cret"));
-        assert_eq!(legacy_record["config"]["env"]["MODE"], "dev");
-        assert_eq!(legacy_record["revision"], 3);
+        // A record holding a value in plain text never reaches a backup.
+        let plain = config(&[("TOKEN", "s3cret"), ("MODE", "dev")], &["TOKEN"]);
+        let mut plain_record = serde_json::json!({"name": "api", "revision": 3, "config": plain});
+        assert!(holds_secret_values(&plain_record));
+        withhold_secret_values(&mut plain_record).unwrap();
+        assert!(!holds_secret_values(&plain_record));
+        assert!(!plain_record.to_string().contains("s3cret"));
+        assert_eq!(plain_record["config"]["env"]["MODE"], "dev");
+        assert_eq!(plain_record["revision"], 3);
 
         // A current record keeps the user's reference and drops ADE's own.
         let mut record = serde_json::json!({"name": "api", "revision": 3, "config": stored});

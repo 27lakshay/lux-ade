@@ -373,7 +373,7 @@ impl Sessions {
         Ok(())
     }
     pub(super) fn resume(self: &Arc<Self>, id: &str) -> Result<()> {
-        let clear_view = {
+        {
             let d = self.data.lock().unwrap();
             let c = d.store.conversation(id)?;
             Self::ensure_not_imported(&c)?;
@@ -382,10 +382,6 @@ impl Sessions {
                 &c,
                 d.agents.get(id).and_then(|agent| agent.account_generation),
             )?;
-            !d.agents.contains_key(id) && c.view_terminal.is_some()
-        };
-        if clear_view {
-            self.clear_view_terminal(id)?;
         }
         let mut lease = None;
         let run = loop {

@@ -7456,23 +7456,11 @@
           "minimum": -9007199254740991,
           "type": "integer"
         },
-        "view_terminal": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/TerminalOwner"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
         "workspace_id": {
           "type": "string"
         }
       },
       "required": [
-        "view_terminal",
         "terminal_owner",
         "queue_paused",
         "runtime_run",

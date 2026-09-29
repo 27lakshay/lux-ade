@@ -255,9 +255,6 @@ impl Core {
         db.execute_batch(reload::SCHEMA)?;
         receipts::ensure(&db)?;
         settle_interrupted(&db)?;
-        if let Err(error) = migrate_credential_settings(&db) {
-            tracing::warn!("Plugin credential settings were not migrated: {error:#}");
-        }
         let artifacts = directory.join("artifacts");
         let staging = directory.join("staging");
         let _ = fs::remove_dir_all(&staging);
@@ -486,8 +483,8 @@ impl Core {
             serde_json::from_value::<PluginSettings>(settings_reply(&state.db, plugin_id)?)?
                 .settings;
         // A credential setting gives the plugin its reference in `settings`
-        // and, at activation, the value it resolves to. A value stored in
-        // plain text is withheld from both.
+        // and, at activation, the value it resolves to. A stored value that is
+        // not a reference is withheld from both.
         let credentials = declared
             .iter()
             .filter(|setting| {
@@ -1571,72 +1568,6 @@ fn credential_value(
         )));
     }
     Ok(value)
-}
-
-/// Moves each credential setting stored before references were typed into
-/// a reference: `env:NAME` and `keychain:SERVICE/ACCOUNT` become the
-/// reference they name, and any other text, which may be the secret itself,
-/// moves into a Keychain item ADE owns. A value that cannot move stays, is
-/// never shown or given to a plugin, and is tried again on the next open.
-fn migrate_credential_settings(db: &Connection) -> Result<()> {
-    let rows = db
-        .prepare(
-            "SELECT s.plugin_id,s.key,s.value,p.manifest FROM plugin_settings s
-             JOIN plugins p ON p.id=s.plugin_id",
-        )?
-        .query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-            ))
-        })?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-    let mut moved = false;
-    for (plugin_id, key, stored, manifest) in rows {
-        let Ok(manifest) = serde_json::from_str::<PluginManifest>(&manifest) else {
-            continue;
-        };
-        let credential =
-            manifest.contributes.settings.iter().any(|setting| {
-                setting.key == key && setting.kind == PluginSettingKind::CredentialRef
-            });
-        let Ok(Value::String(text)) = serde_json::from_str::<Value>(&stored) else {
-            continue;
-        };
-        if !credential {
-            continue;
-        }
-        let mut pending = crate::credentials::Pending::default();
-        let reference = match ade_core::credentials::legacy_reference(&text) {
-            Some(reference) => reference,
-            None => match pending.store(&format!("plugin/{plugin_id}/{key}"), &text) {
-                Ok(reference) => reference,
-                Err(error) => {
-                    tracing::warn!(
-                        "Plugin {plugin_id} setting {key} stayed in plain text because the Keychain refused it: {error:#}"
-                    );
-                    continue;
-                }
-            },
-        };
-        db.pragma_update(None, "secure_delete", "ON")?;
-        let updated = db.execute(
-            "UPDATE plugin_settings SET value=?3 WHERE plugin_id=?1 AND key=?2 AND value=?4",
-            params![plugin_id, key, serde_json::to_string(&reference)?, stored],
-        )?;
-        if updated == 1 {
-            pending.commit();
-            moved = true;
-        }
-    }
-    if moved {
-        db.execute_batch("VACUUM")?;
-        db.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))?;
-    }
-    db.pragma_update(None, "secure_delete", "OFF")?;
-    Ok(())
 }
 
 fn settings_reply(db: &Connection, id: &str) -> Result<Value> {

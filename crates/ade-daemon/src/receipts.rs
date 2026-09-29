@@ -268,7 +268,7 @@ pub fn settle(
 
 /// The reply a settled receipt recorded as `{"reply": ...}`, which a retry of
 /// the same ID must return unchanged. `None` for an open receipt, or one
-/// settled before its handler recorded whole replies.
+/// whose handler records no whole reply.
 pub fn recorded_reply(receipt: &Receipt) -> Option<Value> {
     (receipt.status == Status::Settled)
         .then(|| receipt.result.as_ref()?.get("reply").cloned())
@@ -442,7 +442,7 @@ mod tests {
             recorded_reply(&settled(Some(json!({"reply": reply.clone()})))),
             Some(reply.clone())
         );
-        // An older receipt recorded only a summary; the caller rebuilds the reply.
+        // A result without a reply is not a reply.
         assert_eq!(
             recorded_reply(&settled(Some(json!({"resolved": "c"})))),
             None

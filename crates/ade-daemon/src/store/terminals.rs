@@ -75,7 +75,7 @@ impl Store {
         if ade_core::scripts::run_name(terminal).is_ok() {
             return Ok(true);
         }
-        Ok(self.connection.query_row("SELECT EXISTS(SELECT 1 FROM conversations WHERE (json_extract(data,'$.terminal_owner.terminal_id')=?1 OR json_extract(data,'$.view_terminal.terminal_id')=?1) UNION ALL SELECT 1 FROM services WHERE json_extract(data,'$.terminal_id')=?1)", [terminal], |row| row.get(0))?)
+        Ok(self.connection.query_row("SELECT EXISTS(SELECT 1 FROM conversations WHERE json_extract(data,'$.terminal_owner.terminal_id')=?1 UNION ALL SELECT 1 FROM services WHERE json_extract(data,'$.terminal_id')=?1)", [terminal], |row| row.get(0))?)
     }
     pub fn register_script_run(&self, workspace_id: &str, run_id: &str) -> Result<()> {
         ade_core::scripts::run_name(run_id)?;

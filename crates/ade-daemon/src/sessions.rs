@@ -155,14 +155,6 @@ impl Sessions {
     }
     pub fn open(path: &Path, runtime: Arc<Supervisor>) -> Result<Arc<Self>> {
         let store = Store::open(path)?;
-        // Secret values saved before references existed move into the
-        // Keychain now. One that cannot move is never launched and is tried
-        // again on the next open; the profile still opens.
-        match store.migrate_service_secrets() {
-            Ok(0) => {}
-            Ok(moved) => tracing::info!("Moved {moved} service secret value(s) into the Keychain"),
-            Err(error) => tracing::warn!("{error:#}"),
-        }
         crate::hooks::recover(&store.connection, now_ms())?;
         let (queue_wake, queue_rx) = mpsc::sync_channel(1);
 
@@ -340,17 +332,6 @@ impl Sessions {
         self.wake_queue();
     }
     fn restore(self: &Arc<Self>) -> Result<()> {
-        // Retire only identity-checked terminal attachments from older builds.
-        // Ordinary shell terminals and services are independent of Conversations.
-        let conversations = self.data.lock().unwrap().store.catalog()?.conversations;
-        for c in conversations {
-            if self.ensure_workspace_bound(&c.workspace_id).is_err() {
-                continue;
-            }
-            if c.view_terminal.is_some() || c.terminal_owner.is_some() {
-                self.clear_view_terminal(&c.id)?;
-            }
-        }
         // Reconcile every persisted lease against the runtime before any
         // admission: script runs (durable workspace terminal membership),
         // service reservations and Agent runs. See `leases::decide`.

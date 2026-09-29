@@ -244,7 +244,6 @@ impl Store {
         check_text(title)?;
         let conversation = Conversation {
             terminal_owner: None,
-            view_terminal: None,
             queue_paused: false,
             queue_resumed_during: None,
             runtime_run: None,

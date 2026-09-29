@@ -68,8 +68,8 @@ pub struct LaunchSpec {
     /// The lifecycle events the manifest subscribes to (F058).
     pub hooks: Vec<String>,
     pub settings: Map<String, Value>,
-    /// Each set credential setting's reference (F059); none for a value
-    /// still stored in plain text, which is never given to the plugin. They
+    /// Each set credential setting's reference (F059); none for a stored
+    /// value that is not a reference, which is never given to the plugin. They
     /// resolve at each host start, and the values live only in that
     /// activation's request.
     pub credentials: BTreeMap<String, Option<CredentialReference>>,
@@ -81,9 +81,7 @@ fn resolve_credentials(spec: &LaunchSpec) -> Result<BTreeMap<String, String>, St
         .iter()
         .map(|(key, reference)| {
             let reference = reference.as_ref().ok_or_else(|| {
-                format!(
-                    "Credential setting {key} is still stored in plain text because it could not be moved to the Keychain; set it again"
-                )
+                format!("Credential setting {key} is not a credential reference; set it again")
             })?;
             crate::credentials::resolve(reference)
                 .map(|value| (key.clone(), value))

@@ -74,22 +74,6 @@ impl CredentialReference {
     }
 }
 
-/// Reads a plugin credential setting stored before references were typed:
-/// `env:NAME` or `keychain:SERVICE/ACCOUNT`. Anything else is not a
-/// reference, so it may be a secret typed in by mistake.
-pub fn legacy_reference(text: &str) -> Option<CredentialReference> {
-    let reference = if let Some(name) = text.strip_prefix("env:") {
-        CredentialReference::Env(name.to_owned())
-    } else {
-        let (service, account) = text.strip_prefix("keychain:")?.split_once('/')?;
-        CredentialReference::Keychain {
-            service: service.to_owned(),
-            account: account.to_owned(),
-        }
-    };
-    reference.validate().is_ok().then_some(reference)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -145,23 +129,5 @@ mod tests {
         );
         assert!(serde_json::from_value::<CredentialReference>(json!("API_TOKEN")).is_err());
         assert!(serde_json::from_value::<CredentialReference>(json!({"value": "x"})).is_err());
-    }
-
-    #[test]
-    fn legacy_plugin_strings_are_read_as_references_only_when_they_name_one() {
-        assert_eq!(
-            legacy_reference("keychain:e2e/token"),
-            Some(CredentialReference::Keychain {
-                service: "e2e".into(),
-                account: "token".into()
-            })
-        );
-        assert_eq!(
-            legacy_reference("env:API_TOKEN"),
-            Some(CredentialReference::Env("API_TOKEN".into()))
-        );
-        assert_eq!(legacy_reference("ghp_raw_token"), None);
-        assert_eq!(legacy_reference("env:lowercase"), None);
-        assert_eq!(legacy_reference("keychain:noslash"), None);
     }
 }

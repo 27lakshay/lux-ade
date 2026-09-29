@@ -850,16 +850,15 @@ impl Store {
             .collect::<Result<_>>()?;
         let mut blockers = Vec::new();
         for conversation in conversations {
-            let kind =
-                if conversation.terminal_owner.is_some() || conversation.view_terminal.is_some() {
-                    RemoveBlockerKind::ConversationInTerminal
-                } else if BUSY.contains(&conversation.status.as_str())
-                    || conversation.active_turn_id.is_some()
-                {
-                    RemoveBlockerKind::ConversationRunning
-                } else {
-                    continue;
-                };
+            let kind = if conversation.terminal_owner.is_some() {
+                RemoveBlockerKind::ConversationInTerminal
+            } else if BUSY.contains(&conversation.status.as_str())
+                || conversation.active_turn_id.is_some()
+            {
+                RemoveBlockerKind::ConversationRunning
+            } else {
+                continue;
+            };
             blockers.push(RemoveBlocker {
                 kind,
                 label: format!("Conversation \"{}\"", conversation.title),

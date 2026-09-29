@@ -70,8 +70,6 @@ pub enum Attention {
 #[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
 pub struct Conversation {
     #[serde(default)]
-    pub view_terminal: Option<TerminalOwner>,
-    #[serde(default)]
     pub terminal_owner: Option<TerminalOwner>,
     #[serde(default)]
     pub queue_paused: bool,

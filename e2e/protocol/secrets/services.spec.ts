@@ -8,8 +8,6 @@
 // (fixtures/secret-store.ts), which stands in for the Keychain; no spec
 // reaches the real Keychain. The item store is the only place a value lives,
 // and it holds no value in plain text.
-import { DatabaseSync } from 'node:sqlite'
-import { join } from 'node:path'
 import { expect, test } from '../fixtures'
 import { writeEnvEchoPrograms } from '../fixtures/env-echo'
 import { httpGet, waitForReadiness } from '../fixtures/services'
@@ -18,7 +16,6 @@ import {
   REDACTED,
   filesHolding,
   ownedReference,
-  sessionsDatabase,
   storeHoldsPlainly,
   type KeychainReference,
 } from './helpers'
@@ -235,69 +232,4 @@ test('references resolve only at launch, and one that names nothing refuses the 
   await profile.secrets.add('e2e-user', 'api', 'kept')
   await profile.call('service.remove', { workspace_id: workspace.id, name: 'api', revision: configured.revision })
   expect(await profile.secrets.find('e2e-user', 'api')).toBe('kept')
-})
-
-test('a secret stored in plain text before references moves into the secret store when the profile opens', async ({
-  profile,
-  repo,
-}) => {
-  const { workspace } = await profile.call('workspace.open', { path: repo.path })
-  const files = await writeEnvEchoPrograms(repo.path)
-  const configured = (
-    await profile.call('service.configure', {
-      workspace_id: workspace.id,
-      name: 'api',
-      revision: 0,
-      config: {
-        program: process.execPath,
-        args: [files.server],
-        ports: ['PORT'],
-        env: { API_TOKEN: 'placeholder', E2E_ECHO: 'API_TOKEN' },
-        secret_env: ['API_TOKEN'],
-      },
-    })
-  ).service
-  const placeholder = configured.config.secret_refs!.API_TOKEN as KeychainReference
-
-  // Rewrite the record as an older ADE stored it: the value in plain text.
-  await profile.stop()
-  await profile.secrets.delete(ADE_KEYCHAIN_SERVICE, placeholder.keychain.account)
-  const db = new DatabaseSync(sessionsDatabase(profile))
-  db.prepare(`UPDATE services SET data=json_set(json_remove(data,'$.config.secret_refs'),'$.config.env.API_TOKEN',?)
-    WHERE name='api'`).run(SECRET)
-  db.close()
-  expect(await filesHolding(profile, SECRET)).not.toEqual([])
-
-  // Opened without a usable store, the value cannot move. It is never
-  // shown and never launched, and the profile still opens.
-  const store = profile.env.ADE_SECRET_FILE
-  profile.env.ADE_SECRET_FILE = join(profile.home, 'missing', 'store.json')
-  await profile.restartDaemon()
-  const stuck = (await profile.call('service.inspect', { workspace_id: workspace.id, name: 'api' })).service
-  expect(stuck.config.env.API_TOKEN).toBe(REDACTED)
-  expect(stuck.config.secret_refs).toBeUndefined()
-  expect(JSON.stringify(await profile.call('service.list', { workspace_id: workspace.id }))).not.toContain(SECRET)
-  await expect(profile.call('service.start', { workspace_id: workspace.id, name: 'api' })).rejects.toThrow(
-    /Secret API_TOKEN is still stored in plain text/,
-  )
-  expect(
-    (await profile.call('service.inspect', { workspace_id: workspace.id, name: 'api' })).service.terminal_owner ?? null,
-  ).toBeNull()
-
-  // The next open with the store moves it, and the database keeps no copy.
-  profile.env.ADE_SECRET_FILE = store
-  await profile.restartDaemon()
-  const moved = (await profile.call('service.inspect', { workspace_id: workspace.id, name: 'api' })).service
-  expect(moved.config.secret_refs).toEqual({
-    API_TOKEN: await ownedReference(profile, `service/${workspace.id}/api/API_TOKEN`),
-  })
-  const reference = moved.config.secret_refs!.API_TOKEN as KeychainReference
-  expect(await profile.secrets.accounts(ADE_KEYCHAIN_SERVICE)).toEqual([reference.keychain.account])
-  expect(await filesHolding(profile, SECRET)).toEqual([])
-  await profile.call('service.start', { workspace_id: workspace.id, name: 'api' })
-  await waitForReadiness(profile, workspace.id, 'api', 'tcp_listening')
-  expect((await httpGet(`http://127.0.0.1:${configured.ports.PORT}/`)).json).toMatchObject({
-    env: { API_TOKEN: SECRET },
-  })
-  await profile.call('service.stop', { workspace_id: workspace.id, name: 'api' })
 })
