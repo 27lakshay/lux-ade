@@ -16,9 +16,6 @@ at `088b6c3`.
     104 MB. Main bundles the generated contract validators
     (`packages/contracts/dist/generated/validators.js`, 5.8 MB of source).
   - Carried to [ticket 11](../../daemon-authority/issues/11-electron-memory-floor.md).
-- **The desktop's send, claim and `show_in` paths have no Electron E2E.** Renderer tests and
-  typecheck cover them. The dev app started, claimed its window and ran the benchmark on the merged
-  build without errors.
 
 ## Acceptance
 
@@ -65,5 +62,7 @@ The dev build gave the same frame times (853 MB, with React Scan and React Grab 
 - Ticket 09: browser tab records, planned and deferred.
 - The browser-only D19 items (`browser.ts` session migration, `browser-reconcile.ts` receipt
   handling) and E2E for the uncovered browser operations.
-- CLI `workspace create-worktree --wait` still polls; the CLI has no feed client.
-- The worktree hook payload and orchestration still name `repository_id`.
+- Closed after this record: the CLI's `--wait` follows the feed (`7d4ee40`), `repository_id` is
+  `project_id` everywhere (`62f25d7`), the SDK's `Workspace` fields are required (`3ffe45f`), and
+  `e2e/desktop/` drives the built desktop through claim, `show_in` and send (`26db9b8`). What that
+  suite cannot cover yet is listed in `e2e/desktop/README.md`.
