@@ -618,7 +618,6 @@ impl Sessions {
         if op.starts_with("worktree.")
             && op != "worktree.operation"
             && op != "worktree.rebind"
-            && op != "worktree.rebind.list"
             && self.data.lock().unwrap().store.has_pending_rebind()?
         {
             return Err(ade_core::error::NeedsRebind.into());
@@ -809,13 +808,8 @@ impl Sessions {
             | "account.verify" | "account.disable" => self.account_command(request),
             op if op.starts_with("account.switch") => self.account_switch_command(request),
             "runtime.recovery" | "runtime.recovery.release" => self.recovery_command(request),
-            "catalog.get"
-            | "workspace.rebind.list"
-            | "repository.rebind.list"
-            | "workspace.open"
-            | "workspace.rename"
-            | "repository.rebind"
-            | "workspace.rebind" => self.workspace_command(request),
+            "catalog.get" | "rebind.list" | "workspace.open" | "workspace.rename"
+            | "repository.rebind" | "workspace.rebind" => self.workspace_command(request),
             "terminal.create" | "terminal.operation" => self.terminal_command(request),
             op if op.starts_with("resources.") => self.worktrees.resources_command(request),
             "activity.list"

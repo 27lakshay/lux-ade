@@ -21,9 +21,9 @@ export const workspaceUsage = `  workspace list                        List regi
   workspace delete-worktree WORKSPACE_ID [--delete-merged] [--wait]
                                         Remove a linked worktree's workspace, then its tree;
                                         --wait until the tree is gone
-  workspace rebind-list                 List restored workspaces requiring a directory
+  rebind list                           List what a restored profile needs bound again: lifecycle
+                                        repositories, Git repositories, then workspaces
   workspace rebind WORKSPACE_ID PATH    Bind a restored workspace to a verified directory
-  repository rebind-list                List restored Git repositories requiring a path
   repository rebind REPOSITORY_ID PATH  Bind a restored Git repository before its workspaces
   worktree register PATH                Register a Git repository lifecycle
   worktree list PROJECT_ID              Inspect linked trees and removal authority
@@ -37,7 +37,6 @@ export const workspaceUsage = `  workspace list                        List regi
                                         Remove a clean ADE-authorized tree
   worktree operation PROJECT_ID OPERATION_ID
                                         Inspect a lifecycle operation receipt
-  worktree rebind-list                  List restored lifecycle repositories requiring a path
   worktree rebind PROJECT_ID PATH       Bind restored Git lifecycle history first
 `
 
@@ -168,11 +167,9 @@ export async function runWorkspaceCommand(
       path: required(rest[1], 'PATH'),
     })
   }
-  if ((area === 'workspace' || area === 'repository') && action === 'rebind-list') {
-    if (rest.length) throw new CliError('usage', `${area} rebind-list does not accept arguments.`)
-    return area === 'workspace'
-      ? dailyUseCommand(socketPath, { op: 'workspace.rebind.list' })
-      : dailyUseCommand(socketPath, { op: 'repository.rebind.list' })
+  if (area === 'rebind' && action === 'list') {
+    if (rest.length) throw new CliError('usage', 'rebind list does not accept arguments.')
+    return dailyUseCommand(socketPath, { op: 'rebind.list' })
   }
   if (area === 'worktree' && action === 'refresh') {
     if (rest.length !== 1) throw new CliError('usage', 'worktree refresh requires PROJECT_ID --operation-id ID.')
@@ -183,10 +180,6 @@ export async function runWorkspaceCommand(
       operation_id: operationId,
     })
     return { ...response, operation_id: operationId }
-  }
-  if (area === 'worktree' && action === 'rebind-list') {
-    if (rest.length) throw new CliError('usage', 'worktree rebind-list does not accept arguments.')
-    return dailyUseCommand(socketPath, { op: 'worktree.rebind.list' })
   }
   if (area === 'worktree' && action === 'register') {
     if (rest.length !== 1) throw new CliError('usage', 'worktree register requires PATH.')

@@ -117,11 +117,16 @@ test('restored repository and shared workspaces rebind explicitly without source
     (await restored.call('draft.get', { conversation_id: conversation.id, window_id: 'original' })).draft,
   ).toMatchObject({ text: 'preserved draft' })
   expect(await createTerminal(restored, first.id)).toMatchObject(fenced)
-  expect((await restored.call('worktree.rebind.list', {})).repositories).toEqual(
+  expect((await restored.call('rebind.list', {})).lifecycle).toEqual(
     expect.arrayContaining([expect.objectContaining({ id: lifecycle.id, needs_rebind: true, rebindable: true })]),
   )
-  expect(await restored.call('repository.rebind.list', {})).toMatchObject({
-    type: 'repository_rebind_catalog',
+  // The CLI reads the same one list.
+  expect((await restored.cli('rebind', 'list')).json).toMatchObject({
+    type: 'rebind_catalog',
+    lifecycle: expect.arrayContaining([expect.objectContaining({ id: lifecycle.id, needs_rebind: true })]),
+  })
+  expect(await restored.call('rebind.list', {})).toMatchObject({
+    type: 'rebind_catalog',
     repositories: expect.arrayContaining([
       expect.objectContaining({
         id: repositoryId,
@@ -156,7 +161,7 @@ test('restored repository and shared workspaces rebind explicitly without source
   expect(
     (await restored.call('repository.rebind', { repository_id: repositoryId, path: targetCheckout })).repository,
   ).toMatchObject({ id: repositoryId, root: await realpath(join(targetCheckout, '.git')), needs_rebind: false })
-  expect((await restored.call('repository.rebind.list', {})).repositories).toEqual(
+  expect((await restored.call('rebind.list', {})).repositories).toEqual(
     expect.arrayContaining([
       expect.objectContaining({
         id: repositoryId,
@@ -261,7 +266,7 @@ test('renamed source directories retain their saved physical identity and cannot
       path: join(outside, 'lifecycle-renamed'),
     }),
   ).toMatchObject(refused('different physical repository from the saved checkout'))
-  expect((await restored.call('worktree.rebind.list', {})).repositories).toEqual(
+  expect((await restored.call('rebind.list', {})).lifecycle).toEqual(
     expect.arrayContaining([expect.objectContaining({ id: lifecycle.id, needs_rebind: true })]),
   )
   await restored.call('worktree.rebind', { project_id: lifecycle.id, path: lifecycleTarget })
@@ -420,8 +425,8 @@ for (const failpoint of ['before_workspace_commit', 'after_workspace_commit'] as
     const restored = await restoreSharingRoot(ade, source)
     expect(await rawReply(restored, { op: 'workspace.open', path: unknown })).toMatchObject(fenced)
     const unknownRoot = await realpath(unknown)
-    expect(await restored.call('workspace.rebind.list', {})).toMatchObject({
-      type: 'workspace_rebind_catalog',
+    expect(await restored.call('rebind.list', {})).toMatchObject({
+      type: 'rebind_catalog',
       workspaces: expect.arrayContaining([
         expect.objectContaining({
           id: external.id,
@@ -467,12 +472,12 @@ for (const failpoint of ['before_workspace_commit', 'after_workspace_commit'] as
     // Once every workspace is rebound, new folders open as ordinary workspaces.
     const opened = (await restored.call('workspace.open', { path: unknown })).workspace
     expect(opened).toMatchObject({ root: unknownRoot, needs_rebind: false })
-    expect((await restored.call('workspace.rebind.list', {})).workspaces).toEqual(
+    expect((await restored.call('rebind.list', {})).workspaces).toEqual(
       expect.arrayContaining([expect.objectContaining({ id: opened.id, root: unknownRoot, needs_rebind: false })]),
     )
     await rename(unknown, join(outside, 'unknown-moved'))
     await mkdir(unknown)
-    expect((await restored.call('workspace.rebind.list', {})).workspaces).toEqual(
+    expect((await restored.call('rebind.list', {})).workspaces).toEqual(
       expect.arrayContaining([expect.objectContaining({ id: opened.id, root: unknownRoot, needs_rebind: true })]),
     )
     expect((await restored.call('terminal.create', { workspace_id: external.id })).terminal_id).toEqual(
@@ -507,7 +512,7 @@ test('a linked workspace is fenced when its Git common directory diverges from t
   await symlink(join(unrelated, '.git'), join(targetA, '.git'))
   await restored.call('repository.rebind', { repository_id: workspace.project_id, path: targetB })
   expect(await createTerminal(restored, workspace.id)).toMatchObject(fenced)
-  expect((await restored.call('workspace.rebind.list', {})).workspaces).toEqual(
+  expect((await restored.call('rebind.list', {})).workspaces).toEqual(
     expect.arrayContaining([
       expect.objectContaining({ id: workspace.id, root: await realpath(targetA), needs_rebind: true }),
     ]),
@@ -528,7 +533,7 @@ test('a nonregular Git common-directory marker fails closed without blocking dae
   await git(ade, 'init', '-q', checkout)
   const workspace = (await profile.call('workspace.open', { path: checkout })).workspace
   await run('mkfifo', [join(checkout, '.git', 'commondir')])
-  expect((await profile.call('workspace.rebind.list', {}, { timeoutMs: 2_000 })).workspaces).toEqual(
+  expect((await profile.call('rebind.list', {}, { timeoutMs: 2_000 })).workspaces).toEqual(
     expect.arrayContaining([expect.objectContaining({ id: workspace.id, needs_rebind: true })]),
   )
   expect(await createTerminal(profile, workspace.id)).toMatchObject(fenced)

@@ -80,7 +80,7 @@ test('a restored profile holds queued prompts and pending sends, and starts with
       text: 'send once',
     }),
   ).rejects.toThrow('needs_rebind')
-  const [fenced] = (await restored.call('workspace.rebind.list', {})).workspaces
+  const [fenced] = (await restored.call('rebind.list', {})).workspaces
   await restored.call('workspace.rebind', { workspace_id: fenced.id, path: restored.defaultWorkspaceRoot })
 
   // B: the prepared send is held; neither a retry nor completing the draft releases it.

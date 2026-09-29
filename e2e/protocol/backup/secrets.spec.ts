@@ -100,9 +100,7 @@ test('a backup withholds secret service values and the restored service needs th
 
   // The restored profile keeps the configuration but not the secret.
   const restored = await restoreIntoNewProfile(ade, bundle)
-  const fenced = (await restored.call('workspace.rebind.list', {})).workspaces.find(
-    (candidate) => candidate.id === workspace.id,
-  )!
+  const fenced = (await restored.call('rebind.list', {})).workspaces.find((candidate) => candidate.id === workspace.id)!
   expect(fenced).toMatchObject({ needs_rebind: true })
   const rebound = (
     await restored.call('workspace.rebind', { workspace_id: fenced.id, path: restored.defaultWorkspaceRoot })

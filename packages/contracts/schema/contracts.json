@@ -19941,6 +19941,58 @@
       ],
       "type": "object"
     },
+    "RebindCatalog": {
+      "description": "The `rebind.list` reply.",
+      "properties": {
+        "lifecycle": {
+          "description": "The worktree lifecycle's repositories.",
+          "items": {
+            "$ref": "#/$defs/WorktreeRebindCandidate"
+          },
+          "type": "array"
+        },
+        "repositories": {
+          "description": "The catalog's repositories.",
+          "items": {
+            "$ref": "#/$defs/RepositoryRebindEntry"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `rebind_catalog` type tag.",
+          "enum": [
+            "rebind_catalog"
+          ],
+          "type": "string"
+        },
+        "workspaces": {
+          "items": {
+            "$ref": "#/$defs/WorkspaceRebindEntry"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "type",
+        "lifecycle",
+        "repositories",
+        "workspaces"
+      ],
+      "type": "object"
+    },
+    "RebindListRequest": {
+      "additionalProperties": false,
+      "description": "`rebind.list`: what a restored profile needs bound to a folder again, in\nthe order a person binds it: lifecycle repositories (`worktree.rebind`),\ncatalog repositories (`repository.rebind`), then workspaces\n(`workspace.rebind`).",
+      "properties": {
+        "op": {
+          "const": "rebind.list"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
     "RecoveredAttempt": {
       "description": "One attempt an old runtime incarnation owned.",
       "properties": {
@@ -21294,29 +21346,6 @@
       ],
       "type": "object"
     },
-    "RepositoryRebindCatalog": {
-      "description": "The `repository.rebind.list` reply.",
-      "properties": {
-        "repositories": {
-          "items": {
-            "$ref": "#/$defs/RepositoryRebindEntry"
-          },
-          "type": "array"
-        },
-        "type": {
-          "description": "The `repository_rebind_catalog` type tag.",
-          "enum": [
-            "repository_rebind_catalog"
-          ],
-          "type": "string"
-        }
-      },
-      "required": [
-        "type",
-        "repositories"
-      ],
-      "type": "object"
-    },
     "RepositoryRebindEntry": {
       "description": "One restored repository. `rebindable` says a saved physical identity exists.",
       "properties": {
@@ -21338,19 +21367,6 @@
         "root",
         "needs_rebind",
         "rebindable"
-      ],
-      "type": "object"
-    },
-    "RepositoryRebindListRequest": {
-      "additionalProperties": false,
-      "description": "`repository.rebind.list`: restored repositories and whether each needs a path.",
-      "properties": {
-        "op": {
-          "const": "repository.rebind.list"
-        }
-      },
-      "required": [
-        "op"
       ],
       "type": "object"
     },
@@ -29638,29 +29654,6 @@
       ],
       "type": "object"
     },
-    "WorkspaceRebindCatalog": {
-      "description": "The `workspace.rebind.list` reply.",
-      "properties": {
-        "type": {
-          "description": "The `workspace_rebind_catalog` type tag.",
-          "enum": [
-            "workspace_rebind_catalog"
-          ],
-          "type": "string"
-        },
-        "workspaces": {
-          "items": {
-            "$ref": "#/$defs/WorkspaceRebindEntry"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "type",
-        "workspaces"
-      ],
-      "type": "object"
-    },
     "WorkspaceRebindEntry": {
       "description": "One restored workspace. `rebindable` says a saved physical identity exists.",
       "properties": {
@@ -29686,19 +29679,6 @@
         "name",
         "needs_rebind",
         "rebindable"
-      ],
-      "type": "object"
-    },
-    "WorkspaceRebindListRequest": {
-      "additionalProperties": false,
-      "description": "`workspace.rebind.list`: restored workspaces and whether each needs a path.",
-      "properties": {
-        "op": {
-          "const": "workspace.rebind.list"
-        }
-      },
-      "required": [
-        "op"
       ],
       "type": "object"
     },
@@ -30931,7 +30911,7 @@
       ]
     },
     "WorktreeRebindCandidate": {
-      "description": "One lifecycle repository in the rebind catalog.",
+      "description": "One lifecycle repository in `rebind.list`.",
       "properties": {
         "binding_generation": {
           "maximum": 9007199254740991,
@@ -30962,42 +30942,6 @@
         "needs_rebind",
         "rebindable",
         "binding_generation"
-      ],
-      "type": "object"
-    },
-    "WorktreeRebindCatalog": {
-      "description": "The `worktree.rebind.list` reply.",
-      "properties": {
-        "repositories": {
-          "items": {
-            "$ref": "#/$defs/WorktreeRebindCandidate"
-          },
-          "type": "array"
-        },
-        "type": {
-          "description": "The `worktree_rebind_catalog` type tag.",
-          "enum": [
-            "worktree_rebind_catalog"
-          ],
-          "type": "string"
-        }
-      },
-      "required": [
-        "type",
-        "repositories"
-      ],
-      "type": "object"
-    },
-    "WorktreeRebindListRequest": {
-      "additionalProperties": false,
-      "description": "`worktree.rebind.list`: list lifecycle repositories and whether each needs a rebind.",
-      "properties": {
-        "op": {
-          "const": "worktree.rebind.list"
-        }
-      },
-      "required": [
-        "op"
       ],
       "type": "object"
     },
@@ -31272,7 +31216,7 @@
       "type": "object"
     },
     "WorktreeState": {
-      "description": "A repository's lifecycle state: the reply to every command except\n`worktree.operation` and `worktree.rebind.list`.",
+      "description": "A repository's lifecycle state: the reply to every command except\n`worktree.operation`.",
       "properties": {
         "busy": {
           "description": "Whether a lifecycle or review operation holds the repository.",
@@ -31577,9 +31521,9 @@
     },
     {
       "domain": "workspaces",
-      "name": "workspace.rebind.list",
-      "request": "WorkspaceRebindListRequest",
-      "response": "WorkspaceRebindCatalog",
+      "name": "rebind.list",
+      "request": "RebindListRequest",
+      "response": "RebindCatalog",
       "tier": "query"
     },
     {
@@ -31588,13 +31532,6 @@
       "request": "WorkspaceRebindRequest",
       "response": "WorkspaceAck",
       "tier": "idempotent_command"
-    },
-    {
-      "domain": "workspaces",
-      "name": "repository.rebind.list",
-      "request": "RepositoryRebindListRequest",
-      "response": "RepositoryRebindCatalog",
-      "tier": "query"
     },
     {
       "domain": "workspaces",
@@ -32309,13 +32246,6 @@
       "request": "WorktreeRebindRequest",
       "response": "WorktreeState",
       "tier": "idempotent_command"
-    },
-    {
-      "domain": "worktrees",
-      "name": "worktree.rebind.list",
-      "request": "WorktreeRebindListRequest",
-      "response": "WorktreeRebindCatalog",
-      "tier": "query"
     },
     {
       "domain": "worktrees",

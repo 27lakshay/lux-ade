@@ -46,10 +46,6 @@ pub fn operations() -> Vec<OperationSpec> {
             "worktree.rebind",
             Tier::IdempotentCommand,
         ),
-        OperationSpec::new::<WorktreeRebindListRequest, WorktreeRebindCatalog>(
-            "worktree.rebind.list",
-            Tier::Query,
-        ),
         OperationSpec::new::<WorktreeCreateRequest, WorktreeState>(
             "worktree.create",
             Tier::EffectCommand,
@@ -386,19 +382,14 @@ pub struct WorktreeRebindRequest {
     pub path: String,
 }
 
-/// `worktree.rebind.list`: list lifecycle repositories and whether each needs a rebind.
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, Default)]
-pub struct WorktreeRebindListRequest {}
-
 wire_tag!(WorktreeStateTag, "worktree_state");
 wire_tag!(WorktreeOperationTag, "worktree_operation");
-wire_tag!(WorktreeRebindCatalogTag, "worktree_rebind_catalog");
 wire_tag!(WorktreeCleanupPlanTag, "worktree_cleanup_plan");
 wire_tag!(WorktreeArchiveTag, "worktree_archive");
 wire_tag!(WorktreeCarryPreviewTag, "worktree_carry_preview");
 
 /// A repository's lifecycle state: the reply to every command except
-/// `worktree.operation` and `worktree.rebind.list`.
+/// `worktree.operation`.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct WorktreeState {
     #[serde(rename = "type")]
@@ -881,15 +872,7 @@ pub struct WorktreeResourceResult {
     pub error: Option<String>,
 }
 
-/// The `worktree.rebind.list` reply.
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
-pub struct WorktreeRebindCatalog {
-    #[serde(rename = "type")]
-    pub tag: WorktreeRebindCatalogTag,
-    pub repositories: Vec<WorktreeRebindCandidate>,
-}
-
-/// One lifecycle repository in the rebind catalog.
+/// One lifecycle repository in `rebind.list`.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct WorktreeRebindCandidate {
     pub id: String,
@@ -1038,7 +1021,6 @@ mod tests {
             "worktree.rebind",
             json!({"project_id": "r", "path": "/tmp/repo"}),
         );
-        request::<WorktreeRebindListRequest>("worktree.rebind.list", json!({}));
     }
 
     #[test]
@@ -1103,12 +1085,6 @@ mod tests {
                     "output": "step one\n", "truncated": false,
                     "completed": [{"name": "context", "phase": "setup", "verdict": "succeeded",
                         "exit_code": 0, "elapsed_ms": 3, "truncated": false}]}}),
-        );
-        reply::<WorktreeRebindCatalog>(
-            "worktree.rebind.list",
-            json!({"type": "worktree_rebind_catalog", "repositories": [
-                {"id": "repository_1", "root": "/tmp/repo", "common_dir": "/tmp/repo/.git",
-                    "needs_rebind": true, "rebindable": true, "binding_generation": 2}]}),
         );
     }
 

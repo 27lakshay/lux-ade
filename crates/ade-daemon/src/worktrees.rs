@@ -16,9 +16,8 @@ use ade_core::contract::worktrees::{
     WorktreeConfigureRequest, WorktreeCreateRequest, WorktreeGetRequest, WorktreeHookRun,
     WorktreeItem, WorktreeOperation as Operation, WorktreeOperationReply, WorktreeOperationRequest,
     WorktreeOperationStatus as JobStatus, WorktreePhase, WorktreeRebindCandidate,
-    WorktreeRebindCatalog, WorktreeRebindListRequest, WorktreeRebindRequest,
-    WorktreeRefreshRequest, WorktreeRemoveRequest, WorktreeRepository, WorktreeRepositoryRequest,
-    WorktreeSetupRequest, WorktreeState, WorktreeSwitchRequest,
+    WorktreeRebindRequest, WorktreeRefreshRequest, WorktreeRemoveRequest, WorktreeRepository,
+    WorktreeRepositoryRequest, WorktreeSetupRequest, WorktreeState, WorktreeSwitchRequest,
 };
 use ade_core::contract::worktrees::{
     WorktreeCarryPreviewRequest, WorktreeCarryRequest, WorktreeResourcesApplyRequest,
@@ -1833,7 +1832,8 @@ impl Worktrees {
         drop(d);
         self.snapshot(id)
     }
-    fn rebind_catalog(&self) -> Result<Value> {
+    /// The lifecycle's repositories for `rebind.list`, and whether each needs a rebind.
+    pub fn rebind_candidates(&self) -> Result<Vec<WorktreeRebindCandidate>> {
         let d = self.data.lock().unwrap();
         let rows: Vec<String> =
             d.db.prepare("SELECT data FROM repositories ORDER BY rowid")?
@@ -1855,17 +1855,10 @@ impl Worktrees {
                 common_dir: repository.common_dir,
             });
         }
-        reply(&WorktreeRebindCatalog {
-            tag: Default::default(),
-            repositories,
-        })
+        Ok(repositories)
     }
     pub fn command(self: &Arc<Self>, request: &Value) -> Result<Value> {
         let op = field(request, "op")?;
-        if op == "worktree.rebind.list" {
-            let WorktreeRebindListRequest {} = decode(request)?;
-            return self.rebind_catalog();
-        }
         if op == "worktree.rebind" {
             let rebind: WorktreeRebindRequest = decode(request)?;
             return self.rebind_repository(

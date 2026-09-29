@@ -61,7 +61,7 @@ test('Git and ordinary folders retain identity and report missing or replaced bi
     root: repository.root,
     needs_rebind: true,
   })
-  expect((await profile.call('workspace.rebind.list', {})).workspaces).toEqual(
+  expect((await profile.call('rebind.list', {})).workspaces).toEqual(
     expect.arrayContaining([
       expect.objectContaining({ id: ordinary.id, needs_rebind: true }),
       expect.objectContaining({ id: repository.id, needs_rebind: true }),

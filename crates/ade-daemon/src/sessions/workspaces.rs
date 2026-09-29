@@ -1,10 +1,9 @@
 //! Workspace binding, rebind operations, the catalog and the restore fence.
 use super::*;
 use ade_core::contract::workspaces::{
-    CatalogFrame, CatalogGetRequest, RepositoryAck, RepositoryRebindCatalog, RepositoryRebindEntry,
-    RepositoryRebindListRequest, RepositoryRebindRequest, WorkspaceAck, WorkspaceOpenRequest,
-    WorkspaceRebindCatalog, WorkspaceRebindListRequest, WorkspaceRebindRequest,
-    WorkspaceRenameRequest,
+    CatalogFrame, CatalogGetRequest, RebindCatalog, RebindListRequest, RepositoryAck,
+    RepositoryRebindEntry, RepositoryRebindRequest, WorkspaceAck, WorkspaceOpenRequest,
+    WorkspaceRebindRequest, WorkspaceRenameRequest,
 };
 use ade_core::workspaces::{RemoveBlocker, RemoveBlockerKind};
 
@@ -84,20 +83,12 @@ impl Sessions {
                     revision,
                 })
             }
-            "workspace.rebind.list" => {
-                let WorkspaceRebindListRequest {} = decode(request)?;
-                let workspaces = self.data.lock().unwrap().store.rebind_workspaces()?;
-                reply(&WorkspaceRebindCatalog {
-                    tag: Default::default(),
-                    workspaces,
-                })
-            }
-            "repository.rebind.list" => {
-                let RepositoryRebindListRequest {} = decode(request)?;
-                let repositories = self
-                    .data
-                    .lock()
-                    .unwrap()
+            "rebind.list" => {
+                let RebindListRequest {} = decode(request)?;
+                let lifecycle = self.worktrees.rebind_candidates()?;
+                let d = self.data.lock().unwrap();
+                let workspaces = d.store.rebind_workspaces()?;
+                let repositories = d
                     .store
                     .rebind_repositories()?
                     .into_iter()
@@ -110,9 +101,11 @@ impl Sessions {
                         },
                     )
                     .collect();
-                reply(&RepositoryRebindCatalog {
+                reply(&RebindCatalog {
                     tag: Default::default(),
+                    lifecycle,
                     repositories,
+                    workspaces,
                 })
             }
             "workspace.open" => {

@@ -43,25 +43,10 @@ export function registerWorkspaceIpc(): void {
     const generation = getClientGeneration()
     if (!endpoint || isSwitching() || getClient().getState().status !== 'connected')
       throw new Error('Profile daemon is unavailable')
-    const [lifecycle, repositories, workspaces] = await Promise.all([
-      dailyUseCommand(endpoint, { op: 'worktree.rebind.list' }),
-      dailyUseCommand(endpoint, { op: 'repository.rebind.list' }),
-      dailyUseCommand(endpoint, { op: 'workspace.rebind.list' }),
-    ])
+    const { lifecycle, repositories, workspaces } = await dailyUseCommand(endpoint, { op: 'rebind.list' })
     if (getSocket() !== endpoint || getClientGeneration() !== generation || isSwitching())
       throw new Error('Profile changed while loading recovery state')
-    if (
-      !Array.isArray(lifecycle.repositories) ||
-      !Array.isArray(repositories.repositories) ||
-      !Array.isArray(workspaces.workspaces)
-    ) {
-      throw new Error('Profile daemon returned an invalid recovery catalog')
-    }
-    return {
-      lifecycle: lifecycle.repositories,
-      repositories: repositories.repositories,
-      workspaces: workspaces.workspaces,
-    }
+    return { lifecycle, repositories, workspaces }
   })
   handle(
     'ade:restore-binding',

@@ -135,10 +135,10 @@ test('registered restore starts with a fenced Git lifecycle repository and no de
   }
   const target = await host.register(record)
   await started(target)
-  expect((await target.call('worktree.rebind.list', {})).repositories).toEqual(
+  expect((await target.call('rebind.list', {})).lifecycle).toEqual(
     expect.arrayContaining([expect.objectContaining({ id: lifecycle.id, needs_rebind: true })]),
   )
-  expect((await target.call('workspace.rebind.list', {})).workspaces).toEqual(
+  expect((await target.call('rebind.list', {})).workspaces).toEqual(
     expect.arrayContaining([
       expect.objectContaining({ id: workspace.id, root: await realpath(repo.path), needs_rebind: true }),
     ]),

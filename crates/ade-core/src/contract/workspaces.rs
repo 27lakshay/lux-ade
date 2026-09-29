@@ -43,19 +43,12 @@ pub fn operations() -> Vec<OperationSpec> {
             "workspace.delete_worktree",
             Tier::EffectCommand,
         ),
-        OperationSpec::new::<WorkspaceRebindListRequest, WorkspaceRebindCatalog>(
-            "workspace.rebind.list",
-            Tier::Query,
-        ),
+        OperationSpec::new::<RebindListRequest, RebindCatalog>("rebind.list", Tier::Query),
         // Rebinding changes only ADE's saved binding; a repeat is rejected
         // because the target is already bound, leaving the same state.
         OperationSpec::new::<WorkspaceRebindRequest, WorkspaceAck>(
             "workspace.rebind",
             Tier::IdempotentCommand,
-        ),
-        OperationSpec::new::<RepositoryRebindListRequest, RepositoryRebindCatalog>(
-            "repository.rebind.list",
-            Tier::Query,
         ),
         OperationSpec::new::<RepositoryRebindRequest, RepositoryAck>(
             "repository.rebind",
@@ -249,9 +242,12 @@ pub struct WorkspaceWorktreeOperationChanged {
     pub revision: u64,
 }
 
-/// `workspace.rebind.list`: restored workspaces and whether each needs a path.
+/// `rebind.list`: what a restored profile needs bound to a folder again, in
+/// the order a person binds it: lifecycle repositories (`worktree.rebind`),
+/// catalog repositories (`repository.rebind`), then workspaces
+/// (`workspace.rebind`).
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, Default)]
-pub struct WorkspaceRebindListRequest {}
+pub struct RebindListRequest {}
 
 /// `workspace.rebind`: bind a restored workspace to a verified directory.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
@@ -259,10 +255,6 @@ pub struct WorkspaceRebindRequest {
     pub workspace_id: String,
     pub path: String,
 }
-
-/// `repository.rebind.list`: restored repositories and whether each needs a path.
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, Default)]
-pub struct RepositoryRebindListRequest {}
 
 /// `repository.rebind`: bind a restored Git repository to a verified checkout.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
@@ -281,8 +273,7 @@ wire_tag!(
     WorkspaceWorktreeOperationChangedTag,
     "workspace_worktree_operation_changed"
 );
-wire_tag!(WorkspaceRebindCatalogTag, "workspace_rebind_catalog");
-wire_tag!(RepositoryRebindCatalogTag, "repository_rebind_catalog");
+wire_tag!(RebindCatalogTag, "rebind_catalog");
 
 /// The `workspace.open`, `workspace.rename` and `workspace.rebind` reply.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
@@ -330,11 +321,15 @@ impl From<Repository> for RepositoryRecord {
     }
 }
 
-/// The `workspace.rebind.list` reply.
+/// The `rebind.list` reply.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
-pub struct WorkspaceRebindCatalog {
+pub struct RebindCatalog {
     #[serde(rename = "type")]
-    pub tag: WorkspaceRebindCatalogTag,
+    pub tag: RebindCatalogTag,
+    /// The worktree lifecycle's repositories.
+    pub lifecycle: Vec<super::worktrees::WorktreeRebindCandidate>,
+    /// The catalog's repositories.
+    pub repositories: Vec<RepositoryRebindEntry>,
     pub workspaces: Vec<WorkspaceRebindEntry>,
 }
 
@@ -346,14 +341,6 @@ pub struct WorkspaceRebindEntry {
     pub name: String,
     pub needs_rebind: bool,
     pub rebindable: bool,
-}
-
-/// The `repository.rebind.list` reply.
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
-pub struct RepositoryRebindCatalog {
-    #[serde(rename = "type")]
-    pub tag: RepositoryRebindCatalogTag,
-    pub repositories: Vec<RepositoryRebindEntry>,
 }
 
 /// One restored repository. `rebindable` says a saved physical identity exists.
@@ -442,8 +429,7 @@ mod tests {
             ("workspace.create_worktree", "effect_command"),
             ("workspace.delete_worktree", "effect_command"),
             ("repository.rebind", "idempotent_command"),
-            ("workspace.rebind.list", "query"),
-            ("repository.rebind.list", "query"),
+            ("rebind.list", "query"),
         ] {
             assert_eq!(names(op).2, json!(tier), "{op}");
         }
@@ -452,7 +438,7 @@ mod tests {
     #[test]
     fn requests_round_trip_in_wire_form() {
         request::<WorkspaceOpenRequest>("workspace.open", json!({"path": "/tmp/project"}));
-        request::<WorkspaceRebindListRequest>("workspace.rebind.list", json!({}));
+        request::<RebindListRequest>("rebind.list", json!({}));
         request::<WorkspaceRenameRequest>(
             "workspace.rename",
             json!({"workspace_id": "workspace_1", "name": "Payments"}),
@@ -479,7 +465,6 @@ mod tests {
             json!({"operation_id": "op_2", "workspace_id": "workspace_1",
                 "delete_branch": "merged"}),
         );
-        request::<RepositoryRebindListRequest>("repository.rebind.list", json!({}));
         request::<WorkspaceRebindRequest>(
             "workspace.rebind",
             json!({"workspace_id": "workspace_1", "path": "/tmp/project"}),
@@ -560,18 +545,18 @@ mod tests {
                 "workspace_id": "workspace_1", "worktree_path": "/src/app-feature",
                 "error": "Git failed", "code": "lifecycle_command_failed"}),
         );
-        response::<WorkspaceRebindCatalog>(
-            "workspace.rebind.list",
-            json!({"type": "workspace_rebind_catalog", "workspaces": [{
-                "id": "workspace_1", "root": "/tmp/project", "name": "project",
-                "needs_rebind": true, "rebindable": true,
-            }]}),
-        );
-        response::<RepositoryRebindCatalog>(
-            "repository.rebind.list",
-            json!({"type": "repository_rebind_catalog", "repositories": [{
+        response::<RebindCatalog>(
+            "rebind.list",
+            json!({"type": "rebind_catalog",
+            "lifecycle": [{"id": "repo_1", "root": "/tmp/project", "common_dir": "/tmp/project/.git",
+                "needs_rebind": true, "rebindable": true, "binding_generation": 2}],
+            "repositories": [{
                 "id": "repo_1", "root": "/tmp/project/.git",
                 "needs_rebind": true, "rebindable": false,
+            }],
+            "workspaces": [{
+                "id": "workspace_1", "root": "/tmp/project", "name": "project",
+                "needs_rebind": true, "rebindable": true,
             }]}),
         );
     }
@@ -589,7 +574,9 @@ mod tests {
 
     #[test]
     fn replies_reject_a_wrong_tag() {
-        let (_, name, _) = names("workspace.rebind.list");
-        assert!(!validator(&name).is_valid(&json!({"type": "ack", "workspaces": []})));
+        let (_, name, _) = names("rebind.list");
+        assert!(!validator(&name).is_valid(
+            &json!({"type": "ack", "lifecycle": [], "repositories": [], "workspaces": []})
+        ));
     }
 }

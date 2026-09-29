@@ -236,7 +236,7 @@ test('a removed ADE-made worktree can then be removed by worktree.remove without
   // The removed workspace's missing folder does not fence the profile.
   const other = await profile.call('workspace.open', { path: await folder(profile, 'after') })
   expect(other.workspace.needs_rebind).toBe(false)
-  expect((await profile.call('workspace.rebind.list', {})).workspaces).not.toContainEqual(
+  expect((await profile.call('rebind.list', {})).workspaces).not.toContainEqual(
     expect.objectContaining({ id: workspace.id }),
   )
 })

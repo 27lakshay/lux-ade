@@ -115,7 +115,7 @@ test('duplicate and misplaced requests never replace a published bundle or a res
   // Restoring it again elsewhere gives a second, independent profile.
   const second = await restoreIntoNewProfile(ade, bundle)
   expect(second.hello.runtime_instance).not.toBe(restored.hello.runtime_instance)
-  const [fenced] = (await second.call('workspace.rebind.list', {})).workspaces
+  const [fenced] = (await second.call('rebind.list', {})).workspaces
   await second.call('workspace.rebind', { workspace_id: fenced.id, path: second.defaultWorkspaceRoot })
   await second.call('draft.save', {
     conversation_id: conversationId,
