@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true,
+    "lib": ["ES2023", "DOM"],
+    "types": ["node"],
+    "skipLibCheck": true
+  },
+  "include": ["**/*.ts", "../../apps/desktop/src/renderer/src/host.d.ts", "../../packages/terminal/src/assets.d.ts"]
+}
