@@ -201,5 +201,10 @@ This reuses what worked in the [parallel build](../parallel-build/issues/13-coor
 
 - The shape of a second attached UI (F004 simultaneous clients) is designed for, not built:
   layouts carry a revision and the feed broadcasts changes, but no second client ships here.
+- Window claims have no client ownership. `window.claim` returns an open window the caller does
+  not show yet, so a second desktop on the same profile gets the same window. Decide with F004.
+- The desktop refuses a prompt while the daemon is down ("Profile daemon is unavailable") before
+  its send journal sees it, while the CLI journals the prompt and delivers it once the daemon
+  starts. Decide whether the desktop should queue too.
 - Detached and floating views (F012) will need a window per detached pane; the window model
   allows it and no ticket builds it.

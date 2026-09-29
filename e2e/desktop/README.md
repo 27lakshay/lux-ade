@@ -37,3 +37,17 @@ Never sleep: poll with `expect.poll` or a locator.
 The conversation surface is not built yet, so a send calls the bridge the composer will use
 (`window.adeHost.conversations.request`) from the window's page, after saving the draft as the
 composer does.
+
+## Not covered yet
+
+- **Typing and sending in the composer.** A conversation tab renders nothing yet
+  (`renderer/src/features/workspace/content/tab-content.tsx`), so the send specs call the bridge.
+  Port them to the composer when it is built.
+- **A reply drawn in the transcript.** There is no transcript view; the specs check the
+  conversation row's status mark in the navigator and the daemon's messages instead.
+- **A window claimed by another client.** `window.claim` has no idea of client ownership, so there
+  is nothing to prove; see "Not decided yet" in the
+  [daemon authority map](../../.scratch/daemon-authority/README.md).
+- **A prompt queued while the daemon is down.** The desktop refuses the send before the journal
+  sees it, so the spec proves the refusal and a single send after the restart. The journal path
+  is covered separately, by pausing main after the journal holds the prompt.
