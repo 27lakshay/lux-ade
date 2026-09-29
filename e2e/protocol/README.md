@@ -1,7 +1,8 @@
 # Protocol E2E
 
 Headless backend E2E. Each test drives a real `ade-daemon` and `ade-runtime`
-through the SDK, the CLI or the raw protocol. Electron is not involved.
+through the SDK, the CLI or the raw protocol. Electron is not involved; the desktop suite in
+[`e2e/desktop`](../desktop/README.md) drives the built app on these fixtures.
 
 ```sh
 pnpm test:e2e:protocol         # build backend, SDK and CLI, then run

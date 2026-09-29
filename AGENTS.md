@@ -37,6 +37,8 @@ in UI copy.
   CLI, the SDK or the public protocol, with no Electron, in `e2e/protocol/`, run with
   `pnpm test:e2e:protocol`. Write specs on the shared fixtures described in
   `e2e/protocol/README.md`. A backend feature is accepted only when its register acceptance passes.
+- The built desktop app is driven against a scratch daemon with the provider mocks in
+  `e2e/desktop/`, run with `pnpm test:e2e:desktop` (not part of `pnpm check:static`); see its README.
 - Renderer stores and components are tested with Vitest in browser mode, beside the code.
 - Deterministic in-process tests stay allowed for pure cores: fingerprints, reducers, codecs,
   schema round-trips and reconciliation deciders, kept beside the code they test.
