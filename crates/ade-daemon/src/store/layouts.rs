@@ -523,6 +523,49 @@ impl Store {
         })
     }
 
+    /// `window.claim`: an open window not in `claimed`, else the last closed
+    /// one whose workspace is listed, reopened, else a new window `id` on the
+    /// first listed workspace.
+    pub fn claim_window(&self, id: &str, claimed: &[String]) -> Result<WindowChange> {
+        check_window_id(id)?;
+        if claimed.len() > MAX_WINDOWS as usize {
+            return Err(LayoutError::Invalid(format!(
+                "A claim names at most {MAX_WINDOWS} windows"
+            ))
+            .into());
+        }
+        let listed = windows(&self.connection)?;
+        let free = |window: &&Window| !claimed.contains(&window.id);
+        if let Some(open) = listed
+            .iter()
+            .filter(free)
+            .find(|window| window.state == WindowState::Open)
+        {
+            return Ok(WindowChange {
+                window: open.clone(),
+                changed: false,
+            });
+        }
+        let closed = listed.iter().filter(free).rev().find(|window| {
+            window.state == WindowState::Closed
+                && live_workspace(&self.connection, &window.workspace_id).is_ok()
+        });
+        if let Some(closed) = closed {
+            return self.set_window_state(&closed.id, WindowState::Open);
+        }
+        let first: Option<String> = self
+            .connection
+            .query_row(
+                "SELECT id FROM workspaces WHERE id NOT IN (SELECT workspace_id FROM workspace_tombstones) ORDER BY rowid LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let first = first
+            .ok_or_else(|| LayoutError::Invalid("The profile has no workspace to show".into()))?;
+        self.create_window(id, &first, None)
+    }
+
     /// Reads the window, lets `change` edit it, and stores it when it changed.
     fn change_window(
         &self,

@@ -149,18 +149,11 @@ const appWindows = (): BrowserWindow[] =>
   BrowserWindow.getAllWindows().filter((window) => records.has(window.webContents.id))
 
 /**
- * A record for a window that has none: a closed one reopened (the last listed whose workspace is
- * still there), or a new one on the daemon's first workspace.
+ * A record for a window that has none (`window.claim`): an open one no other native window shows,
+ * else a closed one reopened, else a new one on the daemon's first workspace.
  */
-async function freeRecord(claimed: Set<string>, windows: Window[]): Promise<Window> {
-  const workspaces = getClient().getState().catalog?.workspaces ?? []
-  const live = new Set(workspaces.map((workspace) => workspace.id))
-  const closed = windows.filter((window) => window.state === 'closed' && !claimed.has(window.id))
-  const reopen = closed.reverse().find((window) => live.has(window.workspace_id))
-  if (reopen) return (await daemonCall('window.reopen', { window_id: reopen.id })).window
-  const first = workspaces[0]
-  if (!first) throw new Error('The daemon lists no workspace to show')
-  return (await daemonCall('window.create', { window_id: `window-${randomUUID()}`, workspace_id: first.id })).window
+async function claimRecord(claimed: Set<string>): Promise<Window> {
+  return (await daemonCall('window.claim', { window_id: `window-${randomUUID()}`, claimed: [...claimed] })).window
 }
 
 /** One match of native windows and records; see `reconcile`. */
@@ -181,13 +174,12 @@ async function reconcileOnce(): Promise<void> {
     } else if (listed && !claimed.has(listed.id)) claimed.add(listed.id)
     else unbound.push(window)
   }
-  const waiting = windows.filter((window) => window.state === 'open' && !claimed.has(window.id))
   for (const window of unbound) {
-    const record = waiting.shift() ?? (await freeRecord(claimed, windows))
+    const record = await claimRecord(claimed)
     claimed.add(record.id)
     setRecord(window, record.id)
   }
-  for (const record of waiting) open(record)
+  for (const record of windows) if (record.state === 'open' && !claimed.has(record.id)) open(record)
   reconciled = generation
   seenOpen = openRecords(getClient().getState())
 }
@@ -225,7 +217,7 @@ export async function startWindows(opener: (record: Window | null) => BrowserWin
     await new Promise((done) => setTimeout(done, 25))
   if (connected() && !isSwitching() && !getStartupProfileSelection()) {
     await reconcile()
-    if (appWindows().length === 0) opener(await freeRecord(new Set(), (await daemonCall('window.list', {})).windows))
+    if (appWindows().length === 0) opener(await claimRecord(new Set()))
   }
   if (appWindows().length === 0) opener(null)
 }
@@ -241,7 +233,7 @@ export function reopenWindow(): void {
     await reconcile()
     if (appWindows().length > 0 || !open) return
     try {
-      open(await freeRecord(new Set(), (await daemonCall('window.list', {})).windows))
+      open(await claimRecord(new Set()))
     } catch {
       open(null)
     }

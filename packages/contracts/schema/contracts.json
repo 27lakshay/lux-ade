@@ -29203,6 +29203,32 @@
       ],
       "type": "object"
     },
+    "WindowClaimRequest": {
+      "additionalProperties": false,
+      "description": "`window.claim`: a window record for a UI window that has none, such as a\nwindow the desktop opened before the daemon answered. In order:\n\n1. the first open window, in creation order, not in `claimed`;\n2. else the last closed window whose workspace is still listed, reopened;\n3. else a new window `window_id` on the first listed workspace.\n\n`claimed` names the windows the caller already shows, so a UI with several\nwindows claims a different record for each. A profile with no workspace\nto show is `invalid_layout`.",
+      "properties": {
+        "claimed": {
+          "default": [],
+          "description": "Windows the caller already shows; at most 256.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "op": {
+          "const": "window.claim"
+        },
+        "window_id": {
+          "description": "The caller's ID for the window, used when a new one is made.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "window_id"
+      ],
+      "type": "object"
+    },
     "WindowCloseRequest": {
       "additionalProperties": false,
       "description": "`window.close`: hide the window. Its record and layouts stay.",
@@ -33440,6 +33466,13 @@
       "domain": "layout",
       "name": "window.reopen",
       "request": "WindowReopenRequest",
+      "response": "WindowAck",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "layout",
+      "name": "window.claim",
+      "request": "WindowClaimRequest",
       "response": "WindowAck",
       "tier": "idempotent_command"
     },

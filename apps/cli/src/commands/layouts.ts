@@ -21,6 +21,10 @@ export const layoutUsage = `  window list                           List windows
                                         Open a window on a workspace; reuse the ID to retry
   window close WINDOW_ID                Close a window; its layouts stay for window reopen
   window reopen WINDOW_ID               Show a closed window again, as it was
+  window claim WINDOW_ID [CLAIMED_ID...]
+                                        A window for a UI window that has none: an open one not
+                                        claimed, else the last closed one reopened, else a new
+                                        WINDOW_ID on the first workspace
   window show WINDOW_ID WORKSPACE_ID    Show another workspace in the window
   window bounds WINDOW_ID X Y WIDTH HEIGHT
                                         Record the window's position and size
@@ -123,6 +127,11 @@ export async function runLayoutCommand(
       return action === 'close'
         ? call(socketPath, 'window.close', { window_id: id! })
         : call(socketPath, 'window.reopen', { window_id: id! })
+    }
+    if (action === 'claim') {
+      const [id, ...claimed] = parseWords(rest, [], [], 'window claim').positionals
+      if (!id) throw new CliError('usage', 'window claim requires WINDOW_ID.')
+      return call(socketPath, 'window.claim', { window_id: id, claimed })
     }
     if (action === 'show') {
       const [id, workspaceId] = positionals(

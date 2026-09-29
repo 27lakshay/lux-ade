@@ -28,6 +28,12 @@ pub fn operations() -> Vec<OperationSpec> {
             "window.reopen",
             Tier::IdempotentCommand,
         ),
+        // A repeat finds the window the first call claimed, reopened or made:
+        // it is open and still not among `claimed`.
+        OperationSpec::new::<WindowClaimRequest, WindowAck>(
+            "window.claim",
+            Tier::IdempotentCommand,
+        ),
         OperationSpec::new::<WindowSetBoundsRequest, WindowAck>(
             "window.set_bounds",
             Tier::IdempotentCommand,
@@ -458,6 +464,25 @@ pub struct WindowReopenRequest {
     pub window_id: String,
 }
 
+/// `window.claim`: a window record for a UI window that has none, such as a
+/// window the desktop opened before the daemon answered. In order:
+///
+/// 1. the first open window, in creation order, not in `claimed`;
+/// 2. else the last closed window whose workspace is still listed, reopened;
+/// 3. else a new window `window_id` on the first listed workspace.
+///
+/// `claimed` names the windows the caller already shows, so a UI with several
+/// windows claims a different record for each. A profile with no workspace
+/// to show is `invalid_layout`.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct WindowClaimRequest {
+    /// The caller's ID for the window, used when a new one is made.
+    pub window_id: String,
+    /// Windows the caller already shows; at most 256.
+    #[serde(default)]
+    pub claimed: Vec<String>,
+}
+
 /// `window.set_bounds`: record the window's position and size.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct WindowSetBoundsRequest {
@@ -680,6 +705,7 @@ mod tests {
             ("window.create", "idempotent_command"),
             ("window.close", "idempotent_command"),
             ("window.reopen", "idempotent_command"),
+            ("window.claim", "idempotent_command"),
             ("window.set_bounds", "idempotent_command"),
             ("window.show_workspace", "idempotent_command"),
             ("window.set_view_state", "idempotent_command"),

@@ -5,8 +5,8 @@ use super::*;
 use crate::store::layouts::{LayoutChange, WindowChange, WorkspaceRemoval};
 use ade_core::contract::layout::{
     LayoutApplied, LayoutApplyRequest, LayoutGetRequest, LayoutRecord, LayoutReply, Window,
-    WindowAck, WindowCloseRequest, WindowCreateRequest, WindowList, WindowListRequest,
-    WindowReopenRequest, WindowSetBoundsRequest, WindowSetViewStateRequest,
+    WindowAck, WindowClaimRequest, WindowCloseRequest, WindowCreateRequest, WindowList,
+    WindowListRequest, WindowReopenRequest, WindowSetBoundsRequest, WindowSetViewStateRequest,
     WindowShowWorkspaceRequest, WindowState,
 };
 
@@ -48,6 +48,12 @@ impl Sessions {
                     d.store
                         .set_window_state(&reopen.window_id, WindowState::Open),
                 )?;
+                self.window_reply(&mut d, change)
+            }
+            "window.claim" => {
+                let claim: WindowClaimRequest = decode(request)?;
+                let change =
+                    persistence_result(d.store.claim_window(&claim.window_id, &claim.claimed))?;
                 self.window_reply(&mut d, change)
             }
             "window.set_bounds" => {

@@ -288,6 +288,7 @@ export const operations = {
   "window.create": { tier: "idempotent_command", domain: "layout", request: "WindowCreateRequest", response: "WindowAck" },
   "window.close": { tier: "idempotent_command", domain: "layout", request: "WindowCloseRequest", response: "WindowAck" },
   "window.reopen": { tier: "idempotent_command", domain: "layout", request: "WindowReopenRequest", response: "WindowAck" },
+  "window.claim": { tier: "idempotent_command", domain: "layout", request: "WindowClaimRequest", response: "WindowAck" },
   "window.set_bounds": { tier: "idempotent_command", domain: "layout", request: "WindowSetBoundsRequest", response: "WindowAck" },
   "window.show_workspace": { tier: "idempotent_command", domain: "layout", request: "WindowShowWorkspaceRequest", response: "WindowAck" },
   "window.set_view_state": { tier: "idempotent_command", domain: "layout", request: "WindowSetViewStateRequest", response: "WindowAck" },
