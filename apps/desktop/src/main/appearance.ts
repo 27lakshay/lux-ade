@@ -4,9 +4,10 @@ import { join } from 'node:path'
 import log from 'electron-log/main'
 import { isThemePreference, WINDOW_BACKGROUND, type ThemePreference } from '../shared/window-chrome'
 
-// The appearance preference (light, dark or system). The renderer owns it and sends each change;
-// main applies it to macOS (`nativeTheme`, which also drives the page's prefers-color-scheme) and
-// keeps a copy, so the next launch creates its window in the right colour before the page loads.
+// The appearance (light, dark or system) is the profile's setting in the daemon; the renderer
+// follows it and sends each change here. Main applies it to macOS (`nativeTheme`, which also drives
+// the page's prefers-color-scheme) and keeps the app's one startup copy, so the next launch creates
+// its window, and the page paints, in the right colour before the daemon answers.
 
 const file = (): string => join(app.getPath('userData'), 'appearance.json')
 

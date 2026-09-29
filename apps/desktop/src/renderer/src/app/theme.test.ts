@@ -2,10 +2,10 @@ import { afterEach, expect, test } from 'vitest'
 import { WINDOW_BACKGROUND } from '../../../shared/window-chrome'
 import bootScript from '../../public/theme-boot.js?raw'
 import './app.css'
-import { resolveTheme, setThemePreference, THEME_KEY, themePreference } from './theme'
+import { applyThemePreference, resolveTheme, setThemePreference, themePreference } from './theme'
 
 afterEach(() => {
-  localStorage.removeItem(THEME_KEY)
+  applyThemePreference('system')
   document.documentElement.classList.remove('dark')
 })
 
@@ -26,17 +26,21 @@ test("the window's background matches the theme's in light and dark", () => {
   expect(background()).toBe(WINDOW_BACKGROUND.dark)
 })
 
-test('the boot script reads the same saved preference as the app', () => {
-  expect(bootScript).toContain(`'${THEME_KEY}'`)
+test('the boot script paints what the system appearance says, which main set from the saved setting', () => {
+  // Main applies the saved appearance to macOS before the window opens; the page's
+  // prefers-color-scheme follows it, so the boot script keeps no copy of its own.
+  expect(bootScript).toContain('prefers-color-scheme: dark')
+  expect(bootScript).not.toContain('localStorage')
 })
 
-test('a preference is saved and applied', () => {
+test('a preference is applied and kept in memory, not in storage', () => {
   expect(themePreference()).toBe('system')
   setThemePreference('dark')
   expect(themePreference()).toBe('dark')
   expect(document.documentElement.classList.contains('dark')).toBe(true)
   setThemePreference('light')
   expect(document.documentElement.classList.contains('dark')).toBe(false)
+  expect(localStorage.getItem('ade.theme')).toBeNull()
 })
 
 test('the system preference follows the system', () => {

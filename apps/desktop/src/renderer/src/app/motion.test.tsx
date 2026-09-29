@@ -8,7 +8,6 @@ import { MotionProvider } from './MotionProvider'
 
 afterEach(() => {
   setMotionPreference('system')
-  localStorage.removeItem('ade.reduced-motion')
 })
 
 test('the CSS timing tokens equal the Motion presets', async () => {

@@ -34,5 +34,4 @@ test('the window shows the daemon’s settings when it connects, and follows eac
   feed({ type: 'settings_changed', settings: { appearance: 'light', reduced_motion: 'off' } } as unknown as FeedFrame)
   await expect.poll(dark).toBe(false)
   expect(reduced()).toBe(false)
-  expect(localStorage.getItem('ade.theme')).toBe('light')
 })

@@ -67,7 +67,8 @@ startDevStateServer()
 registerBrowserIpc(selectProfile)
 
 handle('ade:app-version', () => app.getVersion())
-// The renderer owns the appearance preference; main mirrors it to macOS and remembers it.
+// The renderer follows the profile's appearance setting and sends each change; main applies it to
+// macOS and keeps the startup copy (appearance.ts).
 listen('ade:keybindings', (_event, keybindings: unknown) => setMenuKeybindings(keybindings))
 listen('ade:theme', (_event, theme: unknown) => {
   if (isThemePreference(theme)) setAppearance(theme)
@@ -112,8 +113,8 @@ registerQuitTeardown(() => {
   stopStreamBridge()
   stopClient()
 })
-// localStorage (the renderer's layout and appearance settings) is written lazily; flush it so a
-// setting changed just before quitting survives.
+// localStorage (per-viewer conveniences only) is written lazily; flush it so nothing written just
+// before quitting is lost.
 registerQuitTeardown(() => session.defaultSession.flushStorageData())
 
 /** Main's own floor for any window, whatever its layout asks for. */
