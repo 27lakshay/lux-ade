@@ -1,7 +1,7 @@
 // Backup-area helpers: seed a live profile with every store a backup covers,
 // run `ade-control backup`, restore into the next scratch profile, and doctor
 // a bundle the way a damaged or older one would look.
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { chmod, cp, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -168,6 +168,27 @@ export async function restoreIntoNewProfile(
   const restored = await control(ade, ['backup', 'restore', '--backup', bundle, '--data-dir', target])
   expect(restored.code, restored.stderr).toBe(0)
   const profile = await ade.profile(options)
+  expect(profile.dataDirectory).toBe(target)
+  return profile
+}
+
+/**
+ * Back `source` up and restore the bundle where the next scratch profile keeps
+ * its data. `before` runs on the restored data directory before that profile
+ * starts, for a spec that doctors the store or moves folders first.
+ */
+export async function backupAndRestore(
+  ade: AdeHarness,
+  source: ScratchProfile,
+  options: ProfileOptions & { before?: (dataDirectory: string) => Promise<void> } = {},
+): Promise<ScratchProfile> {
+  const { path, result } = await createBackup(ade, source, `bundle-${randomUUID()}`)
+  expect(result.code, result.stderr).toBe(0)
+  const target = await nextProfileDataDirectory(ade)
+  const restored = await control(ade, ['backup', 'restore', '--backup', path, '--data-dir', target])
+  expect(restored.code, restored.stderr).toBe(0)
+  await options.before?.(target)
+  const profile = await ade.profile({ env: options.env })
   expect(profile.dataDirectory).toBe(target)
   return profile
 }

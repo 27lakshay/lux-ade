@@ -339,7 +339,18 @@ export class ProfileHost {
   async create(name: string, options: { env?: Record<string, string> } = {}): Promise<ManagedProfile> {
     const created = await this.control(['profiles', 'create', name])
     if (created.code !== 0) throw new Error(`profiles create failed: ${created.stderr}`)
-    const record = (created.json as { profile: { id: string; name: string; home: string } }).profile
+    return this.register((created.json as { profile: { id: string; name: string; home: string } }).profile, options)
+  }
+
+  /**
+   * Take charge of a profile that is already in the registry, such as one a
+   * backend restore published, so its daemon is tracked and stopped like the
+   * profiles this host created.
+   */
+  async register(
+    record: { id: string; name: string; home: string },
+    options: { env?: Record<string, string> } = {},
+  ): Promise<ManagedProfile> {
     const profile = new ManagedProfile(this, record.id, record.name, record.home, this.profiles.length + 1, options.env)
     for (const directory of [profile.root, profile.logsDirectory])
       await mkdir(directory, { recursive: true, mode: 0o700 })
