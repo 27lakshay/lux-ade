@@ -153,12 +153,9 @@ export interface Conversation {
   group_id?: string | null
 }
 
-/**
- * What a terminal runs; see `TerminalRecord` in `@ade/contracts`. A newer
- * daemon may send a kind or status this SDK does not know; it is kept as sent.
- */
-export type TerminalKind = 'shell' | 'service' | 'script' | (string & {})
-export type TerminalStatus = 'not_started' | 'running' | 'exited' | 'stopped' | (string & {})
+/** What a terminal runs, and whether its process runs; see `TerminalRecord` in `@ade/contracts`. */
+export type TerminalKind = 'shell' | 'service' | 'script'
+export type TerminalStatus = 'not_started' | 'running' | 'exited' | 'stopped'
 
 /**
  * A terminal record, owned by its workspace. `busy` means a command holds the
@@ -181,24 +178,14 @@ export interface Terminal {
 export type Attention = 'idle' | 'running' | 'needs_you' | 'error'
 
 export interface Catalog {
-  /**
-   * Every project of the listed workspaces. The SDK's catalog parser always
-   * sets it; it is optional only so hand-built fixtures stay valid.
-   */
-  projects?: CatalogProject[]
+  /** Every project of the listed workspaces. */
+  projects: CatalogProject[]
   workspaces: Workspace[]
   conversations: Conversation[]
-  /**
-   * The workspaces' terminals, in creation order. The SDK's catalog parser
-   * always sets it; it is optional only so hand-built fixtures stay valid.
-   */
-  terminals?: Terminal[]
-  /**
-   * Every window, open and closed, with the revision of each of its layouts.
-   * The SDK's catalog parser always sets it; it is optional only so
-   * hand-built fixtures stay valid.
-   */
-  windows?: Window[]
+  /** The workspaces' terminals, in creation order. */
+  terminals: Terminal[]
+  /** Every window, open and closed, with the revision of each of its layouts. */
+  windows: Window[]
 }
 
 export type ConnectionStatus =
@@ -265,6 +252,8 @@ function parseWorkspace(value: unknown): Workspace | null {
 
 const workspaceKinds: ReadonlySet<string> = new Set<WorkspaceKind>(['primary_checkout', 'linked_worktree', 'folder'])
 const attentions: ReadonlySet<string> = new Set<Attention>(['idle', 'running', 'needs_you', 'error'])
+const terminalKinds: ReadonlySet<string> = new Set<TerminalKind>(['shell', 'service', 'script'])
+const terminalStatuses: ReadonlySet<string> = new Set<TerminalStatus>(['not_started', 'running', 'exited', 'stopped'])
 
 function parseConversation(value: unknown): Conversation | null {
   const fields = stringFields(value, ['id', 'workspace_id', 'provider', 'status'])
@@ -300,7 +289,8 @@ function parseTerminal(value: unknown): Terminal | null {
   const source = record(value)
   if (!fields || !source) return null
   const { kind, title, status } = source
-  if (typeof kind !== 'string' || typeof status !== 'string' || typeof title !== 'string') return null
+  if (!terminalKinds.has(kind as string) || !terminalStatuses.has(status as string) || typeof title !== 'string')
+    return null
   const exitCode = source.exit_code
   if (exitCode !== null && !Number.isInteger(exitCode)) return null
   if (typeof source.busy !== 'boolean' || typeof source.primary !== 'boolean') return null
@@ -310,9 +300,9 @@ function parseTerminal(value: unknown): Terminal | null {
   return {
     id: fields[0],
     workspace_id: fields[1],
-    kind,
+    kind: kind as TerminalKind,
     title,
-    status,
+    status: status as TerminalStatus,
     exit_code: exitCode as number | null,
     busy: source.busy,
     foreground,
@@ -669,12 +659,12 @@ export class AdeClient {
       const catalog = this.state.catalog
       if (!terminal || !catalog) return 'invalid'
       // A terminal the catalog does not list was removed; its catalog frame came first.
-      const terminals = (catalog.terminals ?? []).map((item) => (item.id === terminal.id ? terminal : item))
+      const terminals = catalog.terminals.map((item) => (item.id === terminal.id ? terminal : item))
       this.publish({ revision, catalog: { ...catalog, terminals } })
       return 'stream'
     }
     const catalog = this.state.catalog
-    const windows = catalog ? applyWindowFrame(catalog.windows ?? [], frame) : undefined
+    const windows = catalog ? applyWindowFrame(catalog.windows, frame) : undefined
     if (windows === null) return 'invalid'
     if (catalog && windows) {
       this.publish({ revision, catalog: { ...catalog, windows } })

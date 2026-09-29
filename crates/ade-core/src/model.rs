@@ -16,9 +16,7 @@ pub struct WorkspaceRecord {
     pub id: String,
     pub root: String,
     pub name: String,
-    #[serde(default)]
     pub needs_rebind: bool,
-    #[serde(default)]
     pub worktree_lifecycle_needs_rebind: bool,
     /// The project this workspace belongs to; never empty. A repository
     /// workspace's project is its repository; a plain folder is a project of
@@ -26,20 +24,16 @@ pub struct WorkspaceRecord {
     pub project_id: String,
     /// Whether this is a repository's primary checkout, a linked worktree or
     /// a plain folder.
-    #[serde(default)]
     pub kind: WorkspaceKind,
     /// The branch the checkout's `HEAD` names; null when `HEAD` is detached
     /// or the workspace is not a Git checkout. The daemon refreshes it on
     /// open, after its own Git operations and when `HEAD` changes.
-    #[serde(default)]
     pub branch: Option<String>,
     /// Whether this is the daemon's own workspace: attachments that name no
     /// workspace open their terminal here, and it cannot be removed. Set on
     /// every reply, never stored.
-    #[serde(default)]
     pub default: bool,
     /// Whether ADE made (or adopted) this linked worktree and may delete it.
-    #[serde(default)]
     pub ade_owned: bool,
 }
 /// What a workspace's folder is.
@@ -69,27 +63,21 @@ pub enum Attention {
 }
 #[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
 pub struct Conversation {
-    #[serde(default)]
     pub queue_paused: bool,
     /// The turn that was active when the person resumed the queue. That
     /// turn's interruption or failure then leaves the queue running, so a
     /// wake received while an older run cleans up is kept (R003).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub queue_resumed_during: Option<String>,
-    #[serde(default)]
     pub runtime_run: Option<String>,
-    #[serde(default)]
     pub runtime_cursor: u64,
-    #[serde(default)]
     pub runtime_submission: Option<String>,
     pub id: String,
     pub workspace_id: String,
     pub title: String,
     pub provider: String,
-    #[serde(default)]
     pub account_id: Option<String>,
     pub account_context: AccountContext,
-    #[serde(default)]
     #[schemars(with = "serde_json::Value")]
     pub provider_config: crate::provider::Config,
     pub provider_thread_id: Option<String>,
@@ -99,21 +87,17 @@ pub struct Conversation {
     pub updated_at: i64,
     /// Derived from `status` and open requests
     /// (`crate::workspaces::attention`). Set on every reply, never stored.
-    #[serde(default)]
     pub attention: Attention,
     /// Whether the Conversation has a message the person did not write
     /// (a reply, a notice) newer than the profile's seen mark
     /// (`conversation.mark_seen`). Status changes show in `attention`
     /// instead. Set on every reply, never stored.
-    #[serde(default)]
     pub unread: bool,
     /// The Conversation that delegated this one, when it is an
     /// orchestration child. Set on every reply, never stored.
-    #[serde(default)]
     pub parent_conversation_id: Option<String>,
     /// The orchestration group this child runs in, if any. Set on every
     /// reply, never stored.
-    #[serde(default)]
     pub group_id: Option<String>,
 }
 impl Conversation {

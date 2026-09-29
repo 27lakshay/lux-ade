@@ -1,4 +1,4 @@
-import type { ClientState, FeedFrame } from '@ade/client'
+import type { Catalog, ClientState, FeedFrame } from '@ade/client'
 import type { AdeHost } from '../../../shared/bridge'
 import type { ConversationsBridge } from '../../../shared/bridge/conversations'
 import type { ConversationOperation } from '../../../shared/bridge/operations'
@@ -18,8 +18,30 @@ export interface FakeHost {
   requests: { op: ConversationOperation; fields: unknown }[]
 }
 
-export function clientState(overrides: Partial<ClientState> = {}): ClientState {
-  return { sequence: 1, status: 'connected', detail: '', bootId: 'boot-1', revision: 1, catalog: null, ...overrides }
+/** A catalog as a test writes it: the lists it leaves out are empty. */
+export type CatalogFixture = Pick<Catalog, 'workspaces' | 'conversations'> & Partial<Catalog>
+
+/** A complete catalog from a fixture. */
+export const fullCatalog = (catalog: CatalogFixture): Catalog => ({
+  projects: [],
+  terminals: [],
+  windows: [],
+  ...catalog,
+})
+
+export function clientState({
+  catalog = null,
+  ...overrides
+}: Partial<Omit<ClientState, 'catalog'>> & { catalog?: CatalogFixture | null } = {}): ClientState {
+  return {
+    sequence: 1,
+    status: 'connected',
+    detail: '',
+    bootId: 'boot-1',
+    revision: 1,
+    ...overrides,
+    catalog: catalog && fullCatalog(catalog),
+  }
 }
 
 export function createFakeHost(respond: Request = async () => ({})): FakeHost {

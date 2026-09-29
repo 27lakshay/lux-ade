@@ -7,7 +7,8 @@ const MAX_REQUEST_BYTES = 128 * 1024
 
 /**
  * The codes the client raises itself, and the general categories the daemon
- * also uses. `daemon` names a daemon error frame that carried no code.
+ * also uses. `daemon` is the daemon's code for a refusal it names no more
+ * specifically.
  */
 export const categoryErrorCodes = [
   'unavailable',

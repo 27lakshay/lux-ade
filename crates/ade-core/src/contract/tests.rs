@@ -67,6 +67,7 @@ fn conversation() -> Conversation {
         "id": "conversation_1", "workspace_id": "workspace_1", "title": "Title",
         "provider": "codex", "provider_thread_id": null, "status": "idle",
         "active_turn_id": null, "error": null, "updated_at": 1, "account_context": "ambient",
+            "queue_paused": false, "runtime_cursor": 0, "provider_config": {}, "attention": "idle", "unread": false,
     }))
     .unwrap()
 }
@@ -158,7 +159,9 @@ fn catalog_get_round_trips() {
     request_round_trip("catalog.get", &CatalogGetRequest {});
     let workspace = serde_json::from_value(json!({
         "id": "workspace_1", "root": "/tmp/project", "name": "project",
-        "project_id": "project_1",
+        "project_id": "project_1", "needs_rebind": false,
+        "worktree_lifecycle_needs_rebind": false, "kind": "folder", "branch": null,
+        "default": false, "ade_owned": false,
     }))
     .unwrap();
     let frame = CatalogFrame {

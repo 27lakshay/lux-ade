@@ -7,7 +7,7 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import type { ClientState, Terminal } from '@ade/client'
 import { createAppRouter } from '../../app/router'
 import { createDaemonStore } from '../../state/daemon-store'
-import { clientState, createFakeHost, nextFrame } from '../../state/fake-host'
+import { clientState, createFakeHost, fullCatalog, nextFrame, type CatalogFixture } from '../../state/fake-host'
 import { DaemonStoreContext } from '../../state/hooks'
 import { MotionProvider } from '../../app/MotionProvider'
 import { ConfirmHost } from '../../provisional/ConfirmDialog'
@@ -75,12 +75,12 @@ export async function shown(): Promise<Layout> {
 let daemon = createFakeHost()
 
 type Catalog = NonNullable<ClientState['catalog']>
-let catalog: Catalog = { workspaces: [], conversations: [], terminals: [] }
+let catalog: Catalog = fullCatalog({ workspaces: [], conversations: [] })
 let sequence = 0
 
 /** Shows these workspaces and conversations in the navigator, as a connected daemon's catalog. */
-export function setCatalog(next: Catalog): void {
-  catalog = { terminals: [], ...next }
+export function setCatalog(next: CatalogFixture): void {
+  catalog = fullCatalog(next)
   daemon.pushClientState(clientState({ sequence: ++sequence, catalog }))
 }
 
@@ -106,8 +106,7 @@ export const terminalRecord = (id: string, title: string, fields: Partial<Termin
  */
 export async function openTitled(kind: 'conversation' | 'terminal', title: string, paneId?: string): Promise<string> {
   const id = `${kind}-${++sequence}`
-  if (kind === 'terminal')
-    catalog = { ...catalog, terminals: [...(catalog.terminals ?? []), terminalRecord(id, title)] }
+  if (kind === 'terminal') catalog = { ...catalog, terminals: [...catalog.terminals, terminalRecord(id, title)] }
   else
     catalog = {
       ...catalog,
@@ -139,7 +138,7 @@ const testContent: RenderContent = (tab, workspaceId) =>
 
 export function renderWorkspace(renderContent: RenderContent = testContent) {
   daemon = createFakeHost()
-  catalog = { workspaces: [], conversations: [], terminals: [] }
+  catalog = fullCatalog({ workspaces: [], conversations: [] })
   const { store } = createDaemonStore(daemon.host)
   const Screen = () => <Workspace renderContent={renderContent} />
   const router = createAppRouter({ Workspace: Screen, history: createMemoryHistory({ initialEntries: ['/'] }) })

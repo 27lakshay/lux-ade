@@ -1242,6 +1242,7 @@ mod tests {
             "id": "conversation_1", "workspace_id": "workspace_1", "title": "Title",
             "provider": "codex", "provider_thread_id": null, "status": "idle",
             "active_turn_id": null, "error": null, "updated_at": 1, "account_context": "ambient",
+            "queue_paused": false, "runtime_cursor": 0, "provider_config": {}, "attention": "idle", "unread": false,
         }))
         .unwrap();
         let created = ConversationCreated {

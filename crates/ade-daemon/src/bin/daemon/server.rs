@@ -253,8 +253,8 @@ fn decode<T: DeserializeOwned>(request: &Value) -> anyhow::Result<T> {
     T::deserialize(request).map_err(|error| anyhow::anyhow!("Invalid request: {error}"))
 }
 
-/// Decodes a browser request after its fields passed the legacy checks, which
-/// keep the existing error wording.
+/// Decodes a browser request into its typed contract after the handler's own
+/// field checks; a decode failure is `invalid_request`.
 fn browser_decode<T: DeserializeOwned>(request: &Value) -> Result<T, Value> {
     decode(request).map_err(|error| browser_error("invalid_request", &error.to_string()))
 }
@@ -2077,7 +2077,7 @@ fn handle_connection(mut stream: UnixStream, host: Arc<Host>, lane: Lane) -> any
             writeln!(
                 stream,
                 "{}",
-                json!({"type":"error","message":"Request exceeds 128 KiB"})
+                json!({"type":"error","code":"invalid_request","message":"Request exceeds 128 KiB"})
             )?;
             if let Some(diagnostic_id) = diagnostic_id {
                 tracing::warn!(target: "ade", event = "rpc_failed", diagnostic_id, operation_family, elapsed_ms = started.elapsed().as_millis().min(u64::MAX as u128) as u64);
@@ -2691,10 +2691,10 @@ mod error_envelope_tests {
         std::fs::remove_dir_all(&directory).unwrap();
     }
     #[test]
-    fn unclassified_validation_errors_preserve_compatible_shape() {
+    fn an_unclassified_refusal_carries_the_daemon_code() {
         assert_eq!(
             error_response(anyhow::anyhow!("Invalid draft revision")),
-            json!({"type":"error","message":"Invalid draft revision"})
+            json!({"type":"error","message":"Invalid draft revision","code":"daemon"})
         );
     }
 }

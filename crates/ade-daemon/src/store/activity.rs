@@ -652,6 +652,7 @@ mod tests {
             "id": "c", "workspace_id": "w", "title": "Fix build", "provider": "codex",
             "provider_thread_id": "thread", "status": status, "active_turn_id": "turn",
             "error": null, "updated_at": 7, "account_context": "ambient",
+            "queue_paused": false, "runtime_cursor": 0, "provider_config": {}, "attention": "idle", "unread": false,
         }))
         .unwrap()
     }

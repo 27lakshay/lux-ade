@@ -91,10 +91,10 @@ test('the catalog keeps projects, workspace facts, terminals, conversation atten
   assert.equal(exited.terminals[0].exit_code, 2)
 })
 
-test('an unknown terminal kind or status is kept as sent', () => {
-  const parsed = parseCatalog(catalog({ terminals: [terminal({ kind: 'pty', status: 'paused' })] }))
-  assert.equal(parsed.terminals[0].kind, 'pty')
-  assert.equal(parsed.terminals[0].status, 'paused')
+test('a terminal kind or status outside the contract rejects the catalog', () => {
+  assert.equal(parseCatalog(catalog({ terminals: [terminal({ kind: 'pty' })] })), null)
+  assert.equal(parseCatalog(catalog({ terminals: [terminal({ status: 'paused' })] })), null)
+  assert.equal(parseCatalog(catalog({ terminals: [terminal({ kind: 'conversation' })] })), null)
 })
 
 test('a missing list or any malformed record rejects the catalog', () => {

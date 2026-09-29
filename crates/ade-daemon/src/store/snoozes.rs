@@ -261,6 +261,7 @@ mod tests {
             "id": "conversation_1", "workspace_id": "workspace_1", "title": "Fix login",
             "provider": "codex", "provider_thread_id": null, "status": "running",
             "active_turn_id": "turn_1", "error": null, "updated_at": 1, "account_context": "ambient",
+            "queue_paused": false, "runtime_cursor": 0, "provider_config": {}, "attention": "idle", "unread": false,
         }))
         .unwrap();
         let recorded = wake_activity(&conversation, &snooze(500, 10));

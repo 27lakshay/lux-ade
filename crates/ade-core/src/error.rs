@@ -601,7 +601,8 @@ impl StorageFailure {
     }
 }
 
-/// Additive error envelope: unclassified local validation keeps its legacy shape.
+/// The error frame for `error`: its message, a code and, for a classified
+/// failure, a recovery hint. A refusal with no more specific code is `daemon`.
 pub fn error_envelope(error: anyhow::Error) -> serde_json::Value {
     if error.downcast_ref::<RestoredSendHeld>().is_some() {
         return serde_json::json!({"type":"error","message":RestoredSendHeld.to_string(),
@@ -730,7 +731,7 @@ pub fn error_envelope(error: anyhow::Error) -> serde_json::Value {
     if let Some(failure) = failure {
         serde_json::json!({"type":"error","message":failure.to_string(),"code":failure,"recovery":failure.recovery()})
     } else {
-        serde_json::json!({"type":"error","message":error.to_string()})
+        serde_json::json!({"type":"error","message":error.to_string(),"code":"daemon"})
     }
 }
 

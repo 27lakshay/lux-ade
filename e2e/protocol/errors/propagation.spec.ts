@@ -149,10 +149,13 @@ test('a lifecycle refusal keeps its lifecycle code and recovery through the SDK 
   expect(frame.message).not.toContain('fatal')
 })
 
-test('a daemon error with no code stays daemon, and local failures keep their own codes', async ({ profile }) => {
+test('a daemon refusal with no specific code is daemon, and local failures keep their own codes', async ({
+  profile,
+}) => {
+  // Every daemon error frame carries a code.
   const frame = await rawReply(profile, { op: 'file.list', workspace_id: 'workspace-missing' })
   expect(frame.type).toBe('error')
-  expect(frame.code).toBeUndefined()
+  expect(frame.code).toBe('daemon')
 
   const refused = await sdkError(profile.call('file.list', { workspace_id: 'workspace-missing' }))
   expect(refused).toMatchObject({ code: 'daemon', replied: true, message: frame.message })

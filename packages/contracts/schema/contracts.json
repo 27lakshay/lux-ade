@@ -7332,7 +7332,6 @@
           "$ref": "#/$defs/AccountContext"
         },
         "account_id": {
-          "default": null,
           "type": [
             "string",
             "null"
@@ -7346,7 +7345,6 @@
         },
         "attention": {
           "$ref": "#/$defs/Attention",
-          "default": "idle",
           "description": "Derived from `status` and open requests\n(`crate::workspaces::attention`). Set on every reply, never stored."
         },
         "error": {
@@ -7356,7 +7354,6 @@
           ]
         },
         "group_id": {
-          "default": null,
           "description": "The orchestration group this child runs in, if any. Set on every\nreply, never stored.",
           "type": [
             "string",
@@ -7367,7 +7364,6 @@
           "type": "string"
         },
         "parent_conversation_id": {
-          "default": null,
           "description": "The Conversation that delegated this one, when it is an\norchestration child. Set on every reply, never stored.",
           "type": [
             "string",
@@ -7377,13 +7373,7 @@
         "provider": {
           "type": "string"
         },
-        "provider_config": {
-          "default": {
-            "model": null,
-            "permission_mode": "default",
-            "setting_sources": []
-          }
-        },
+        "provider_config": true,
         "provider_thread_id": {
           "type": [
             "string",
@@ -7391,7 +7381,6 @@
           ]
         },
         "queue_paused": {
-          "default": false,
           "type": "boolean"
         },
         "queue_resumed_during": {
@@ -7402,20 +7391,17 @@
           ]
         },
         "runtime_cursor": {
-          "default": 0,
           "maximum": 9007199254740991,
           "minimum": 0,
           "type": "integer"
         },
         "runtime_run": {
-          "default": null,
           "type": [
             "string",
             "null"
           ]
         },
         "runtime_submission": {
-          "default": null,
           "type": [
             "string",
             "null"
@@ -7428,7 +7414,6 @@
           "type": "string"
         },
         "unread": {
-          "default": false,
           "description": "Whether the Conversation has a message the person did not write\n(a reply, a notice) newer than the profile's seen mark\n(`conversation.mark_seen`). Status changes show in `attention`\ninstead. Set on every reply, never stored.",
           "type": "boolean"
         },
@@ -29684,12 +29669,10 @@
     "WorkspaceRecord": {
       "properties": {
         "ade_owned": {
-          "default": false,
           "description": "Whether ADE made (or adopted) this linked worktree and may delete it.",
           "type": "boolean"
         },
         "branch": {
-          "default": null,
           "description": "The branch the checkout's `HEAD` names; null when `HEAD` is detached\nor the workspace is not a Git checkout. The daemon refreshes it on\nopen, after its own Git operations and when `HEAD` changes.",
           "type": [
             "string",
@@ -29697,7 +29680,6 @@
           ]
         },
         "default": {
-          "default": false,
           "description": "Whether this is the daemon's own workspace: attachments that name no\nworkspace open their terminal here, and it cannot be removed. Set on\nevery reply, never stored.",
           "type": "boolean"
         },
@@ -29706,14 +29688,12 @@
         },
         "kind": {
           "$ref": "#/$defs/WorkspaceKind",
-          "default": "folder",
           "description": "Whether this is a repository's primary checkout, a linked worktree or\na plain folder."
         },
         "name": {
           "type": "string"
         },
         "needs_rebind": {
-          "default": false,
           "type": "boolean"
         },
         "project_id": {
@@ -29724,7 +29704,6 @@
           "type": "string"
         },
         "worktree_lifecycle_needs_rebind": {
-          "default": false,
           "type": "boolean"
         }
       },
