@@ -215,7 +215,8 @@ export function registerConversationIpc(): void {
       const entry = await loadDraft(event.sender.id, endpoint, args.conversation_id)
       if (op === 'draft.save') {
         if (entry.unclearedText || entry.send) throw new Error('Resolve the previous prompt before editing this draft')
-        if (typeof args.text !== 'string' || Buffer.byteLength(args.text) > 120 * 1024) throw new Error('Invalid draft')
+        // The daemon's `draft.save` holds the size limit.
+        if (typeof args.text !== 'string') throw new Error('Invalid draft')
         entry.draft = { text: args.text, revision: entry.draft.revision + 1, attachments: [] }
         pipeline().schedule(entry)
       }
@@ -276,17 +277,8 @@ export function registerConversationIpc(): void {
       }
       return await beginSend(entry, intent)
     }
-    if (!validId(args.request_id) || !['accept', 'decline', 'cancel', 'answer'].includes(String(args.decision)))
-      throw new Error('Invalid answer')
-    if (args.decision === 'answer') {
-      if (
-        !args.answers ||
-        typeof args.answers !== 'object' ||
-        Array.isArray(args.answers) ||
-        Buffer.byteLength(JSON.stringify(args.answers)) > 64 * 1024
-      )
-        throw new Error('Invalid question answers')
-    }
+    // The daemon checks the decision and answers against the pending request.
+    if (!validId(args.request_id)) throw new Error('Invalid answer')
     return dailyUseCommand(endpoint, {
       op: 'agent.answer',
       conversation_id: args.conversation_id,

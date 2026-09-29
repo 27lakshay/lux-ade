@@ -15,17 +15,6 @@ function endpoint(): string {
   return socket
 }
 
-/** The workspace, when the terminal is one of its own. */
-function owner(workspaceId: unknown, terminalId: unknown) {
-  if (!validId(workspaceId) || !validId(terminalId)) throw new Error('Invalid terminal')
-  const catalog = getClient().getState().catalog
-  const workspace = catalog?.workspaces.find((item) => item.id === workspaceId)
-  const terminal = catalog?.terminals?.find((item) => item.id === terminalId)
-  if (!workspace || terminal?.workspace_id !== workspaceId)
-    throw new Error('The terminal is no longer in this workspace')
-  return workspace
-}
-
 export function registerTerminalIpc(): void {
   handle('ade:terminal-create', async (event, workspaceId: unknown, paneId: unknown) => {
     if (!validId(workspaceId) || (paneId !== undefined && !validId(paneId)))
@@ -41,12 +30,13 @@ export function registerTerminalIpc(): void {
   })
 
   handle('ade:terminal-restart', async (_event, workspaceId: unknown, terminalId: unknown) => {
-    const workspace = owner(workspaceId, terminalId)
+    if (!validId(workspaceId) || !validId(terminalId)) throw new Error('Invalid terminal')
+    // The daemon refuses a terminal that is not the workspace's own.
     await dailyUseCommand(endpoint(), {
       op: 'terminal.restart',
       operation_id: randomUUID(),
-      workspace_id: workspace.id,
-      terminal_id: terminalId as string,
+      workspace_id: workspaceId,
+      terminal_id: terminalId,
     })
   })
 }
