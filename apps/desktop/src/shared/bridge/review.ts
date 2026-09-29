@@ -1,4 +1,4 @@
-import type { DailyUseResponse } from '@ade/client'
+import type { DailyUseResponse, ReviewAnchor, ReviewFeedback } from '@ade/client'
 import type { ContractRequest, ReviewOperation } from './operations'
 
 type ReviewOperationRecord = DailyUseResponse<'review.operation'>['operation']
@@ -36,8 +36,16 @@ export type GitJournalAcknowledged = {
   status: ReviewOperationRecord['status']
 }
 
+/** Review feedback for one Conversation: one note on up to 16 anchors, or a note per anchor. */
+export type ReviewFeedbackRequest = { anchors: ReviewAnchor[]; note: string } | { feedback: ReviewFeedback }
+
 /** `window.adeHost.review`: the main-process `review` module and its git intent journal. */
 export interface ReviewBridge {
+  /** Queues review feedback on a Conversation; the daemon builds the prompt and checks the anchors. */
+  sendFeedback(
+    conversationId: string,
+    feedback: ReviewFeedbackRequest,
+  ): Promise<DailyUseResponse<'review.feedback.send'>>
   request: ContractRequest<ReviewOperation>
   readGitJournal(workspaceId: string): Promise<GitJournalState>
   acknowledgeGitJournal(

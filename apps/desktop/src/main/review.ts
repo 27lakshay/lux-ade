@@ -1,7 +1,7 @@
+import { randomUUID } from 'node:crypto'
 import { handle } from './ipc'
 import {
   dailyUseCommand,
-  formatReviewFeedback,
   type DailyUseRequest,
   type DailyUseResponse,
   type ReviewAnchor,
@@ -17,7 +17,7 @@ import {
 import { isAllowedOperation, reviewOperations } from '../shared/bridge/operations'
 import { getClient, getClientGeneration, getSocket, journalProfileId } from './profile-connection'
 import { validId } from './validation'
-import { selectedWorkspace } from './windows'
+import { recordOf, selectedWorkspace } from './windows'
 
 let gitJournal: GitJournal | null = null
 export const setGitJournal = (value: GitJournal): void => {
@@ -27,16 +27,6 @@ function gitRecovery(): GitJournal {
   if (!gitJournal) throw new Error('Git recovery journal is unavailable')
   return gitJournal
 }
-type ReviewStatus = DailyUseResponse<'review.status'>
-type ReviewDiff = DailyUseResponse<'review.diff_page'>
-function reviewPromptText(anchor: ReviewAnchor, note: string): string {
-  return `Review feedback for workspace ${anchor.workspace_id}\nFile: ${anchor.path}\nSide: ${anchor.staged ? 'staged' : 'unstaged'}\nDiff token: ${anchor.token}\nStatus revision: ${anchor.revision}\nHunk: ${anchor.hunk}\nLine: +${anchor.line}\nSelected text: ${anchor.text}\n\nFeedback:\n${note.trim()}`
-}
-export function reviewNote(text: string, anchor: ReviewAnchor): string | null {
-  const prefix = reviewPromptText(anchor, '')
-  return text.startsWith(prefix) ? text.slice(prefix.length) : null
-}
-
 export function reviewPath(value: unknown): value is string {
   return (
     typeof value === 'string' &&
@@ -81,7 +71,7 @@ export function assertReviewContext(context: ReviewContext, workspaceId: string,
   }
 }
 
-async function reviewStatus(context: ReviewContext, workspaceId: string): Promise<ReviewStatus> {
+async function reviewStatus(context: ReviewContext, workspaceId: string): Promise<DailyUseResponse<'review.status'>> {
   const response = await dailyUseCommand<'review.status'>(context.endpoint, {
     op: 'review.status',
     workspace_id: workspaceId,
@@ -91,148 +81,36 @@ async function reviewStatus(context: ReviewContext, workspaceId: string): Promis
   return response
 }
 
-async function reviewDiff(
-  context: ReviewContext,
-  workspaceId: string,
-  path: string,
-  staged: boolean,
-): Promise<ReviewDiff> {
-  const response = await dailyUseCommand<'review.diff_page'>(context.endpoint, {
-    op: 'review.diff_page',
-    workspace_id: workspaceId,
-    path,
-    staged,
+/**
+ * Sends review feedback to a Conversation in one daemon command. The daemon checks the anchors
+ * are still current, builds the prompt and queues it; `window_id` makes it refuse while this
+ * window's ordinary draft for the Conversation is not empty. The window's selected workspace
+ * fences the request, as every review request is.
+ */
+async function sendFeedback(senderId: number, conversationId: unknown, feedback: unknown) {
+  if (!validId(conversationId) || !feedback || typeof feedback !== 'object' || Array.isArray(feedback))
+    throw new Error('Invalid review feedback')
+  const fields = feedback as Record<string, unknown>
+  const anchors = Array.isArray(fields.anchors) ? (fields.anchors as ReviewAnchor[]) : []
+  const workspaceId = anchors[0]?.workspace_id ?? (fields.feedback as ReviewFeedback | undefined)?.workspace_id
+  const context = activeReviewContext(senderId, workspaceId)
+  const reply = await dailyUseCommand(context.endpoint, {
+    op: 'review.feedback.send',
+    operation_id: randomUUID(),
+    conversation_id: conversationId,
+    window_id: recordOf(senderId),
+    ...(fields.feedback === undefined
+      ? { anchors, note: typeof fields.note === 'string' ? fields.note : '' }
+      : { feedback: fields.feedback as ReviewFeedback }),
   })
-  assertReviewContext(context, workspaceId)
-  return response
-}
-
-export async function reviewPrompt(
-  context: ReviewContext,
-  conversationId: string,
-  value: unknown,
-  note: unknown,
-): Promise<string> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid review anchor')
-  const anchor = value as ReviewAnchor
-  assertReviewContext(context, anchor.workspace_id, conversationId)
-  const conversation = getClient()
-    .getState()
-    .catalog?.conversations.find((item) => item.id === conversationId)
-  if (!conversation || conversation.workspace_id !== anchor.workspace_id)
-    throw new Error('Review feedback must target a conversation in this workspace')
-  if (
-    !reviewPath(anchor.path) ||
-    typeof anchor.staged !== 'boolean' ||
-    typeof anchor.revision !== 'string' ||
-    !/^[0-9a-f]{16}$/.test(anchor.revision) ||
-    typeof anchor.token !== 'string' ||
-    !/^[0-9a-f]{16}$/.test(anchor.token) ||
-    typeof anchor.hunk !== 'string' ||
-    !anchor.hunk.startsWith('@@ ') ||
-    anchor.hunk.length > 512 ||
-    !Number.isSafeInteger(anchor.line) ||
-    anchor.line < 1 ||
-    typeof anchor.text !== 'string' ||
-    anchor.text.length > 8192 ||
-    typeof note !== 'string' ||
-    !note.trim() ||
-    Buffer.byteLength(note) > 64 * 1024
-  )
-    throw new Error('Invalid review feedback')
-  const status = await reviewStatus(context, anchor.workspace_id)
-  if (status.revision !== anchor.revision)
-    throw new Error('Stale diff: workspace changes have moved; refresh Changes and select the line again')
-  if (!status.files.some((file) => file.path === anchor.path && (anchor.staged ? file.staged : file.unstaged))) {
-    throw new Error('Stale diff: file or side changed; refresh Changes and select the line again')
-  }
-  const diff = await reviewDiff(context, anchor.workspace_id, anchor.path, anchor.staged)
-  if (diff.token !== anchor.token) {
-    throw new Error('Stale diff: selected line changed; refresh Changes and select the line again')
-  }
-  return reviewPromptText(anchor, note)
-}
-
-export async function reviewBatchPrompt(
-  context: ReviewContext,
-  conversationId: string,
-  value: unknown,
-): Promise<{ feedback: ReviewFeedback; text: string }> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid review feedback')
-  const feedback = value as ReviewFeedback
-  if (
-    feedback.format !== 'ade-review-feedback-v1' ||
-    !validId(feedback.workspace_id) ||
-    !Array.isArray(feedback.notes) ||
-    feedback.notes.length < 1 ||
-    feedback.notes.length > 16 ||
-    Buffer.byteLength(JSON.stringify(feedback)) > 64 * 1024
-  )
-    throw new Error('Invalid review feedback')
-  assertReviewContext(context, feedback.workspace_id, conversationId)
-  const conversation = getClient()
-    .getState()
-    .catalog?.conversations.find((item) => item.id === conversationId)
-  if (!conversation || conversation.workspace_id !== feedback.workspace_id) {
-    throw new Error('Review feedback must target a conversation in this workspace')
-  }
-  const status = await reviewStatus(context, feedback.workspace_id)
-  const tokens = new Map<string, string>()
-  for (const item of feedback.notes) {
-    if (
-      !item ||
-      typeof item !== 'object' ||
-      Array.isArray(item) ||
-      typeof item.note !== 'string' ||
-      !item.note.trim() ||
-      Buffer.byteLength(item.note) > 4096 ||
-      !item.anchor ||
-      typeof item.anchor !== 'object' ||
-      Array.isArray(item.anchor)
-    )
-      throw new Error('Invalid review feedback')
-    const anchor = item.anchor
-    if (
-      anchor.workspace_id !== feedback.workspace_id ||
-      !reviewPath(anchor.path) ||
-      typeof anchor.staged !== 'boolean' ||
-      typeof anchor.revision !== 'string' ||
-      !/^[0-9a-f]{16}$/.test(anchor.revision) ||
-      typeof anchor.token !== 'string' ||
-      !/^[0-9a-f]{16}$/.test(anchor.token) ||
-      typeof anchor.hunk !== 'string' ||
-      !anchor.hunk.startsWith('@@ ') ||
-      anchor.hunk.length > 512 ||
-      !Number.isSafeInteger(anchor.line) ||
-      anchor.line < 1 ||
-      typeof anchor.text !== 'string' ||
-      anchor.text.length > 8192 ||
-      ((anchor.end_line !== undefined || anchor.end_text !== undefined) &&
-        (!Number.isSafeInteger(anchor.end_line) ||
-          (anchor.end_line as number) < anchor.line ||
-          typeof anchor.end_text !== 'string' ||
-          anchor.end_text.length > 8192))
-    )
-      throw new Error('Invalid review feedback')
-    if (
-      status.revision !== anchor.revision ||
-      !status.files.some((file) => file.path === anchor.path && (anchor.staged ? file.staged : file.unstaged))
-    ) {
-      throw new Error('Stale diff: workspace changes have moved; refresh Changes and select the ranges again')
-    }
-    const key = JSON.stringify([anchor.path, anchor.staged])
-    let token = tokens.get(key)
-    if (!token) {
-      token = (await reviewDiff(context, feedback.workspace_id, anchor.path, anchor.staged)).token
-      tokens.set(key, token)
-    }
-    if (token !== anchor.token)
-      throw new Error('Stale diff: selected range changed; refresh Changes and select it again')
-  }
-  return { feedback, text: formatReviewFeedback(feedback) }
+  assertReviewContext(context, workspaceId as string)
+  return reply
 }
 
 export function registerReviewIpc(): void {
+  handle('ade:review-feedback-send', (event, conversationId: unknown, feedback: unknown) =>
+    sendFeedback(event.sender.id, conversationId, feedback),
+  )
   handle('ade:review-request', async (event, op: unknown, fields: unknown) => {
     if (!isAllowedOperation(reviewOperations, op) || !fields || typeof fields !== 'object' || Array.isArray(fields)) {
       throw new Error('Invalid review request')

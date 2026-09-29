@@ -1,4 +1,4 @@
-import type { CallRequest, DailyUseResponse, FeedFrame, ReviewAnchor, ReviewFeedback } from '@ade/client'
+import type { CallRequest, DailyUseResponse, FeedFrame } from '@ade/client'
 import type { ConversationOperation } from './operations'
 import type { PendingSend } from './types'
 
@@ -20,9 +20,6 @@ export type PendingSendState = {
   request_id: string
   text: string
   state: 'pending' | 'rejected'
-  review_anchor?: ReviewAnchor
-  review_note?: string | null
-  review_feedback?: ReviewFeedback
 }
 
 /** The `draft.get`, `draft.save` and `draft.flush` reply: main's draft for a conversation. */
@@ -57,11 +54,7 @@ type LocalRequests = {
   'agent.send': {
     conversation_id: string
     request_id: string
-    /** The prompt; left out when review feedback supplies it. */
-    text?: string
-    review_anchor?: ReviewAnchor
-    note?: string
-    review_feedback?: ReviewFeedback
+    text: string
   }
   'agent.retry_send': { conversation_id: string; request_id?: string }
 }
@@ -69,7 +62,7 @@ type LocalResponses = {
   'draft.get': DraftState
   'draft.save': DraftState
   'draft.flush': DraftState
-  'agent.send': SendResult | { type: 'review_rejected'; message: string }
+  'agent.send': SendResult
   'agent.retry_send': SendResult
 }
 type LocalOperation = keyof LocalRequests

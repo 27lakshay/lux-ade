@@ -2,15 +2,7 @@ import { BrowserWindow } from 'electron'
 import { handle } from '../ipc'
 import { randomUUID } from 'node:crypto'
 import { isAbsolute } from 'node:path'
-import {
-  dailyUseCommand,
-  sameReviewAnchor,
-  sameReviewFeedback,
-  type DailyUseRequest,
-  type DailyUseResponse,
-  type ReviewAnchor,
-  type ReviewFeedback,
-} from '@ade/client'
+import { dailyUseCommand, type DailyUseRequest, type DailyUseResponse } from '@ade/client'
 import { SendJournal, type SendIntent } from '@ade/client/journals'
 import {
   getClient,
@@ -25,11 +17,9 @@ import {
   setSwitching,
   type Profile,
 } from '../profile-connection'
-import { activeReviewContext, assertReviewContext, reviewBatchPrompt, reviewPrompt } from '../review'
 import type { DraftState, SendPending } from '../../shared/bridge/conversations'
 import { conversationOperations, isAllowedOperation } from '../../shared/bridge/operations'
 import { validId } from '../validation'
-import { selectedWorkspace } from '../windows'
 import {
   beginSend,
   daemon,
@@ -40,7 +30,6 @@ import {
   loadDraft,
   pendingSend,
   pipeline,
-  reviewSelections,
   windowIds,
   type DraftEntry,
 } from './send-pipeline'
@@ -251,124 +240,41 @@ export function registerConversationIpc(): void {
       return result
     }
     if (op === 'agent.send' || op === 'agent.retry_send') {
-      try {
-        if (args.review_anchor !== undefined && args.review_feedback !== undefined)
-          throw new Error('Choose one review feedback format')
-        const reviewWorkspaceId =
-          args.review_feedback === undefined
-            ? (args.review_anchor as Record<string, unknown> | null)?.workspace_id
-            : (args.review_feedback as Record<string, unknown> | null)?.workspace_id
-        const reviewContext =
-          args.review_anchor === undefined && args.review_feedback === undefined
-            ? null
-            : activeReviewContext(event.sender.id, reviewWorkspaceId)
-        let text = args.text
-        let reviewFeedback: ReviewFeedback | undefined
-        if (op === 'agent.send' && reviewContext) {
-          if (args.review_feedback !== undefined) {
-            const prepared = await reviewBatchPrompt(reviewContext, args.conversation_id, args.review_feedback)
-            text = prepared.text
-            reviewFeedback = prepared.feedback
-          } else {
-            text = await reviewPrompt(reviewContext, args.conversation_id, args.review_anchor, args.note)
-          }
-          assertReviewContext(reviewContext, reviewWorkspaceId as string, args.conversation_id)
+      // Review feedback is its own daemon command (`review.feedback.send`, main/review.ts), which
+      // builds the prompt and checks the anchors are current.
+      if (args.review_anchor !== undefined || args.review_feedback !== undefined)
+        throw new Error('Send review feedback with review.feedback.send')
+      const entry = await loadDraft(event.sender.id, endpoint, args.conversation_id)
+      if (op === 'agent.retry_send') {
+        if (!entry.send) throw new Error('No prompt is awaiting confirmation')
+        if (args.request_id !== undefined && args.request_id !== entry.send.requestId) {
+          throw new Error('A different prompt is awaiting confirmation')
         }
-        const entry = await loadDraft(event.sender.id, endpoint, args.conversation_id)
-        if (op === 'agent.retry_send') {
-          if (!entry.send) throw new Error('No prompt is awaiting confirmation')
-          if (args.request_id !== undefined && args.request_id !== entry.send.requestId) {
-            throw new Error('A different prompt is awaiting confirmation')
-          }
-          const review = reviewSelections.get(entry.send)
-          if (review) {
-            const selection = selectedWorkspace(event.sender.id)
-            if (
-              !selection ||
-              selection.workspaceId !== review.workspaceId ||
-              selection.conversationId !== review.conversationId ||
-              selection.generation !== getClientGeneration()
-            )
-              throw new Error('Return to the feedback workspace before retrying')
-            review.epoch = selection.epoch
-          } else if (entry.send.reviewAnchor || entry.send.reviewFeedback) {
-            // The branch guarantees one of the two is set.
-            const workspaceId =
-              entry.send.reviewAnchor?.workspace_id ?? (entry.send.reviewFeedback?.workspace_id as string)
-            const context = activeReviewContext(event.sender.id, workspaceId)
-            assertReviewContext(context, workspaceId, args.conversation_id)
-            reviewSelections.set(entry.send, {
-              senderId: event.sender.id,
-              workspaceId,
-              conversationId: args.conversation_id,
-              epoch: context.epoch,
-            })
-          }
-          if (entry.send.preparing) return sendPending(entry)
-          return await dispatchSend(entry, entry.send)
-        }
-        if (
-          !validId(args.request_id) ||
-          typeof text !== 'string' ||
-          !text.trim() ||
-          Buffer.byteLength(text) > 120 * 1024
-        ) {
-          throw new Error('Invalid prompt')
-        }
-        if (
-          reviewContext &&
-          (entry.draft.text.length || (Array.isArray(entry.draft.attachments) && entry.draft.attachments.length))
-        ) {
-          throw new Error('Send or clear the ordinary conversation draft before sending review feedback')
-        }
-        if (entry.send) {
-          if (entry.send.requestId !== args.request_id || entry.send.text !== text) {
-            throw new Error('Resolve the previous prompt before starting another')
-          }
-          if (!sameReviewAnchor(entry.send.reviewAnchor, args.review_anchor)) {
-            throw new Error('Review selection changed before prompt reconciliation')
-          }
-          if (!sameReviewFeedback(entry.send.reviewFeedback, reviewFeedback)) {
-            throw new Error('Review feedback changed before prompt reconciliation')
-          }
-          if (entry.send.preparing) return sendPending(entry)
-          return await dispatchSend(entry, entry.send)
-        }
-        if (entry.unclearedText) throw new Error('Finish clearing the previous sent draft before sending again')
-        if (reviewContext && entry.draft.revision === 0) {
-          entry.draft = { text: '', revision: 1, attachments: [] }
-        }
-        if (reviewContext) assertReviewContext(reviewContext, reviewWorkspaceId as string, args.conversation_id)
-        const intent: SendIntent = {
-          requestId: args.request_id,
-          text,
-          draftText: entry.draft.text,
-          revision: entry.draft.revision,
-          attachments: entry.draft.attachments,
-          state: 'pending',
-          preparing: true,
-          admitted: false,
-          inFlight: null,
-          reviewAnchor: reviewContext ? (args.review_anchor as ReviewAnchor) : undefined,
-          reviewFeedback,
-        }
-        if (reviewContext) {
-          reviewSelections.set(intent, {
-            senderId: event.sender.id,
-            workspaceId: reviewWorkspaceId as string,
-            conversationId: args.conversation_id,
-            epoch: reviewContext.epoch,
-          })
-        }
-        return await beginSend(entry, intent)
-      } catch (error) {
-        if (op !== 'agent.send' || (args.review_anchor === undefined && args.review_feedback === undefined)) throw error
-        const entry = drafts.get(draftKey(event.sender.id, endpoint, args.conversation_id))
-        if (entry && entry.send?.requestId === args.request_id) {
-          return sendPending(entry)
-        }
-        return { type: 'review_rejected', message: String(error) }
+        if (entry.send.preparing) return sendPending(entry)
+        return await dispatchSend(entry, entry.send)
       }
+      const text = args.text
+      if (!validId(args.request_id) || typeof text !== 'string' || !text.trim()) throw new Error('Invalid prompt')
+      if (entry.send) {
+        if (entry.send.requestId !== args.request_id || entry.send.text !== text) {
+          throw new Error('Resolve the previous prompt before starting another')
+        }
+        if (entry.send.preparing) return sendPending(entry)
+        return await dispatchSend(entry, entry.send)
+      }
+      if (entry.unclearedText) throw new Error('Finish clearing the previous sent draft before sending again')
+      const intent: SendIntent = {
+        requestId: args.request_id,
+        text,
+        draftText: entry.draft.text,
+        revision: entry.draft.revision,
+        attachments: entry.draft.attachments,
+        state: 'pending',
+        preparing: true,
+        admitted: false,
+        inFlight: null,
+      }
+      return await beginSend(entry, intent)
     }
     if (!validId(args.request_id) || !['accept', 'decline', 'cancel', 'answer'].includes(String(args.decision)))
       throw new Error('Invalid answer')

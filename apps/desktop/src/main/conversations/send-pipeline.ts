@@ -1,6 +1,6 @@
 // Electron main's wiring for the SDK's send pipeline (`@ade/client/journals`): one
 // draft entry per window and Conversation, the window's durable owner ID, and the
-// hooks that tie a send to the window's profile and review selection. The journal
+// hooks that tie a send to the window's profile. The journal
 // and every delivery rule live in the SDK.
 import { app, BrowserWindow } from 'electron'
 import { randomUUID } from 'node:crypto'
@@ -17,9 +17,7 @@ import {
 import { SendPipeline, type SendEntry, type SendIntent, type SendJournal } from '@ade/client/journals'
 import { emit } from '../ipc'
 import { getClientGeneration, getSocket, journalProfileId } from '../profile-connection'
-import { reviewNote } from '../review'
 import { validId } from '../validation'
-import { selectedWorkspace } from '../windows'
 import type { PendingSendState, SendResult } from '../../shared/bridge/conversations'
 
 type Fields<O extends DailyUseOperation> = Omit<DailyUseRequest<O>, 'op'>
@@ -36,10 +34,6 @@ export async function daemon<O extends DailyUseOperation>(
 
 /** A window's draft for one Conversation; `senderId` names the window's web contents. */
 export type DraftEntry = SendEntry & { senderId: number }
-
-/** The window and workspace selection review feedback was written in; a send stops if it changes. */
-type ReviewSelection = { senderId: number; workspaceId: string; conversationId: string; epoch: number }
-export const reviewSelections = new WeakMap<SendIntent, ReviewSelection>()
 
 export const windowIds = new Map<number, string>()
 export const drafts = new Map<string, DraftEntry>()
@@ -73,24 +67,10 @@ async function e2ePauseAfterSendJournal(): Promise<void> {
   throw new Error('Send journal E2E pause timed out')
 }
 
-/**
- * A send may use its daemon while the window's profile connection is the one it
- * started on and, for review feedback, the window still shows the same selection.
- */
-function session(entry: DraftEntry, intent: SendIntent): () => boolean {
+/** A send may use its daemon while the window's profile connection is the one it started on. */
+function session(entry: DraftEntry): () => boolean {
   const generation = getClientGeneration()
-  return () => {
-    if (getSocket() !== entry.endpoint || getClientGeneration() !== generation) return false
-    const review = reviewSelections.get(intent)
-    if (!review) return true
-    const selection = selectedWorkspace(review.senderId)
-    return (
-      selection?.workspaceId === review.workspaceId &&
-      selection.conversationId === review.conversationId &&
-      selection.generation === generation &&
-      selection.epoch === review.epoch
-    )
-  }
+  return () => getSocket() === entry.endpoint && getClientGeneration() === generation
 }
 
 let sendPipeline: SendPipeline<DraftEntry> | null = null
@@ -169,12 +149,5 @@ export async function loadDraft(senderId: number, endpoint: string, conversation
 
 export function pendingSend(entry: DraftEntry): PendingSendState | null {
   if (!entry.send) return null
-  const anchor = entry.send.reviewAnchor
-  return {
-    request_id: entry.send.requestId,
-    text: entry.send.text,
-    state: entry.send.state,
-    ...(anchor ? { review_anchor: anchor, review_note: reviewNote(entry.send.text, anchor) } : {}),
-    ...(entry.send.reviewFeedback ? { review_feedback: entry.send.reviewFeedback } : {}),
-  }
+  return { request_id: entry.send.requestId, text: entry.send.text, state: entry.send.state }
 }

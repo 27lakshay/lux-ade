@@ -41,6 +41,7 @@ export interface InvokeChannels {
   'ade:worktree-delete': WorkspacesBridge['deleteWorktree']
   'ade:terminal-create': TerminalsBridge['create']
   'ade:settings-get': SettingsBridge['get']
+  'ade:review-feedback-send': ReviewBridge['sendFeedback']
   'ade:settings-set': SettingsBridge['set']
   'ade:terminal-restart': TerminalsBridge['restart']
   'ade:window-id': LayoutsBridge['windowId']
