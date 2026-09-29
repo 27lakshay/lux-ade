@@ -1,7 +1,7 @@
 # Handoff — 2026-09-29
 
 The daemon authority effort is closed and everything is on `main` at the commit that adds this
-file. Nothing is pushed. No sub-agents or worktrees are running. The dev app runs from the main
+file, pushed to `origin/main`. No sub-agents or worktrees are running. The dev app runs from the main
 checkout on a fresh dev profile (schema 22).
 
 Read first: `AGENTS.md`, `apps/desktop/AGENTS.md`, `CONTEXT.md`, then this map
@@ -42,7 +42,6 @@ the pattern) rather than retrying.
 
 - Work on `main`; commit each finished step with a focused message and report its hash. Never
   push, open a PR or merge elsewhere without being told.
-- Never commit the untracked `apps/desktop/PRODUCT.md` or `docs/diagrams/` — they are the user's.
 - Sub-agents are approved; a Workflow or swarm needs the user's yes first. Give each sub-agent a
   worktree (`isolation: worktree`). Tell it: rebase onto `main` **once**, gate HEAD **once**, do
   not rebase again when `main` moves, wait for long steps in one blocking call, send one report.
@@ -52,9 +51,9 @@ the pattern) rather than retrying.
 
 ## Tools and gotchas
 
-- **Gate.** `pnpm check:static` stops at oxfmt on the untracked `docs/diagrams/`. Run
-  `node .scratch/daemon-authority/tools/check-static-tracked.mjs` instead; it formats only tracked
-  files and runs every other step. Exit code 0 means passed.
+- **Gate.** `pnpm check:static`. If an untracked file trips its oxfmt step, run
+  `node .scratch/daemon-authority/tools/check-static-tracked.mjs`, which checks only tracked files
+  and runs every other step. Exit code 0 means passed.
 - **Protocol E2E.** `pnpm test:e2e:protocol` builds then runs (~6–8 min). Use
   `ADE_E2E_WORKERS=8` when it runs alone, 4 when another agent runs E2E too.
 - **Desktop E2E.** `pnpm test:e2e:desktop` (builds) or `test:e2e:desktop:only`. 7 specs.
