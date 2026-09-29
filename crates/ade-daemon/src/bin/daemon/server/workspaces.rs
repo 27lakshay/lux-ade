@@ -99,7 +99,7 @@ impl Host {
         while !self.running_terminals(id)?.is_empty() {
             anyhow::ensure!(
                 Instant::now() < deadline,
-                "The workspace was removed, but a terminal is still stopping; retry workspace.remove"
+                ade_core::error::TerminalsStillStopping
             );
             std::thread::sleep(Duration::from_millis(20));
         }

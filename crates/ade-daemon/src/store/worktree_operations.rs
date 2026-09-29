@@ -47,6 +47,12 @@ pub struct WorktreeOperationRecord {
     /// A deletion that fails restores the workspace it removed from ADE.
     #[serde(default)]
     pub restore_workspace: bool,
+    /// Transient step failures so far, such as a terminal still stopping.
+    #[serde(default)]
+    pub attempts: u32,
+    /// No step runs before this time, in ms since the epoch.
+    #[serde(default)]
+    pub retry_at: Option<i64>,
     pub error: Option<String>,
     pub code: Option<String>,
     pub created_at: i64,
@@ -212,6 +218,8 @@ mod tests {
             base: None,
             delete_branch: None,
             restore_workspace: false,
+            attempts: 0,
+            retry_at: None,
             error: None,
             code: None,
             created_at: 1,

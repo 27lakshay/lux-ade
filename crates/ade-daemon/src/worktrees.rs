@@ -1171,6 +1171,30 @@ impl Worktrees {
     pub fn resolve_repository(&self, id: &str) -> Result<String> {
         resolve(&self.data.lock().unwrap().db, id)
     }
+    /// Whether a lifecycle or review operation holds the repository now.
+    pub fn repository_busy(&self, id: &str) -> Result<bool> {
+        let d = self.data.lock().unwrap();
+        Ok(d.busy.contains(&resolve(&d.db, id)?))
+    }
+    /// The lifecycle repository whose canonical Git common directory is
+    /// `common`, without registering one.
+    pub fn repository_for_common(&self, common: &str) -> Result<Option<String>> {
+        let Ok(common) = std::fs::canonicalize(common) else {
+            return Ok(None);
+        };
+        let d = self.data.lock().unwrap();
+        let rows: Vec<String> =
+            d.db.prepare("SELECT data FROM repositories ORDER BY rowid")?
+                .query_map([], |row| row.get(0))?
+                .collect::<rusqlite::Result<_>>()?;
+        for row in rows {
+            let repository: Repository = serde_json::from_str(&row)?;
+            if Path::new(&repository.common_dir) == common {
+                return Ok(Some(repository.id));
+            }
+        }
+        Ok(None)
+    }
     /// A lifecycle operation's ledger row, or `None` when none was admitted
     /// under this ID.
     pub fn job(&self, operation_id: &str) -> Result<Option<Operation>> {
@@ -2294,9 +2318,12 @@ impl Worktrees {
         let repo: Repository = read_json(&d.db, "repositories", id)?;
         ensure!(
             !d.busy.contains(id),
-            "Repository lifecycle operation is running"
+            ade_core::error::LifecycleBusy("Repository lifecycle operation is running")
         );
-        ensure!(d.busy.len() < 8, "Too many lifecycle operations");
+        ensure!(
+            d.busy.len() < 8,
+            ade_core::error::LifecycleBusy("Too many lifecycle operations")
+        );
         let mut remove_path = None;
         let mut remove_identity = None;
         let mut setup_path = None;
@@ -2462,7 +2489,10 @@ impl Worktrees {
                 d.removing.remove(p);
             }
             release_claim();
-            bail!("A previous Git lifecycle command still holds the repository lock");
+            return Err(ade_core::error::LifecycleBusy(
+                "A previous Git lifecycle command still holds the repository lock",
+            )
+            .into());
         }
         let job = Operation {
             id: operation_id.into(),

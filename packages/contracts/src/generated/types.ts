@@ -14148,11 +14148,13 @@ export interface WorkspaceAck {
  * workspace appears in the catalog when it is ready. The lifecycle step's
  * progress is readable with `worktree.operation` under the project ID and
  * this operation ID. A retry with the same ID and payload returns the
- * current state.
+ * current state. While another operation holds the repository, the
+ * creation waits, `running`, and starts after it.
  *
  * Refused before anything is recorded: an unknown project
- * (`project_not_found`), a plain folder project (`project_not_repository`)
- * or an invalid name (`invalid_workspace_name`).
+ * (`project_not_found`), a plain folder project (`project_not_repository`),
+ * an invalid name (`invalid_workspace_name`), or an operation ID the
+ * worktree lifecycle already used for a command of its own (`conflict`).
  */
 export interface WorkspaceCreateWorktreeRequest {
   /**
@@ -14185,9 +14187,16 @@ export interface WorkspaceCreateWorktreeRequest {
  * `teardown_incomplete`, which the removal itself resolves), and refuses with
  * `worktree_delete_blocked` and `blockers: [{kind, id, label}]`. A primary
  * checkout is refused with `primary_checkout`, a plain folder with
- * `not_a_worktree`. A workspace already removed from ADE is accepted. If the
- * tree cannot be removed after all, the workspace is restored. A crash
- * between the two steps is recovered when the daemon starts again.
+ * `not_a_worktree`. A workspace already removed from ADE is accepted.
+ *
+ * While another operation holds the repository, the deletion waits before
+ * removing anything; it then checks the blockers again, so a tree that
+ * became dirty meanwhile fails the operation with `worktree_delete_blocked`
+ * and the workspace untouched. If the tree cannot be removed after the
+ * workspace was, the workspace is restored, but without its previous
+ * layouts and terminals; the failed state's `error` says so, or says the
+ * restore failed too. A crash between the two steps is recovered when the
+ * daemon starts again.
  */
 export interface WorkspaceDeleteWorktreeRequest {
   /**

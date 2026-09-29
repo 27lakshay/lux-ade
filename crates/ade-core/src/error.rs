@@ -207,6 +207,26 @@ pub struct ReviewAnchorStale(pub &'static str);
 #[error("Send or clear the ordinary conversation draft before sending review feedback")]
 pub struct DraftNotEmpty;
 
+/// The worktree lifecycle refused an effect only because another operation
+/// holds the repository now. Nothing changed; the same request can be sent
+/// again once it finishes.
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub struct LifecycleBusy(pub &'static str);
+
+/// The workspace was removed from ADE, but one of its terminals has not
+/// stopped yet. Retrying finishes the removal.
+#[derive(Debug, thiserror::Error)]
+#[error("The workspace was removed, but a terminal is still stopping; retry workspace.remove")]
+pub struct TerminalsStillStopping;
+
+/// The built review prompt is longer than a queued prompt may be.
+#[derive(Debug, thiserror::Error)]
+#[error(
+    "The review prompt is {0} bytes; a prompt holds at most 65536. Send fewer or shorter notes"
+)]
+pub struct ReviewPromptTooLong(pub usize);
+
 /// No project has this ID, and no worktree lifecycle alias names one.
 #[derive(Debug, thiserror::Error)]
 #[error("Project {0} does not exist; reload the catalog")]
@@ -617,6 +637,14 @@ pub fn error_envelope(error: anyhow::Error) -> serde_json::Value {
             "code":"worktree_delete_blocked","recovery":"clear_worktree_blockers",
             "blockers":blocked.0});
     }
+    if let Some(busy) = error.downcast_ref::<LifecycleBusy>() {
+        return serde_json::json!({"type":"error","message":busy.to_string(),
+            "code":"lifecycle_busy","recovery":"retry_after_current_operation"});
+    }
+    if let Some(long) = error.downcast_ref::<ReviewPromptTooLong>() {
+        return serde_json::json!({"type":"error","message":long.to_string(),
+            "code":"review_prompt_too_long","recovery":"shorten_feedback"});
+    }
     if let Some(stale) = error.downcast_ref::<ReviewAnchorStale>() {
         return serde_json::json!({"type":"error","message":stale.to_string(),
             "code":"review_anchor_stale","recovery":"refresh_changes"});
@@ -786,6 +814,12 @@ mod workspace_tests {
         assert_eq!(folder["code"], "project_not_repository");
         let unknown = error_envelope(UnknownSetting("colour".into()).into());
         assert_eq!(unknown["code"], "unknown_setting");
+        let busy =
+            error_envelope(LifecycleBusy("Repository lifecycle operation is running").into());
+        assert_eq!(busy["code"], "lifecycle_busy");
+        assert_eq!(busy["message"], "Repository lifecycle operation is running");
+        let long = error_envelope(ReviewPromptTooLong(70_000).into());
+        assert_eq!(long["code"], "review_prompt_too_long");
         let stale = error_envelope(ReviewAnchorStale("Stale diff: token moved").into());
         assert_eq!(stale["code"], "review_anchor_stale");
         assert_eq!(stale["recovery"], "refresh_changes");

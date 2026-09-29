@@ -11,9 +11,15 @@
 //! - Create: the lifecycle creates the branch and tree (setup hooks
 //!   included), under this operation's ID; then the daemon opens the tree as a
 //!   workspace, names it and settles.
-//! - Delete: the daemon removes the workspace from ADE (the `workspace.remove`
-//!   step), then the lifecycle removes the tree under this operation's ID. A
-//!   tree that cannot be removed gets its workspace back.
+//! - Delete: the daemon checks the blockers again, removes the workspace from
+//!   ADE (the `workspace.remove` step), then the lifecycle removes the tree
+//!   under this operation's ID. A tree that cannot be removed gets its
+//!   workspace back, without its layouts and terminals.
+//!
+//! A repository another operation holds makes a step wait, never fail. A
+//! terminal that is still stopping is retried with backoff, a few times. Any
+//! other step error fails the operation, so one operation never stalls the
+//! others.
 use super::{Host, decode, now_ms, reply};
 use ade_core::contract::workspaces::{
     WorkspaceCreateWorktreeRequest, WorkspaceDeleteWorktreeRequest, WorkspaceWorktreeKind,
@@ -22,6 +28,7 @@ use ade_core::contract::workspaces::{
 use ade_core::contract::worktrees::{
     CleanupBlocker, WorktreeCleanupPlan, WorktreeOperationStatus as Job, WorktreeState,
 };
+use ade_core::error::{LifecycleBusy, TerminalsStillStopping};
 use ade_core::model::{ProjectKind, WorkspaceKind};
 use ade_core::workspaces::{DeleteBlocker, DeleteBlockerKind, NotDeletable};
 use ade_daemon::store::{WorktreeAdmission, WorktreeOperationRecord as Record, WorktreeStep};
@@ -34,12 +41,17 @@ const DELETE: &str = "workspace.delete_worktree";
 
 /// How often running operations are advanced.
 pub(super) const TICK: std::time::Duration = std::time::Duration::from_millis(250);
+/// Transient step failures before the operation fails.
+const MAX_ATTEMPTS: u32 = 4;
+/// The first retry delay; each later one doubles it.
+const FIRST_RETRY_MS: i64 = 500;
 
 /// What one step did.
 enum Progress {
     /// The state changed; store it and take the next step.
     Next(Box<Record>),
-    /// The lifecycle is still working; look again on the next tick.
+    /// The lifecycle is still working, or holds the repository for another
+    /// operation; look again on the next tick.
     Wait,
 }
 
@@ -63,9 +75,27 @@ fn fail(mut record: Record, error: anyhow::Error) -> Record {
     let envelope = ade_core::error::error_envelope(error);
     record.status = WorkspaceWorktreeStatus::Failed;
     record.step = WorktreeStep::Done;
+    record.retry_at = None;
     record.error = envelope["message"].as_str().map(str::to_owned);
     record.code = envelope["code"].as_str().map(str::to_owned);
     record
+}
+
+/// Whether the lifecycle refused only because another operation holds the repository.
+fn busy(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<LifecycleBusy>().is_some()
+}
+
+/// A deterministic failure for E2E, debug builds only: fails when
+/// `ADE_E2E_WORKTREE_FAILPOINT` lists `point` (comma separated).
+fn failpoint(point: &str) -> anyhow::Result<()> {
+    if cfg!(debug_assertions)
+        && std::env::var("ADE_E2E_WORKTREE_FAILPOINT")
+            .is_ok_and(|points| points.split(',').any(|listed| listed == point))
+    {
+        anyhow::bail!("E2E failpoint {point}");
+    }
+    Ok(())
 }
 
 impl Host {
@@ -101,6 +131,8 @@ impl Host {
                 base: create.base,
                 delete_branch: None,
                 restore_workspace: false,
+                attempts: 0,
+                retry_at: None,
                 error: None,
                 code: None,
                 created_at: now,
@@ -142,42 +174,10 @@ impl Host {
                 .into());
             }
         }
-        // Everything that would stop either step, checked before either runs.
-        let mut blockers: Vec<DeleteBlocker> = Vec::new();
-        if !removed {
-            blockers.extend(self.runtime_blockers(id)?.into_iter().map(Into::into));
-            blockers.extend(
-                self.sessions
-                    .workspace_remove_blockers(id)?
-                    .into_iter()
-                    .map(Into::into),
-            );
-        }
         let lifecycle_id = self.lifecycle_repository(&workspace.project_id, Some(&root))?;
-        self.refresh_leases()?;
-        let plan: WorktreeCleanupPlan = serde_json::from_value(
-            self.sessions
-                .command(&json!({"op": "worktree.cleanup.plan", "repository_id": lifecycle_id}))?,
-        )
-        .context("The worktree lifecycle returned an invalid cleanup plan")?;
-        match plan.trees.iter().find(|tree| canonical(&tree.path) == root) {
-            None => blockers.push(DeleteBlocker::tree(CleanupBlocker::NotListed, &root)),
-            Some(tree) => {
-                for blocker in &tree.blockers {
-                    // Removing the workspace ends its own terminals and Agents,
-                    // and an explicit removal is the recovery for an
-                    // unfinished setup or teardown.
-                    let resolved_by_removal = matches!(
-                        blocker,
-                        CleanupBlocker::SetupIncomplete | CleanupBlocker::TeardownIncomplete
-                    ) || (*blocker == CleanupBlocker::ActiveWork
-                        && !removed);
-                    if !resolved_by_removal {
-                        blockers.push(DeleteBlocker::tree(*blocker, &tree.path));
-                    }
-                }
-            }
-        }
+        // Everything that would stop either step, checked before either runs
+        // and again before the workspace is removed.
+        let blockers = self.delete_blockers(id, &root, &lifecycle_id, !removed)?;
         if !blockers.is_empty() {
             return Err(ade_core::error::WorktreeDeleteBlocked(blockers).into());
         }
@@ -198,6 +198,8 @@ impl Host {
                 base: None,
                 delete_branch: delete.delete_branch,
                 restore_workspace: !removed,
+                attempts: 0,
+                retry_at: None,
                 error: None,
                 code: None,
                 created_at: now,
@@ -206,10 +208,65 @@ impl Host {
         )
     }
 
-    /// Advances every running operation; the daemon's tick calls it.
+    /// What keeps the workspace's worktree from being deleted now. With
+    /// `listed`, the workspace is still in ADE, so its own blockers count,
+    /// and its own terminals and Agents (`active_work`) do not: removing it
+    /// ends them. Another operation holding the repository never blocks; the
+    /// deletion waits for it.
+    fn delete_blockers(
+        &self,
+        id: &str,
+        root: &str,
+        lifecycle_id: &str,
+        listed: bool,
+    ) -> anyhow::Result<Vec<DeleteBlocker>> {
+        let mut blockers: Vec<DeleteBlocker> = Vec::new();
+        if listed {
+            blockers.extend(self.runtime_blockers(id)?.into_iter().map(Into::into));
+            blockers.extend(
+                self.sessions
+                    .workspace_remove_blockers(id)?
+                    .into_iter()
+                    .map(Into::into),
+            );
+        }
+        self.refresh_leases()?;
+        let plan: WorktreeCleanupPlan = serde_json::from_value(
+            self.sessions
+                .command(&json!({"op": "worktree.cleanup.plan", "repository_id": lifecycle_id}))?,
+        )
+        .context("The worktree lifecycle returned an invalid cleanup plan")?;
+        match plan.trees.iter().find(|tree| canonical(&tree.path) == root) {
+            None => blockers.push(DeleteBlocker::tree(CleanupBlocker::NotListed, root)),
+            Some(tree) => {
+                for blocker in &tree.blockers {
+                    // An explicit removal is the recovery for an unfinished
+                    // setup or teardown.
+                    let resolved = matches!(
+                        blocker,
+                        CleanupBlocker::SetupIncomplete
+                            | CleanupBlocker::TeardownIncomplete
+                            | CleanupBlocker::LifecycleRunning
+                    ) || (*blocker == CleanupBlocker::ActiveWork && listed);
+                    if !resolved {
+                        blockers.push(DeleteBlocker::tree(*blocker, &tree.path));
+                    }
+                }
+            }
+        }
+        Ok(blockers)
+    }
+
+    /// Advances every running operation; the daemon's tick calls it. One
+    /// operation's error is logged and never stops the others.
     pub(super) fn advance_worktree_operations(&self) -> anyhow::Result<()> {
         for record in self.sessions.running_worktree_operations()? {
-            self.advance(&record.operation_id)?;
+            if let Err(error) = self.advance(&record.operation_id) {
+                eprintln!(
+                    "Workspace worktree operation {}: {error:#}",
+                    record.operation_id
+                );
+            }
         }
         Ok(())
     }
@@ -223,7 +280,14 @@ impl Host {
         payload: &Value,
     ) -> anyhow::Result<Option<Value>> {
         match self.sessions.probe_worktree_operation(id, op, payload)? {
-            WorktreeAdmission::New => Ok(None),
+            WorktreeAdmission::New => {
+                // The lifecycle step runs under this ID; one the lifecycle
+                // already used for its own command would never settle.
+                if self.sessions.worktrees.job(id)?.is_some() {
+                    return Ok(Some(refusal(id, WorktreeAdmission::Conflict)));
+                }
+                Ok(None)
+            }
             WorktreeAdmission::Known(_) => Ok(Some(self.advance(id)?)),
             refused => Ok(Some(refusal(id, refused))),
         }
@@ -248,17 +312,33 @@ impl Host {
                 .sessions
                 .worktree_operation(id)?
                 .context("The operation's recorded state is missing")?;
-            if record.status != WorkspaceWorktreeStatus::Running {
+            if record.status != WorkspaceWorktreeStatus::Running
+                || record.retry_at.is_some_and(|at| at > now_ms())
+            {
                 return Ok(reply(&record.reply()));
             }
-            let progress = match record.kind {
-                WorkspaceWorktreeKind::CreateWorktree => self.create_step(record.clone())?,
-                WorkspaceWorktreeKind::DeleteWorktree => self.delete_step(record.clone())?,
+            let step = match record.kind {
+                WorkspaceWorktreeKind::CreateWorktree => self.create_step(record.clone()),
+                WorkspaceWorktreeKind::DeleteWorktree => self.delete_step(record.clone()),
             };
-            match progress {
-                Progress::Next(mut next) => self.sessions.save_worktree_operation(&mut next)?,
-                Progress::Wait => return Ok(reply(&record.reply())),
-            }
+            let mut next = match step {
+                Ok(Progress::Next(next)) => *next,
+                Ok(Progress::Wait) => return Ok(reply(&record.reply())),
+                Err(error)
+                    if error.downcast_ref::<TerminalsStillStopping>().is_some()
+                        && record.attempts + 1 < MAX_ATTEMPTS =>
+                {
+                    let mut later = record.clone();
+                    later.attempts += 1;
+                    later.retry_at =
+                        Some(now_ms() + FIRST_RETRY_MS * (1_i64 << later.attempts.min(10)));
+                    self.sessions.save_worktree_operation(&mut later)?;
+                    return Ok(reply(&later.reply()));
+                }
+                Err(error) => self.restored(fail(record, error)),
+            };
+            next.retry_at = None;
+            self.sessions.save_worktree_operation(&mut next)?;
         }
     }
 
@@ -275,21 +355,19 @@ impl Host {
                     if let Some(base) = &record.base {
                         create["base"] = json!(base);
                     }
-                    return Ok(match self.sessions.command(&create) {
-                        Ok(_) => Progress::Wait,
-                        Err(error) => Progress::Next(Box::new(fail(record, error))),
-                    });
+                    return match self.sessions.command(&create) {
+                        Ok(_) => Ok(Progress::Wait),
+                        Err(error) if busy(&error) => Ok(Progress::Wait),
+                        Err(error) => Err(error),
+                    };
                 };
                 match job.status {
                     Job::Running => Ok(Progress::Wait),
                     Job::Succeeded => {
-                        let Some(path) = job.worktree_path else {
-                            return Ok(Progress::Next(Box::new(fail(
-                                record,
-                                anyhow::anyhow!("The worktree was created without a folder"),
-                            ))));
-                        };
-                        record.worktree_path = Some(path);
+                        record.worktree_path = Some(
+                            job.worktree_path
+                                .context("The worktree was created without a folder")?,
+                        );
                         record.step = WorktreeStep::Workspace;
                         Ok(Progress::Next(Box::new(record)))
                     }
@@ -301,19 +379,22 @@ impl Host {
                     .worktree_path
                     .clone()
                     .context("The created worktree has no folder")?;
-                let workspace = match self.sessions.open_workspace(&path) {
-                    Ok(workspace) => workspace,
-                    Err(error) => return Ok(Progress::Next(Box::new(fail(record, error)))),
-                };
+                let workspace = self.sessions.open_workspace(&path)?;
+                record.workspace_id = Some(workspace.id.clone());
                 // The folder is named after the branch slug; ADE shows the
                 // name as the person typed it.
                 if let Some(name) = record.name.as_ref().filter(|name| **name != workspace.name) {
-                    self.sessions.command(&json!({
-                        "op": "workspace.rename", "workspace_id": workspace.id, "name": name,
-                    }))?;
+                    let renamed = failpoint("rename").and_then(|()| {
+                        self.sessions.command(&json!({
+                            "op": "workspace.rename", "workspace_id": workspace.id, "name": name,
+                        }))
+                    });
+                    // The failed state names the workspace, which exists unnamed.
+                    if let Err(error) = renamed {
+                        return Ok(Progress::Next(Box::new(fail(record, error))));
+                    }
                 }
                 self.sessions.refresh_workspace_facts(Some(&workspace.id))?;
-                record.workspace_id = Some(workspace.id);
                 record.status = WorkspaceWorktreeStatus::Succeeded;
                 record.step = WorktreeStep::Done;
                 Ok(Progress::Next(Box::new(record)))
@@ -333,17 +414,25 @@ impl Host {
             .context("The deletion names no worktree")?;
         match record.step {
             WorktreeStep::Workspace => {
-                if !self.sessions.workspace_removed(&workspace)?
-                    && let Err(error) = self.remove_from_ade(&workspace, &record.operation_id)
-                {
-                    // Removed, but a terminal is still stopping: the next
-                    // tick finishes the removal.
-                    if self.sessions.workspace_removed(&workspace)? {
-                        return Err(error);
+                if !self.sessions.workspace_removed(&workspace)? {
+                    // Nothing is removed while another operation holds the
+                    // repository, so a wait never leaves the workspace gone.
+                    if self
+                        .sessions
+                        .worktrees
+                        .repository_busy(&record.lifecycle_id)?
+                    {
+                        return Ok(Progress::Wait);
                     }
-                    // Refused before changing anything.
-                    record.restore_workspace = false;
-                    return Ok(Progress::Next(Box::new(fail(record, error))));
+                    // The tree may have changed since admission: a tree that
+                    // became dirty is refused before anything changes.
+                    let blockers =
+                        self.delete_blockers(&workspace, &path, &record.lifecycle_id, true)?;
+                    ensure!(
+                        blockers.is_empty(),
+                        ade_core::error::WorktreeDeleteBlocked(blockers)
+                    );
+                    self.remove_from_ade(&workspace, &record.operation_id)?;
                 }
                 // A deterministic crash point for E2E: the workspace is
                 // removed and the tree is not.
@@ -356,6 +445,7 @@ impl Host {
                     // A restarted daemon has no leases yet; the lifecycle
                     // must see that nothing uses the tree.
                     self.refresh_leases()?;
+                    failpoint("remove_tree")?;
                     let mut remove = json!({
                         "op": "worktree.remove",
                         "repository_id": record.lifecycle_id,
@@ -365,10 +455,11 @@ impl Host {
                     if let Some(policy) = record.delete_branch {
                         remove["delete_branch"] = serde_json::to_value(policy)?;
                     }
-                    return Ok(match self.sessions.command(&remove) {
-                        Ok(_) => Progress::Wait,
-                        Err(error) => Progress::Next(Box::new(self.restored(fail(record, error))?)),
-                    });
+                    return match self.sessions.command(&remove) {
+                        Ok(_) => Ok(Progress::Wait),
+                        Err(error) if busy(&error) => Ok(Progress::Wait),
+                        Err(error) => Err(error),
+                    };
                 };
                 match job.status {
                     Job::Running => Ok(Progress::Wait),
@@ -384,7 +475,7 @@ impl Host {
                         Ok(Progress::Next(Box::new(record)))
                     }
                     _ => Ok(Progress::Next(Box::new(
-                        self.restored(job_failure(record, &job))?,
+                        self.restored(job_failure(record, &job)),
                     ))),
                 }
             }
@@ -392,15 +483,30 @@ impl Host {
         }
     }
 
-    /// A failed deletion gives the workspace back when its tree is still there.
-    fn restored(&self, record: Record) -> anyhow::Result<Record> {
-        if let Some(path) = &record.worktree_path
-            && record.restore_workspace
-            && Path::new(path).is_dir()
+    /// A failed deletion gives back the workspace it removed from ADE when the
+    /// tree is still there. The workspace returns without its layouts and
+    /// terminals; the error says so, or says the restore failed too.
+    fn restored(&self, mut record: Record) -> Record {
+        let (Some(workspace), Some(path)) = (&record.workspace_id, &record.worktree_path) else {
+            return record;
+        };
+        if record.kind != WorkspaceWorktreeKind::DeleteWorktree
+            || !record.restore_workspace
+            || !self.sessions.workspace_removed(workspace).unwrap_or(false)
+            || !Path::new(path).is_dir()
         {
-            self.sessions.open_workspace(path)?;
+            return record;
         }
-        Ok(record)
+        let note = match failpoint("restore").and_then(|()| self.sessions.open_workspace(path)) {
+            Ok(_) => "The workspace is back in ADE, without its previous layouts and terminals."
+                .to_owned(),
+            Err(error) => format!(
+                "The workspace could not be restored ({error:#}); open its folder to bring it back."
+            ),
+        };
+        let error = record.error.take().unwrap_or_default();
+        record.error = Some(format!("{error} {note}").trim().to_owned());
+        record
     }
 
     /// The lifecycle's ledger row for this operation, checked to be the step
