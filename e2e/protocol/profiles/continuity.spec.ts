@@ -7,7 +7,7 @@
 // attached does not change that.
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { codexPrompts, isRunning, prompts, turnReply } from '../fixtures'
+import { codexPrompts, isRunning, primaryShell, prompts, turnReply } from '../fixtures'
 import { subscribeFeed } from '../fixtures/feed'
 import { expect, test, type ManagedProfile } from '../fixtures/managed-profiles'
 import { replayText, TerminalStream } from '../fixtures/terminals'
@@ -35,7 +35,7 @@ for (const mode of modes) {
     const opened = await work.cli('workspace', 'open', work.defaultWorkspaceRoot)
     expect(opened.code, opened.stderr).toBe(0)
     const workspaceId = field(opened, /"id":"(workspace[^"]*)"/)
-    const terminalId = field(opened, /"terminal_id":"([^"]+)"/)
+    const terminalId = await primaryShell(work.asScratch(), workspaceId)
 
     // A command that records each start and end, and waits for a release file.
     const log = join(ade.root, 'command.log')

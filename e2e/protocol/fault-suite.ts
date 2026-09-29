@@ -402,7 +402,7 @@ export const faultClasses: FaultClass[] = [
       {
         fault: 'fail migrations',
         tests: [
-          t('backup/restore.spec.ts', 'refuses two behind without creating the target'),
+          t('backup/restore.spec.ts', 'refuses a bundle of an older schema or format without creating the target'),
           t('backup/corrupt.spec.ts', 'refuses every damaged or unsupported bundle'),
         ],
       },

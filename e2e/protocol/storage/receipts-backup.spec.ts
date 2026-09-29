@@ -7,15 +7,14 @@
 // The profile is backed up live, loses its data directory, and is restored in
 // place, so the restored daemon serves the same browser profile ID. Each
 // retry must replay its recorded reply without acting again, and another
-// payload under the same ID must conflict. A format-6 bundle, which holds
-// neither store, must still restore.
-import { chmod, mkdir, rename, rm, writeFile } from 'node:fs/promises'
+// payload under the same ID must conflict.
+import { chmod, mkdir, rename } from 'node:fs/promises'
 import { createServer, type Server } from 'node:net'
 import { join } from 'node:path'
 import { expect, test, type ScratchProfile } from '../fixtures'
 import { fixedBrowserProfile } from '../fixtures/browser-owner'
 import { control } from '../fixtures/control'
-import { copyBundle, createBackup, readManifest, restoreIntoNewProfile } from '../backup/helpers'
+import { createBackup, readManifest } from '../backup/helpers'
 
 const ENVELOPE = 'sessions.envelope.sqlite3'
 const BROWSER = 'browser-operations.sqlite3'
@@ -154,45 +153,4 @@ test('a restored profile replays envelope and browser receipts instead of runnin
   } finally {
     owner.close()
   }
-})
-
-test('a format-6 bundle without the receipt stores still restores', async ({ ade, profile }) => {
-  const { path: bundle, result } = await createBackup(ade, profile)
-  expect(result.code, result.stderr).toBe(0)
-
-  const legacy = await copyBundle(bundle, join(ade.root, 'format-6'))
-  const manifest = await readManifest(legacy)
-  const receipts = new Set([ENVELOPE, BROWSER])
-  for (const store of receipts) await rm(join(legacy, store), { force: true })
-  await writeFile(
-    join(legacy, 'manifest.json'),
-    JSON.stringify({
-      ...manifest,
-      format_version: 6,
-      entries: manifest.entries.filter((entry) => !receipts.has(entry.path)),
-      coverage: manifest.coverage.filter((item) => !receipts.has(item.store)),
-    }),
-  )
-  const inspected = await control(ade, ['backup', 'inspect', '--backup', legacy])
-  expect(inspected.code, inspected.stderr).toBe(0)
-
-  // A format-6 bundle may not claim a receipt store it did not have.
-  const claiming = await copyBundle(bundle, join(ade.root, 'format-6-claiming'))
-  const claimed = await readManifest(claiming)
-  await writeFile(
-    join(claiming, 'manifest.json'),
-    JSON.stringify({
-      ...claimed,
-      format_version: 6,
-      coverage: claimed.coverage.filter((item) => !receipts.has(item.store)),
-    }),
-  )
-  const refused = await control(ade, ['backup', 'inspect', '--backup', claiming])
-  expect(refused.code).not.toBe(0)
-  expect(refused.stderr).toMatch(/Unknown backup path/)
-
-  const restored = await restoreIntoNewProfile(ade, legacy)
-  const account = { operation_id: 'after-legacy-restore', provider: 'codex', name: 'Legacy restore' }
-  const created = await restored.call('account.create', account)
-  expect(await restored.call('account.create', account)).toEqual(created)
 })
