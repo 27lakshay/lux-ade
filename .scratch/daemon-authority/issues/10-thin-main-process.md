@@ -62,3 +62,4 @@ daemon's own redacted report with this app's logs), the folder pickers, and the 
   typed code; step 3 (review feedback through `review.feedback.send`) waits for the legacy E2E port,
   which is moving the specs that drive that path; steps 4 and 5 wait for ticket 07's window records
   and a keybindings setting.
+- 2026-09-29 — Step 4 done by ticket 07 (`e99cf45`): `selectedWorkspaces` is gone and review fencing reads the window record's `workspace_id`.

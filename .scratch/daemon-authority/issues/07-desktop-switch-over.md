@@ -1,9 +1,9 @@
 # 07 — Desktop switch-over
 
-Status: open
+Status: closed
 Type: task
 Label: wayfinder:task
-Assignee: none
+Assignee: coordinator and a sub-agent
 Blocked by: [02](02-lane-windows-layouts.md), [03](03-lane-catalog-workspaces.md), [04](04-lane-terminal-records.md), [05](05-desktop-terminals.md)
 
 Move the desktop onto the daemon's records and delete what it no longer owns. Each part can
@@ -48,3 +48,13 @@ start as soon as its lane has merged.
 - No `localStorage` use remains except per-viewer conveniences (none planned).
 
 ## Comments
+
+- 2026-09-29 — Done. Part 1 (lane B's fields, worktree commands, settings) at `f9c14fe`; parts 2–4
+  (windows and layouts from the daemon, `tab.close`/`pane.close`, `terminal.create` with `place`,
+  one-time import, reducer kept only as a test/bench double behind `ade/no-layout-double`) at
+  `f800afe`–`d8eca07`; guide updated at `b7afe16`. Drop-to-paint p95 9.4 ms on a debug daemon, so
+  no optimistic apply. Checked in the dev app: the window record and imported layouts arrived; the
+  CLI split a pane and opened a live terminal (`ade pane split`, `ade terminal create`,
+  `ade tab open`) and the window showed both; `ade tab close` closed it. Review fencing now reads
+  the window record, which also covers ticket 10 step 4. Review feedback still goes through main's
+  old path until ticket 10 step 3.
