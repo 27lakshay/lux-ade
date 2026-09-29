@@ -253,13 +253,14 @@ test('renamed source directories retain their saved physical identity and cannot
     await rename(gitSource, join(outside, 'git-renamed'))
     await rename(lifecycleSource, join(outside, 'lifecycle-renamed'))
   })
+  // A lifecycle-only repository has no catalog binding, so the lifecycle's own identity check refuses.
   expect(
     await rawReply(restored, {
       op: 'worktree.rebind',
       repository_id: lifecycle.id,
       path: join(outside, 'lifecycle-renamed'),
     }),
-  ).toMatchObject(refused('belongs to a saved source workspace or repository'))
+  ).toMatchObject(refused('different physical repository from the saved checkout'))
   expect((await restored.call('worktree.rebind.list', {})).repositories).toEqual(
     expect.arrayContaining([expect.objectContaining({ id: lifecycle.id, needs_rebind: true })]),
   )
@@ -349,7 +350,7 @@ test('second rebind and another workspace cannot recover authority over saved so
   await git(ade, 'init', '-q', '-b', 'main', targetLife)
   expect(
     await rawReply(restored, { op: 'worktree.rebind', repository_id: lifecycle.id, path: sourceLife }),
-  ).toMatchObject(refused('belongs to a saved source workspace or repository'))
+  ).toMatchObject(refused('different physical repository from the saved checkout'))
   expect(await createTerminal(restored, gitWorkspace.id)).toMatchObject(fenced)
   expect(await createTerminal(restored, plainWorkspace.id)).toMatchObject(fenced)
 })
