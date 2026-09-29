@@ -9,7 +9,11 @@ pnpm test:e2e:protocol:only    # run without building
 pnpm test:e2e:protocol:only boot --grep "restart"
 ```
 
-- `ADE_E2E_WORKERS=N` sets the worker count. It defaults to half the CPUs.
+- `ADE_E2E_WORKERS=N` sets the worker count. It defaults to half the CPUs, which is right for one
+  suite running alone: the tests mostly wait on real processes, so more workers cut the time almost
+  in proportion. Lower it only when several suites run at once on the machine (for example
+  parallel worktrees: 2 each).
+- Each run ends with the slowest spec files (over 10 s); start there when the suite gets slow.
 - `pnpm test:e2e:protocol:faults` builds, then runs the fault conformance
   suite; `pnpm test:e2e:protocol:faults:only` runs it without building. See
   [Fault conformance suite](#fault-conformance-suite).

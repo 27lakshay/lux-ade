@@ -33,4 +33,6 @@ export default defineConfig({
   expect: { timeout: 10_000 },
   forbidOnly: true,
   reporter: [['list']],
+  // After every run, the slowest spec files: where a long suite spends its time.
+  reportSlowTests: { max: 15, threshold: 10_000 },
 })
