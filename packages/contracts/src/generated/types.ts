@@ -877,6 +877,7 @@ export type ContractDefinition =
   | WindowSetBoundsRequest
   | WindowSetViewStateRequest
   | WindowShowWorkspaceRequest
+  | WindowShown
   | WindowState
   | WindowView
   | WorkspaceAck
@@ -14124,12 +14125,26 @@ export interface WindowSetViewStateRequest {
 }
 /**
  * `window.show_workspace`: which workspace the window shows. It moves to
- * the front of `recent_workspaces`; its layout is kept per workspace.
+ * the front of `recent_workspaces`; its layout is kept per workspace. The
+ * reply carries the layout the window now shows.
  */
 export interface WindowShowWorkspaceRequest {
   op: 'window.show_workspace'
   window_id: string
   workspace_id: string
+}
+/**
+ * The `window.show_workspace` reply: the window, and its layout for the
+ * workspace it now shows, so the caller draws it without a `layout.get`.
+ */
+export interface WindowShown {
+  layout: LayoutRecord
+  /**
+   * The `window` type tag.
+   */
+  type: 'window'
+  window: Window
+  [k: string]: unknown
 }
 /**
  * The `workspace.open`, `workspace.rename` and `workspace.rebind` reply.
@@ -14180,6 +14195,12 @@ export interface WorkspaceCreateWorktreeRequest {
    * A repository project.
    */
   project_id: string
+  /**
+   * A window to show the new workspace in once it is ready, as
+   * `window.show_workspace` would. A window closed or gone by then is
+   * left as it is; the creation still succeeds.
+   */
+  show_in?: string | null
 }
 /**
  * `workspace.delete_worktree`: remove a linked worktree's workspace from
@@ -15549,7 +15570,7 @@ export interface ResponseByOperation {
   "window.reopen": WindowAck
   "window.claim": WindowAck
   "window.set_bounds": WindowAck
-  "window.show_workspace": WindowAck
+  "window.show_workspace": WindowShown
   "window.set_view_state": WindowAck
   "layout.get": LayoutReply
   "layout.apply": LayoutApplied

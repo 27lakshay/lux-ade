@@ -129,6 +129,7 @@ impl Host {
                 worktree_path: None,
                 name: Some(name),
                 base: create.base,
+                show_in: create.show_in,
                 delete_branch: None,
                 restore_workspace: false,
                 attempts: 0,
@@ -196,6 +197,7 @@ impl Host {
                 worktree_path: Some(root),
                 name: None,
                 base: None,
+                show_in: None,
                 delete_branch: delete.delete_branch,
                 restore_workspace: !removed,
                 attempts: 0,
@@ -395,6 +397,17 @@ impl Host {
                     }
                 }
                 self.sessions.refresh_workspace_facts(Some(&workspace.id))?;
+                if let Some(window) = &record.show_in {
+                    let shown = self.sessions.command(&json!({
+                        "op": "window.show_workspace", "window_id": window, "workspace_id": workspace.id,
+                    }));
+                    if let Err(error) = shown {
+                        eprintln!(
+                            "Created workspace {} not shown in {window}: {error:#}",
+                            workspace.id
+                        );
+                    }
+                }
                 record.status = WorkspaceWorktreeStatus::Succeeded;
                 record.step = WorktreeStep::Done;
                 Ok(Progress::Next(Box::new(record)))

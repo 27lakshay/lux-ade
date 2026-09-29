@@ -125,14 +125,15 @@ export function startLayoutSync(next: LayoutConnection): () => void {
   }
 }
 
-/** Shows another workspace in this window: at once here, and in the daemon's record. */
+/** Shows another workspace in this window: at once here, and in the daemon's record, whose reply carries its layout. */
 export function selectWorkspace(workspaceId: string): void {
   const bridge = connection?.bridge
   if (!bridge || activeWorkspace(layoutStore.getState()) === workspaceId) return
+  const windowId = layoutStore.getState().windowId
   layoutStore.setState({ pending: workspaceId })
-  void fetchLayout(workspaceId)
   bridge.showWorkspace(workspaceId).then(
-    () => {
+    ({ layout }) => {
+      if (layoutStore.getState().windowId === windowId) acceptLayout(layout)
       const state = layoutStore.getState()
       if (state.pending === workspaceId && state.window?.workspace_id === workspaceId)
         layoutStore.setState({ pending: null })

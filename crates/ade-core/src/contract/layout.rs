@@ -38,7 +38,7 @@ pub fn operations() -> Vec<OperationSpec> {
             "window.set_bounds",
             Tier::IdempotentCommand,
         ),
-        OperationSpec::new::<WindowShowWorkspaceRequest, WindowAck>(
+        OperationSpec::new::<WindowShowWorkspaceRequest, WindowShown>(
             "window.show_workspace",
             Tier::IdempotentCommand,
         ),
@@ -491,7 +491,8 @@ pub struct WindowSetBoundsRequest {
 }
 
 /// `window.show_workspace`: which workspace the window shows. It moves to
-/// the front of `recent_workspaces`; its layout is kept per workspace.
+/// the front of `recent_workspaces`; its layout is kept per workspace. The
+/// reply carries the layout the window now shows.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct WindowShowWorkspaceRequest {
     pub window_id: String,
@@ -511,6 +512,16 @@ pub struct WindowAck {
     #[serde(rename = "type")]
     pub tag: WindowTag,
     pub window: Window,
+}
+
+/// The `window.show_workspace` reply: the window, and its layout for the
+/// workspace it now shows, so the caller draws it without a `layout.get`.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct WindowShown {
+    #[serde(rename = "type")]
+    pub tag: WindowTag,
+    pub window: Window,
+    pub layout: LayoutRecord,
 }
 
 /// `layout.get`: one window's layout for one workspace.

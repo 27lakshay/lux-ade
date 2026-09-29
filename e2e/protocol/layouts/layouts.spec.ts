@@ -188,11 +188,13 @@ test('the CLI drives windows, tabs and panes, and reads the layout back', async 
 
   const kept = (await ok('layout', 'get')).layout
 
-  // Window state.
-  expect((await ok('window', 'show', 'cli-window', second.id)).window).toMatchObject({
+  // Window state. Showing a workspace replies with the layout the window now shows there.
+  const shown = (await ok('window', 'show', 'cli-window', second.id)) as CliReply
+  expect(shown.window).toMatchObject({
     workspace_id: second.id,
     view: { recent_workspaces: [second.id, first.id] },
   })
+  expect(shown.layout).toMatchObject({ window_id: 'cli-window', workspace_id: second.id, revision: 0 })
   // The first workspace's layout is kept while the window shows the second.
   expect((await ok('layout', 'get', '--workspace', first.id)).layout).toEqual(kept)
   expect((await ok('layout', 'get')).layout.revision).toBe(0)

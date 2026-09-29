@@ -2,7 +2,6 @@ import { toast } from '@/components/ui/toast'
 import { hostErrorMessage } from '@/lib/host-error'
 import { confirm } from '../../../provisional/ConfirmDialog'
 import { askName } from '../../../provisional/NameDialog'
-import { selectWorkspace } from './workspace-selection'
 
 // What the navigator's project and workspace menus do. Main runs each action against the daemon
 // (main/workspace-actions.ts); a refusal comes back as reasons and is shown as a toast.
@@ -54,7 +53,7 @@ export async function deleteWorktree(id: string, name: string, folder: string): 
   }
 }
 
-/** Asks for a name, creates a worktree of the project named after it, and shows it. */
+/** Asks for a name and creates a worktree of the project named after it; the daemon shows it in this window. */
 export async function newWorkspace(projectId: string, projectName: string): Promise<void> {
   const name = await askName({
     title: `New workspace in ${projectName}`,
@@ -64,12 +63,11 @@ export async function newWorkspace(projectId: string, projectName: string): Prom
   })
   if (!name) return
   try {
-    const id = await toast.promise(window.adeHost.workspaces.createWorktree(projectId, name), {
+    await toast.promise(window.adeHost.workspaces.createWorktree(projectId, name), {
       loading: { title: `Creating “${name}”…` },
       success: { title: `Created “${name}”` },
       error: (error: unknown) => ({ title: `Could not create “${name}”`, description: hostErrorMessage(error) }),
     })
-    selectWorkspace(id)
   } catch {
     // The toast says why.
   }

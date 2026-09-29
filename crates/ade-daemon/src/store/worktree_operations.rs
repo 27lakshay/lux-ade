@@ -42,6 +42,8 @@ pub struct WorktreeOperationRecord {
     pub name: Option<String>,
     #[serde(default)]
     pub base: Option<String>,
+    /// The window a created workspace is shown in when it is ready.
+    pub show_in: Option<String>,
     #[serde(default)]
     pub delete_branch: Option<BranchPolicy>,
     /// A deletion that fails restores the workspace it removed from ADE.
@@ -216,6 +218,7 @@ mod tests {
             worktree_path: None,
             name: Some("Payments".into()),
             base: None,
+            show_in: None,
             delete_branch: None,
             restore_workspace: false,
             attempts: 0,

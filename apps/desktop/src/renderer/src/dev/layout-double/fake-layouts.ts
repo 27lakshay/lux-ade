@@ -130,7 +130,7 @@ export function createFakeLayouts(options: {
       const recent = [workspaceId, ...window.view.recent_workspaces.filter((id) => id !== workspaceId)]
       window = { ...window, workspace_id: workspaceId, view: { ...window.view, recent_workspaces: recent } }
       publishWindow()
-      return window
+      return { window, layout: record(workspaceId) }
     },
     setCollapsedProjects: async (projectIds) => {
       calls.push('window.set_view_state')

@@ -159,6 +159,11 @@ pub struct WorkspaceCreateWorktreeRequest {
     /// Start point; the project's configured default base, then `HEAD`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base: Option<String>,
+    /// A window to show the new workspace in once it is ready, as
+    /// `window.show_workspace` would. A window closed or gone by then is
+    /// left as it is; the creation still succeeds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub show_in: Option<String>,
 }
 
 /// `workspace.delete_worktree`: remove a linked worktree's workspace from

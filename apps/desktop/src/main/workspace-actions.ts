@@ -4,6 +4,7 @@ import type { RemoveOutcome } from '../shared/bridge/workspaces'
 import { handle } from './ipc'
 import { getClient, getClientGeneration, getSocket, isSwitching } from './profile-connection'
 import { validId } from './validation'
+import { recordOf } from './windows'
 import { blockerTexts } from './workspace-actions-core'
 
 // The navigator's workspace actions, each one daemon command: rename, remove from ADE, create a
@@ -29,7 +30,7 @@ function connection(): { endpoint: string; still: () => void } {
 }
 
 type WorktreeCommand =
-  | { op: 'workspace.create_worktree'; operation_id: string; project_id: string; name: string }
+  | { op: 'workspace.create_worktree'; operation_id: string; project_id: string; name: string; show_in?: string }
   | { op: 'workspace.delete_worktree'; operation_id: string; workspace_id: string }
 
 /** Sends a worktree command, then reads its state under the same ID until it settles. */
@@ -65,13 +66,15 @@ export function registerWorkspaceActionIpc(): void {
     }
   })
 
-  handle('ade:worktree-create', async (_event, projectId: unknown, name: unknown) => {
+  // The daemon shows the new workspace in the asking window once it is ready (`show_in`).
+  handle('ade:worktree-create', async (event, projectId: unknown, name: unknown) => {
     if (!validId(projectId)) throw new Error('Invalid project')
     const state = await settled({
       op: 'workspace.create_worktree',
       operation_id: randomUUID(),
       project_id: projectId,
       name: String(name),
+      show_in: recordOf(event.sender.id),
     })
     if (state.status === 'failed' || !state.workspace_id)
       throw new Error(state.error ?? 'The worktree could not be created')

@@ -204,7 +204,13 @@ test('deleting a worktree names its folder before it goes', async () => {
 })
 
 test('a new workspace is a worktree of the project, shown once it is made', async () => {
-  const host = hostSpy()
+  // As the daemon does with `show_in`: the new workspace is shown in the asking window.
+  const host = hostSpy({
+    createWorktree: vi.fn(async () => {
+      await daemonLayouts().connection.bridge.showWorkspace('w9')
+      return 'w9'
+    }),
+  })
   const screen = await renderWorkspace()
   catalog(two)
   expect(screen.getByRole('button', { name: 'New workspace in notes' }).query()).toBeNull()
@@ -216,4 +222,6 @@ test('a new workspace is a worktree of the project, shown once it is made', asyn
   expect(host.createWorktree).toHaveBeenCalledWith('r1', 'Checkout flow')
   await expect.poll(shownWorkspace).toBe('w9')
   await expect.poll(() => daemonLayouts().window().workspace_id).toBe('w9')
+  // The renderer does not show it again itself.
+  expect(daemonLayouts().calls.filter((call) => call === 'window.show_workspace')).toHaveLength(1)
 })

@@ -290,7 +290,7 @@ export const operations = {
   "window.reopen": { tier: "idempotent_command", domain: "layout", request: "WindowReopenRequest", response: "WindowAck" },
   "window.claim": { tier: "idempotent_command", domain: "layout", request: "WindowClaimRequest", response: "WindowAck" },
   "window.set_bounds": { tier: "idempotent_command", domain: "layout", request: "WindowSetBoundsRequest", response: "WindowAck" },
-  "window.show_workspace": { tier: "idempotent_command", domain: "layout", request: "WindowShowWorkspaceRequest", response: "WindowAck" },
+  "window.show_workspace": { tier: "idempotent_command", domain: "layout", request: "WindowShowWorkspaceRequest", response: "WindowShown" },
   "window.set_view_state": { tier: "idempotent_command", domain: "layout", request: "WindowSetViewStateRequest", response: "WindowAck" },
   "layout.get": { tier: "query", domain: "layout", request: "LayoutGetRequest", response: "LayoutReply" },
   "layout.apply": { tier: "idempotent_command", domain: "layout", request: "LayoutApplyRequest", response: "LayoutApplied" },

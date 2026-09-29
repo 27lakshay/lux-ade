@@ -191,3 +191,37 @@ test('a daemon crash between removing the workspace and removing the tree recove
   expect(state).toMatchObject({ status: 'succeeded', workspace_id: workspaceId, worktree_path: path })
   expect((await catalog(profile)).workspaces.map((workspace) => workspace.id)).not.toContain(workspaceId)
 })
+
+test('create_worktree with show_in shows the new workspace in that window once it is ready', async ({
+  ade,
+  profile,
+}) => {
+  const repo = await ade.repo({ name: 'shop' })
+  const main = (await profile.call('workspace.open', { path: repo.path })).workspace
+  await profile.call('window.create', { window_id: 'asking', workspace_id: main.id })
+  const id = operationId('create')
+  const state = await finished(() =>
+    profile.call('workspace.create_worktree', {
+      operation_id: id,
+      project_id: main.project_id,
+      name: 'Shown',
+      show_in: 'asking',
+    }),
+  )
+  expect(state).toMatchObject({ status: 'succeeded' })
+  const window = (await catalog(profile)).windows.find((item) => item.id === 'asking')!
+  expect(window.workspace_id).toBe(state.workspace_id)
+  expect(window.view.recent_workspaces).toEqual([state.workspace_id, main.id])
+
+  // A window that is gone by then leaves the creation successful.
+  const unshown = operationId('create')
+  const gone = await finished(() =>
+    profile.call('workspace.create_worktree', {
+      operation_id: unshown,
+      project_id: main.project_id,
+      name: 'Unshown',
+      show_in: 'window-missing',
+    }),
+  )
+  expect(gone).toMatchObject({ status: 'succeeded' })
+})

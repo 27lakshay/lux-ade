@@ -7,7 +7,7 @@ use ade_core::contract::layout::{
     LayoutApplied, LayoutApplyRequest, LayoutGetRequest, LayoutRecord, LayoutReply, Window,
     WindowAck, WindowClaimRequest, WindowCloseRequest, WindowCreateRequest, WindowList,
     WindowListRequest, WindowReopenRequest, WindowSetBoundsRequest, WindowSetViewStateRequest,
-    WindowShowWorkspaceRequest, WindowState,
+    WindowShowWorkspaceRequest, WindowShown, WindowState,
 };
 
 pub(super) fn handles(op: &str) -> bool {
@@ -67,7 +67,15 @@ impl Sessions {
                 let change = persistence_result(
                     d.store.show_workspace(&show.window_id, &show.workspace_id),
                 )?;
-                self.window_reply(&mut d, change)
+                let layout = d.store.layout(&show.window_id, Some(&show.workspace_id))?;
+                if change.changed {
+                    self.windows_changed(&mut d, std::slice::from_ref(&change.window));
+                }
+                reply(&WindowShown {
+                    tag: Default::default(),
+                    window: change.window,
+                    layout,
+                })
             }
             "window.set_view_state" => {
                 let set: WindowSetViewStateRequest = decode(request)?;

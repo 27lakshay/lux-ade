@@ -110,11 +110,11 @@ export function registerLayoutIpc(): void {
     )
   })
   handle('ade:window-show-workspace', async (event, workspaceId: unknown) => {
-    const reply = await daemonCall('window.show_workspace', {
+    const { window, layout } = await daemonCall('window.show_workspace', {
       window_id: recordOf(event.sender.id),
       workspace_id: workspace(workspaceId),
     })
-    return reply.window
+    return { window, layout }
   })
   handle('ade:window-collapse', async (event, projectIds: unknown) => {
     if (!Array.isArray(projectIds) || projectIds.length > 512 || !projectIds.every(validId))

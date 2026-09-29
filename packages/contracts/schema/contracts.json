@@ -29379,7 +29379,7 @@
     },
     "WindowShowWorkspaceRequest": {
       "additionalProperties": false,
-      "description": "`window.show_workspace`: which workspace the window shows. It moves to\nthe front of `recent_workspaces`; its layout is kept per workspace.",
+      "description": "`window.show_workspace`: which workspace the window shows. It moves to\nthe front of `recent_workspaces`; its layout is kept per workspace. The\nreply carries the layout the window now shows.",
       "properties": {
         "op": {
           "const": "window.show_workspace"
@@ -29395,6 +29395,30 @@
         "op",
         "window_id",
         "workspace_id"
+      ],
+      "type": "object"
+    },
+    "WindowShown": {
+      "description": "The `window.show_workspace` reply: the window, and its layout for the\nworkspace it now shows, so the caller draws it without a `layout.get`.",
+      "properties": {
+        "layout": {
+          "$ref": "#/$defs/LayoutRecord"
+        },
+        "type": {
+          "description": "The `window` type tag.",
+          "enum": [
+            "window"
+          ],
+          "type": "string"
+        },
+        "window": {
+          "$ref": "#/$defs/Window"
+        }
+      },
+      "required": [
+        "type",
+        "window",
+        "layout"
       ],
       "type": "object"
     },
@@ -29518,6 +29542,13 @@
         "project_id": {
           "description": "A repository project.",
           "type": "string"
+        },
+        "show_in": {
+          "description": "A window to show the new workspace in once it is ready, as\n`window.show_workspace` would. A window closed or gone by then is\nleft as it is; the creation still succeeds.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -33487,7 +33518,7 @@
       "domain": "layout",
       "name": "window.show_workspace",
       "request": "WindowShowWorkspaceRequest",
-      "response": "WindowAck",
+      "response": "WindowShown",
       "tier": "idempotent_command"
     },
     {

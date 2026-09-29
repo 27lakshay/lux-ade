@@ -17,8 +17,8 @@ export interface LayoutsBridge {
   closeTab(workspaceId: string, tabId: string, force: boolean): Promise<LayoutOutcome>
   /** Closes a pane and its tabs, and each shell whose last tab it holds, as `closeTab` does. */
   closePane(workspaceId: string, paneId: string, force: boolean): Promise<LayoutOutcome>
-  /** Shows another workspace in this window. */
-  showWorkspace(workspaceId: string): Promise<Window>
+  /** Shows another workspace in this window; the reply carries its layout there. */
+  showWorkspace(workspaceId: string): Promise<{ window: Window; layout: LayoutRecord }>
   /** The project rows the navigator shows collapsed in this window. */
   setCollapsedProjects(projectIds: string[]): Promise<Window>
 }
