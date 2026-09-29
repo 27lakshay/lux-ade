@@ -1,4 +1,6 @@
 import { expect, test, _electron as electron } from '@playwright/test'
+import { packagedEnvironment } from '../protocol/fixtures/packaged'
+import { once } from 'node:events'
 import { execFileSync, spawn } from 'node:child_process'
 import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
@@ -22,27 +24,20 @@ const bundledBun = join(resources, 'bin/bun')
 const installedCli = join(app, 'Contents/MacOS/ade')
 const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`
 
+async function isolatedEnvironment(directory: string): Promise<Record<string, string>> {
+  const home = join(directory, 'home')
+  await mkdir(home, { recursive: true, mode: 0o700 })
+  return packagedEnvironment(home, { ADE_DEBUG_PORT: '0', ADE_DEV_STATE_PORT: '0' })
+}
+
 test('installed CLI uses bundled Node and targets GUI profiles without switching the desktop', async () => {
   test.setTimeout(120_000)
   const directory = await mkdtemp(join(tmpdir(), 'ade-package-cli-e2e-'))
   const folders = [join(directory, 'first project'), join(directory, 'second project')]
   await Promise.all(folders.map((folder) => mkdir(folder)))
   const profilesHome = join(directory, 'profiles')
-  const {
-    ADE_SOCKET: _socket,
-    ADE_ROOT: _root,
-    ADE_RESOURCE_DIR: _resources,
-    ADE_CONTROL_BIN: _control,
-    ADE_DAEMON_BIN: _daemon,
-    ADE_NODE_BIN: _node,
-    ADE_BUN_BIN: _bun,
-    ADE_PYTHON_BIN: _python,
-    FORCE_COLOR: _forceColor,
-    NO_COLOR: _noColor,
-    ...parentEnvironment
-  } = process.env
   const env = {
-    ...parentEnvironment,
+    ...(await isolatedEnvironment(directory)),
     PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
     ADE_PROFILES_HOME: profilesHome,
     ADE_E2E_USER_DATA_DIR: join(directory, 'electron'),
@@ -336,7 +331,7 @@ test('installed startup, browser lease, backup and interrupted restore use nativ
   expect(asar.includes('profiles.py')).toBe(false)
   expect((await readdir(resources)).filter((item) => item.endsWith('.py'))).toEqual([])
   const env = {
-    ...process.env,
+    ...(await isolatedEnvironment(directory)),
     PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
     ADE_PROFILES_HOME: profilesHome,
     ADE_E2E_USER_DATA_DIR: join(directory, 'electron'),
@@ -421,20 +416,8 @@ test('packaged macOS app runs from its own resources and retains work across reo
   const mockDirectory = join(directory, 'codex-calls')
   await mkdir(folder)
   await copyFile(resolve('scripts/fixtures/codex_mock.py'), fixture)
-  const {
-    ADE_SOCKET: _socket,
-    ADE_ROOT: _root,
-    ADE_RESOURCE_DIR: _resources,
-    ADE_DAEMON_BIN: _daemonBinary,
-    ADE_NODE_BIN: _nodeBinary,
-    ADE_BUN_BIN: _bunBinary,
-    ADE_PYTHON_BIN: _pythonBinary,
-    ADE_OMP_BRIDGE: _ompBridge,
-    ADE_CLAUDE_BRIDGE: _claudeBridge,
-    ...parentEnvironment
-  } = process.env
   const env = {
-    ...parentEnvironment,
+    ...(await isolatedEnvironment(directory)),
     PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
     ADE_PROFILES_HOME: join(directory, 'profiles'),
     ADE_E2E_USER_DATA_DIR: join(directory, 'electron'),
@@ -541,9 +524,8 @@ test('packaged macOS app runs scripts with the project npm and Node from a Finde
       },
     }),
   )
-  const { ADE_SOCKET: _socket, ADE_ROOT: _root, ADE_DAEMON_BIN: _daemonBinary, ...parentEnvironment } = process.env
   const env = {
-    ...parentEnvironment,
+    ...(await isolatedEnvironment(directory)),
     PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
     ADE_PROFILES_HOME: join(directory, 'profiles'),
     ADE_E2E_USER_DATA_DIR: join(directory, 'electron'),
@@ -610,20 +592,8 @@ test('packaged macOS app keeps two profile daemons, terminals and conversations 
   await Promise.all(folders.map((folder) => mkdir(folder)))
   const fixture = join(directory, 'codex-mock.py')
   await copyFile(resolve('scripts/fixtures/codex_mock.py'), fixture)
-  const {
-    ADE_SOCKET: _socket,
-    ADE_ROOT: _root,
-    ADE_RESOURCE_DIR: _resources,
-    ADE_DAEMON_BIN: _daemonBinary,
-    ADE_NODE_BIN: _nodeBinary,
-    ADE_BUN_BIN: _bunBinary,
-    ADE_PYTHON_BIN: _pythonBinary,
-    ADE_OMP_BRIDGE: _ompBridge,
-    ADE_CLAUDE_BRIDGE: _claudeBridge,
-    ...parentEnvironment
-  } = process.env
   const env = {
-    ...parentEnvironment,
+    ...(await isolatedEnvironment(directory)),
     PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
     ADE_PROFILES_HOME: join(directory, 'profiles'),
     ADE_E2E_USER_DATA_DIR: join(directory, 'electron'),
@@ -769,20 +739,8 @@ test('packaged macOS app keeps two Codex fixture accounts separate while closed 
   await mkdir(folder)
   await copyFile(resolve('e2e/fixtures/codex_account_server.py'), cli)
   await chmod(cli, 0o700)
-  const {
-    ADE_SOCKET: _socket,
-    ADE_ROOT: _root,
-    ADE_RESOURCE_DIR: _resources,
-    ADE_DAEMON_BIN: _daemonBinary,
-    ADE_NODE_BIN: _nodeBinary,
-    ADE_BUN_BIN: _bunBinary,
-    ADE_PYTHON_BIN: _pythonBinary,
-    ADE_OMP_BRIDGE: _ompBridge,
-    ADE_CLAUDE_BRIDGE: _claudeBridge,
-    ...parentEnvironment
-  } = process.env
   const env = {
-    ...parentEnvironment,
+    ...(await isolatedEnvironment(directory)),
     PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
     ADE_PROFILES_HOME: join(directory, 'profiles'),
     ADE_E2E_USER_DATA_DIR: join(directory, 'electron'),
@@ -1047,21 +1005,8 @@ serve(fakeSdk(process.env.ADE_MOCK_CLAUDE_DIR));
     executableWrapper(ompWrapper, bundledBun, ompMock),
   ])
 
-  const {
-    ADE_SOCKET: _socket,
-    ADE_ROOT: _root,
-    ADE_RESOURCE_DIR: _resources,
-    ADE_DAEMON_BIN: _daemonBinary,
-    ADE_NODE_BIN: _nodeBinary,
-    ADE_BUN_BIN: _bunBinary,
-    ADE_PYTHON_BIN: _pythonBinary,
-    ADE_CODEX_TRANSPORT: _codexTransport,
-    ADE_OMP_BRIDGE: _ompBridge,
-    ADE_CLAUDE_BRIDGE: _claudeBridge,
-    ...parentEnvironment
-  } = process.env
   const env = {
-    ...parentEnvironment,
+    ...(await isolatedEnvironment(directory)),
     PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
     ADE_PROFILES_HOME: join(directory, 'profiles'),
     ADE_E2E_USER_DATA_DIR: join(directory, 'electron'),
@@ -1183,27 +1128,19 @@ test('packaged launcher preserves an incompatible live owner and explains recove
     server.once('error', rejectListen)
     server.listen(socket, resolveListen)
   })
-  const {
-    ADE_SOCKET: _socket,
-    ADE_ROOT: _root,
-    ADE_RESOURCE_DIR: _resources,
-    ADE_DAEMON_BIN: _daemonBinary,
-    ADE_NODE_BIN: _nodeBinary,
-    ADE_BUN_BIN: _bunBinary,
-    ADE_PYTHON_BIN: _pythonBinary,
-    ...parentEnvironment
-  } = process.env
-  const application = await electron.launch({
-    executablePath: executable,
-    cwd: directory,
-    env: {
-      ...parentEnvironment,
-      PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
-      ADE_PROFILES_HOME: profilesHome,
-      ADE_E2E_USER_DATA_DIR: join(directory, 'electron'),
-    },
-  })
+  let application: Awaited<ReturnType<typeof electron.launch>> | null = null
+  let verified = false
   try {
+    application = await electron.launch({
+      executablePath: executable,
+      cwd: directory,
+      env: {
+        ...(await isolatedEnvironment(directory)),
+        PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
+        ADE_PROFILES_HOME: profilesHome,
+        ADE_E2E_USER_DATA_DIR: join(directory, 'electron'),
+      },
+    })
     const window = await application.firstWindow()
     await expect(window.getByRole('alert')).toContainText('Existing daemon cannot hand off this runtime')
     expect(server.listening).toBe(true)
@@ -1211,8 +1148,19 @@ test('packaged launcher preserves an incompatible live owner and explains recove
     expect(await readFile(join(profilesHome, 'registry.json'), 'utf8')).toBe(registryBefore)
     const owner = await rpc(socket, { op: 'hello' })
     expect(owner.application_protocol).toBe('future-v2')
+    verified = true
   } finally {
-    await application.close()
+    if (verified) await application!.close()
+    else if (application) {
+      // The startup path may never open a window or finish graceful quit. Kill only
+      // the Electron child this fixture launched; the incompatible owner stays alive.
+      const child = application.process()
+      if (child.exitCode === null && child.signalCode === null) {
+        const exited = once(child, 'exit')
+        child.kill('SIGKILL')
+        await exited
+      }
+    }
     await new Promise<void>((resolveClose) => server.close(() => resolveClose()))
     await rm(directory, { recursive: true, force: true })
   }
@@ -1225,20 +1173,11 @@ test('packaged macOS daemon inspects a managed Oh My Pi account with bundled res
   const wrapper = join(directory, 'omp')
   await copyFile(resolve('e2e/fixtures/omp_account_cli.mjs'), fixture)
   await executableWrapper(wrapper, bundledBun, fixture)
-  const {
-    ADE_SOCKET: _socket,
-    ADE_ROOT: _root,
-    ADE_RESOURCE_DIR: _resourceRoot,
-    ADE_DAEMON_BIN: _daemonBinary,
-    ADE_BUN_BIN: _bunBinary,
-    ADE_OMP_BRIDGE: _ompBridge,
-    ...parentEnvironment
-  } = process.env
   const application = await electron.launch({
     executablePath: executable,
     cwd: directory,
     env: {
-      ...parentEnvironment,
+      ...(await isolatedEnvironment(directory)),
       PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
       ADE_OMP_BIN: wrapper,
       ADE_PROFILES_HOME: join(directory, 'profiles'),

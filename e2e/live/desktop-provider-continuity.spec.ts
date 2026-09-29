@@ -3,13 +3,14 @@ import { createRequire } from 'node:module'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { nativeProviderEnvironment } from '../fixtures/live-environment'
 import { rpc, startDaemon } from '../fixtures/daemon'
 
 const desktopDirectory = resolve('apps/desktop')
 const electronExecutable = createRequire(join(desktopDirectory, 'package.json'))('electron') as string
 
 for (const provider of ['codex', 'claude'] as const) {
-  test(`a real ${provider} turn survives closing and reopening the desktop`, async () => {
+  test(`F010: a real ${provider} turn survives closing and reopening the desktop`, async () => {
     test.skip(process.env.ADE_RUN_LIVE_PROVIDERS !== '1', 'Opt in to real provider usage')
     const userData = await mkdtemp(join(tmpdir(), `ade-live-desktop-${provider}-`))
     let daemon: Awaited<ReturnType<typeof startDaemon>> | null = null
@@ -17,7 +18,13 @@ for (const provider of ['codex', 'claude'] as const) {
     try {
       const running = await startDaemon({ ADE_CODEX_TRANSPORT: 'stdio' })
       daemon = running
-      const environment = { ...process.env, ADE_SOCKET: running.socket, ADE_E2E_USER_DATA_DIR: userData }
+      const environment = {
+        ...nativeProviderEnvironment(process.env),
+        ADE_SOCKET: running.socket,
+        ADE_PROFILES_HOME: join(running.rootDirectory, 'profiles'),
+        ADE_E2E_USER_DATA_DIR: userData,
+        ADE_E2E_HIDE_WINDOW: '1',
+      }
       application = await electron.launch({
         executablePath: electronExecutable,
         args: [desktopDirectory],

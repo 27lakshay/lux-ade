@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 from queue import Queue, Empty
 import shutil
+import signal
 import subprocess
 import tempfile
 from threading import Thread
@@ -19,7 +20,7 @@ def main():
     parser.add_argument('--run', action='store_true', help='Run isolated local protocol test; no paid model calls')
     if not parser.parse_args().run:
         parser.error('Pass --run to launch the installed Claude CLI against loopback')
-    node, claude = shutil.which('node'), shutil.which('claude')
+    node, claude = shutil.which('node'), os.environ.get('ADE_CLAUDE_BIN') or shutil.which('claude')
     assert node and claude, 'Install Node and Claude CLI before running this test'
     bridge = Path(__file__).resolve().parents[1] / 'providers/claude/bridge.mjs'
     server = Responses()
@@ -122,4 +123,5 @@ def main():
 
 
 if __name__ == '__main__':
+    signal.signal(signal.SIGTERM, signal.default_int_handler)
     main()

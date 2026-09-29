@@ -40,7 +40,7 @@ function processExited(pid: number): boolean {
 }
 
 for (const provider of ['codex', 'claude'] as const) {
-  test(`packaged app retains a real ${provider} turn after closing and reopening`, async ({}, testInfo) => {
+  test(`F010: packaged app retains a real ${provider} turn after closing and reopening`, async () => {
     test.skip(process.env.ADE_RUN_LIVE_PROVIDERS !== '1', 'Opt in to real provider usage')
     test.setTimeout(180_000)
     if (provider === 'claude' && !process.env.CLAUDE_CONFIG_DIR) {
@@ -120,7 +120,7 @@ for (const provider of ['codex', 'claude'] as const) {
         .toMatch(/running|error/)
       const admitted = await rpc(socket, { op: 'conversation.get', conversation_id: id })
       if (admitted.conversation.status === 'error') {
-        throw new Error(`Installed ${provider} turn failed: ${String(admitted.conversation.error)}`)
+        throw new Error(`Installed ${provider} turn failed; native error details are excluded from shared reports`)
       }
       const before = await rpc(socket, { op: 'hello' })
       const nativeThread = (await rpc(socket, { op: 'conversation.get', conversation_id: id })).conversation
@@ -144,7 +144,9 @@ for (const provider of ['codex', 'claude'] as const) {
         .toMatch(/ready|error/)
       const after = await rpc(socket, { op: 'conversation.get', conversation_id: id })
       if (after.conversation.status === 'error') {
-        throw new Error(`Installed ${provider} turn ended in error: ${String(after.conversation.error)}`)
+        throw new Error(
+          `Installed ${provider} turn ended in error; native error details are excluded from shared reports`,
+        )
       }
       expect(after.conversation.provider_thread_id).toBe(nativeThread)
       expect((after.messages as Array<{ role: string }>).filter((item) => item.role === 'user')).toHaveLength(1)
@@ -154,15 +156,6 @@ for (const provider of ['codex', 'claude'] as const) {
         ),
       ).toBe(true)
       await expect(window.getByRole('region', { name: 'Conversation' })).toContainText(marker)
-    } catch (error) {
-      if (profileHome) {
-        const log = await readFile(join(profileHome, 'daemon.log')).catch(() => Buffer.from('No daemon log'))
-        await testInfo.attach(`installed-${provider}-daemon.log`, {
-          body: log.subarray(-64 * 1024),
-          contentType: 'text/plain',
-        })
-      }
-      throw error
     } finally {
       let closeFailure: unknown
       try {

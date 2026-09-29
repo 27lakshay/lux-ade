@@ -10,7 +10,9 @@ import { ProfileHost, type ManagedProfile } from '../fixtures/managed-profiles'
 import { bundle, bundleMissing, expect, packagedLauncher, relocateBundle, test } from '../fixtures/packaged'
 import { processTable } from '../fixtures/processes'
 
-test.skip(bundleMissing !== null, bundleMissing ?? '')
+test.beforeAll(() => {
+  if (bundleMissing) throw new Error(bundleMissing)
+})
 
 function field(result: { stdout: string }, pattern: RegExp): string {
   const match = pattern.exec(result.stdout)
@@ -114,7 +116,9 @@ test("a terminal on the installed profile runs a login shell without the bundle'
   const opened = await work.cli('workspace', 'open', project)
   expect(opened.code, opened.stderr).toBe(0)
   const workspaceId = field(opened, /"id":"(workspace[^"]*)"/)
-  const terminalId = field(opened, /"terminal_id":"([^"]+)"/)
+  const created = await work.cli('terminal', 'create', workspaceId, '--operation-id', 'packaged-shell')
+  expect(created.code, created.stderr).toBe(0)
+  const terminalId = field(created, /"terminal_id":"([^"]+)"/)
   const output = join(ade.root, 'terminal-env.txt')
   const sent = await work.cli(
     'terminal',

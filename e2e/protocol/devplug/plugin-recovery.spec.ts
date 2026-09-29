@@ -118,8 +118,8 @@ test('safe mode: a backend whose activation keeps failing ends errored after bou
 
 test('a host that exits during activation is a crash; a host that hangs in activation is stopped at the deadline', async ({
   ade,
-  profile,
 }) => {
+  const profile = await ade.profile({ env: { ADE_E2E_TIMING_POLICY: 'short' } })
   test.setTimeout(120_000)
   const healthy = await healthyPlugin(ade, profile)
   const { pluginId, outDir } = await installAndEnable(profile, await stageFaultyPlugin(ade.root))

@@ -21,13 +21,12 @@ afterEach(() => {
   window.adeHost = undefined as unknown as typeof window.adeHost
 })
 
-let created = 0
-
 /**
  * A host whose terminal commands are spies and whose stream is `bridge`. Creating a terminal opens
  * its tab in the fake daemon's layout, as `terminal.create` with `place` does.
  */
 const hostSpy = (overrides: Partial<Window['adeHost']['terminals']> = {}, bridge?: TerminalBridge) => {
+  let created = 0
   const terminals = {
     create: vi.fn(async (_workspaceId: string, paneId?: string) => {
       const id = `t${++created}`

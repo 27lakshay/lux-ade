@@ -313,7 +313,8 @@ test('without the runtime terminal list no service log is judged, and the previe
   expect(ids(sighted, 'service_log')).toEqual([orphan])
 })
 
-test('the scheduled receipt prune records its outcome for every store', async ({ profile }) => {
+test('the scheduled receipt prune records its outcome for every store', async ({ ade }) => {
+  const profile = await ade.profile({ env: { ADE_E2E_TIMING_POLICY: 'short' } })
   test.setTimeout(180_000)
   // Create receipts in the sessions store so the prune has a table to read.
   const { conversationId } = await startConversation(profile, 'codex')
@@ -322,7 +323,7 @@ test('the scheduled receipt prune records its outcome for every store', async ({
   const before = await preview(profile)
   for (const store of before.receipts) expect(store).toMatchObject({ last_pruned_at: null, last_error: null })
 
-  // The schedule first runs a minute after start, on a 30-second tick.
+  // The explicit debug preset first runs after 5 seconds, on a 100 ms tick.
   await expect
     .poll(
       async () => (await preview(profile)).receipts.find((store) => store.store === 'sessions')?.last_pruned_at ?? null,

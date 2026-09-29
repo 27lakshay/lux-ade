@@ -2,11 +2,12 @@
 // daemon, runtime and provider mocks, scratch repositories, the process
 // ledger) plus the built Electron app launched against that profile's socket.
 // Specs import `test` and `expect` from here.
-import { _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
+import { _electron as electron, type ElectronApplication, type Page, type TestInfo } from '@playwright/test'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { test as protocol, type AdeHarness, type ScratchProfile } from '../protocol/fixtures'
 import { repositoryRoot } from '../protocol/fixtures/environment'
+import { DesktopEvidence } from './evidence'
 
 export * from '../protocol/fixtures'
 
@@ -25,22 +26,28 @@ export type RunningDesktop = { app: ElectronApplication; window: Page }
  */
 export class DesktopLauncher {
   readonly userData: string
+  private readonly evidence: DesktopEvidence
   private readonly running = new Set<ElectronApplication>()
 
-  constructor(private readonly ade: AdeHarness) {
+  constructor(
+    private readonly ade: AdeHarness,
+    testInfo: TestInfo,
+    private readonly target = { executablePath: electronExecutable, args: [desktopDirectory] },
+  ) {
+    this.evidence = new DesktopEvidence(testInfo)
     this.userData = join(ade.root, 'electron')
   }
 
   async launch(profile: ScratchProfile, env: Record<string, string> = {}): Promise<RunningDesktop> {
     const app = await electron.launch({
-      executablePath: electronExecutable,
-      args: [desktopDirectory],
+      executablePath: this.target.executablePath,
+      args: this.target.args,
       cwd: profile.defaultWorkspaceRoot,
       env: {
         ...profile.env,
         ADE_SOCKET: profile.socket,
         ADE_E2E_USER_DATA_DIR: this.userData,
-        ADE_E2E_HIDE_WINDOW: '1',
+        ADE_E2E_HIDE_WINDOW: process.env.ADE_DESKTOP_HEADED === '1' ? '0' : '1',
         ADE_DEBUG_PORT: '0',
         ADE_DEV_STATE_PORT: '0',
         ...env,
@@ -49,6 +56,7 @@ export class DesktopLauncher {
     this.running.add(app)
     const pid = app.process().pid
     if (typeof pid === 'number') await this.ade.ledger.own(pid, 'electron')
+    await this.evidence.start(app)
     const window = await app.firstWindow()
     // The URL, and with it the window's record, is known once the app page has loaded.
     await window.waitForURL(/^ade:\/\/app\//, { waitUntil: 'domcontentloaded' })
@@ -58,6 +66,7 @@ export class DesktopLauncher {
   /** Quit the app the way a person does (Cmd+Q): windows keep their daemon records. */
   async quit(desktop: RunningDesktop): Promise<void> {
     await this.ade.ledger.sweep()
+    await this.evidence.stop(desktop.app)
     await desktop.app.close()
     this.running.delete(desktop.app)
   }
@@ -65,6 +74,7 @@ export class DesktopLauncher {
   /** Kill the app without letting it quit: no guard or teardown runs. */
   async kill(desktop: RunningDesktop): Promise<void> {
     await this.ade.ledger.sweep()
+    await this.evidence.stop(desktop.app)
     const exited = new Promise<void>((resolveExit) => desktop.app.process().once('exit', () => resolveExit()))
     desktop.app.process().kill('SIGKILL')
     await exited
@@ -73,8 +83,12 @@ export class DesktopLauncher {
 
   async closeAll(): Promise<void> {
     await this.ade.ledger.sweep()
-    for (const app of this.running) await app.close().catch(() => app.process().kill('SIGKILL'))
+    for (const app of this.running) {
+      await this.evidence.stop(app)
+      await app.close().catch(() => app.process().kill('SIGKILL'))
+    }
     this.running.clear()
+    await this.evidence.finish()
   }
 }
 
@@ -85,8 +99,8 @@ export function windowRecordOf(window: Page): string | null {
 
 export const test = protocol.extend<{ desktop: DesktopLauncher }>({
   // Torn down before `ade`, so the app has quit before the harness checks for survivors.
-  desktop: async ({ ade }, use) => {
-    const launcher = new DesktopLauncher(ade)
+  desktop: async ({ ade }, use, testInfo) => {
+    const launcher = new DesktopLauncher(ade, testInfo)
     try {
       await use(launcher)
     } finally {

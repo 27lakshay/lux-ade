@@ -28,3 +28,25 @@ test('a kit dialog opens from its trigger', async () => {
   await screen.getByRole('button', { name: 'Open' }).click()
   await expect.element(screen.getByRole('dialog', { name: 'Settings' })).toBeVisible()
 })
+
+for (const theme of ['light', 'dark']) {
+  test(`stock dialog title inherits its foreground in the ${theme} theme`, async () => {
+    const original = document.documentElement.className
+    document.documentElement.classList.toggle('dark', theme === 'dark')
+    try {
+      const screen = await render(
+        <Dialog open>
+          <DialogContent>
+            <DialogTitle>Settings</DialogTitle>
+          </DialogContent>
+        </Dialog>,
+      )
+      const dialog = screen.getByRole('dialog', { name: 'Settings' })
+      await expect.element(dialog).toBeVisible()
+      const title = screen.getByRole('heading', { name: 'Settings' })
+      expect(getComputedStyle(title.element()).color).toBe(getComputedStyle(dialog.element()).color)
+    } finally {
+      document.documentElement.className = original
+    }
+  })
+}

@@ -4,6 +4,7 @@
 // runtime processes with the provider mocks.
 import { expect, fixtureAnswers, prompts, test, turnReply, waitForMessage } from '../fixtures'
 import { createWorktree } from '../fixtures/worktrees'
+import { waitForAttemptRecord } from '../fixtures/recovery'
 import { opId, parentIn, waitForChild, waitOnce } from './steps'
 
 test('delegates a child with a durable parent link, reports admission before completion, and settles on evidence', async ({
@@ -383,6 +384,16 @@ test('a child turn lost with its runtime is reported as not completed, and the p
   const childId = child.child_conversation_id
   await expect.poll(async () => (await waitOnce(profile, childId, { timeoutMs: 0 })).phase).toBe('running')
 
+  // Reach a native in-flight turn, rather than only the daemon's queued/running phase.
+  await expect
+    .poll(async () => (await profile.mockCalls('codex')).some((call) => call.method === 'turn/start'))
+    .toBe(true)
+
+  // Resume needs recorded exit evidence. The separate runtime-crash unknown-path test
+  // covers loss before this record and requires an explicit user release instead.
+  await waitForAttemptRecord(profile, `agent:${childId}`)
+  // Stop the daemon before the runtime so it cannot settle the loss on the old connection.
+  await profile.killDaemon()
   await profile.killRuntime()
   await profile.restartDaemon()
   const settled = await waitForChild(profile, childId, 'settled')

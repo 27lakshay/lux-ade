@@ -2275,6 +2275,7 @@ fn abandon_open_browser_receipts(connection: &Connection, now: i64) -> anyhow::R
     )?)
 }
 pub(super) fn serve(socket: String, directory: PathBuf) -> anyhow::Result<()> {
+    ade_daemon::timing::init()?;
     // Lock the original directory before recovery or supervisor ownership changes.
     let _writer = runtime::lock(&directory, "writer.lock")?;
     let directory = std::fs::canonicalize(directory)?;

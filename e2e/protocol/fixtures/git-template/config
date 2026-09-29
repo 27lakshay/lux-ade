@@ -1,0 +1,5 @@
+[user]
+	name = ADE E2E
+	email = e2e@example.invalid
+[commit]
+	gpgsign = false

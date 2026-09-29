@@ -260,13 +260,14 @@ export async function attachTerminal(socketPath: string, words: string[]): Promi
           if (resync) return
           ready = true
           clearTimeout(timer)
+          // Register before raw mode is observable by another process.
+          process.on('SIGINT', signalHandlers.SIGINT)
+          process.on('SIGTERM', signalHandlers.SIGTERM)
+          process.on('SIGHUP', signalHandlers.SIGHUP)
           process.stdin.setRawMode(true)
           process.stdin.resume()
           process.stdin.on('data', input)
           process.stdout.on('resize', resize)
-          process.on('SIGINT', signalHandlers.SIGINT)
-          process.on('SIGTERM', signalHandlers.SIGTERM)
-          process.on('SIGHUP', signalHandlers.SIGHUP)
           resize()
           return
         }

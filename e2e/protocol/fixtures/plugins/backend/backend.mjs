@@ -59,6 +59,14 @@ export function activate(ctx) {
     return { version: VERSION, generation: meta.generation, pid: process.pid }
   })
   ctx.hooks.on('workspace.created', async (payload, meta) => {
+    if (
+      meta.attempt > 1 &&
+      context.settings.out_dir &&
+      existsSync(join(context.settings.out_dir, 'hold-retry-before-effect'))
+    ) {
+      record('retry-held.jsonl', { effect_id: meta.effectId, attempt: meta.attempt })
+      await released('release-retry')
+    }
     record('hooks.jsonl', { effect_id: meta.effectId, event: meta.event, attempt: meta.attempt, root: payload.root })
     const root = String(payload.root)
     if (root.includes('crash-hook')) process.exit(9)

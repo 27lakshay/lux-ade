@@ -4,7 +4,11 @@ import { userEvent } from 'vitest/browser'
 import { activeWorkspace, layoutStore } from '../model/layout-store'
 import { daemonLayouts, renderWorkspace, resetLayout, setCatalog } from '../testing'
 
-beforeEach(resetLayout)
+beforeEach(async () => {
+  // Pointer position survives React cleanup; start each fresh window away from its controls.
+  await userEvent.unhover(document.body)
+  await resetLayout()
+})
 const shownWorkspace = () => activeWorkspace(layoutStore.getState())
 afterEach(() => {
   window.adeHost = undefined as unknown as typeof window.adeHost

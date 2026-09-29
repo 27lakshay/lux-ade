@@ -20,10 +20,10 @@ type JsonSuite = {
 }
 
 /** Every test the fault suite runs, as its file under e2e/protocol and its full title. */
-async function faultSuiteTests(): Promise<Listed[]> {
+async function faultSuiteTests(config = 'playwright.faults.config.ts'): Promise<Listed[]> {
   const { stdout } = await promisify(execFile)(
     join(repositoryRoot, 'node_modules/.bin/playwright'),
-    ['test', '--config', 'playwright.faults.config.ts', '--list', '--reporter=json'],
+    ['test', '--config', config, '--list', '--reporter=json'],
     { cwd: repositoryRoot, maxBuffer: 64 * 1024 * 1024, env: { ...process.env, FORCE_COLOR: '0' } },
   )
   const report = JSON.parse(stdout) as { suites: JsonSuite[] }
@@ -41,13 +41,16 @@ async function faultSuiteTests(): Promise<Listed[]> {
 
 test('every fault class of architecture section 12 has tests that run in the fault suite', async () => {
   const listed = await faultSuiteTests()
+  const system = await faultSuiteTests('playwright.system.config.ts')
   expect(listed.length).toBeGreaterThan(200)
   for (const entry of faultClasses) {
     for (const fault of entry.faults) {
       if (!fault.gap)
         expect.soft(fault.tests.length, `class ${entry.id}: ${fault.fault} names no test`).toBeGreaterThan(0)
       for (const named of fault.tests) {
-        const found = listed.filter((item) => item.file === named.file && item.title.includes(named.title))
+        const found = (named.suite === 'system' ? system : listed).filter(
+          (item) => item.file === named.file && item.title.includes(named.title),
+        )
         expect
           .soft(
             found.length > 0,

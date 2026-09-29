@@ -8,7 +8,7 @@ const searchPath = [...extra.filter(existsSync), process.env.PATH ?? ''].join(':
 const env = { ...process.env, PATH: searchPath }
 
 // Share compiled dependencies across worker worktrees, which each keep their own target/.
-if (!env.RUSTC_WRAPPER && spawnSync('sccache', ['--version'], { env }).status === 0) {
+if (env.SCCACHE_DISABLE !== '1' && !env.RUSTC_WRAPPER && spawnSync('sccache', ['--version'], { env }).status === 0) {
   env.RUSTC_WRAPPER = 'sccache'
 }
 

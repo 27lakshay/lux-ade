@@ -83,11 +83,14 @@ export type ClientJournals = { send: SendJournal; git: GitJournal; ownerId: stri
 /** Opens the journals kept as files in `directory`. The desktop and the CLI use the same file names. */
 export async function openClientJournals(directory: string): Promise<ClientJournals> {
   if (!isAbsolute(directory) || directory.includes('\0')) throw new Error('Client journal directory must be absolute')
-  const [send, git, ownerId] = await Promise.all([
+  const pending = [
     SendJournal.open(fileOutboxStorage(join(directory, 'pending-sends-v1.json'), SendJournal.label)),
     GitJournal.open(fileOutboxStorage(join(directory, 'git-intents-v1.json'), GitJournal.label)),
     draftOwnerId(directory),
-  ])
+  ] as const
+  // A refusal must finish sibling I/O before callers can clean up the directory.
+  await Promise.allSettled(pending)
+  const [send, git, ownerId] = await Promise.all(pending)
   return { send, git, ownerId }
 }
 

@@ -52,7 +52,7 @@ export const faultVocabulary = [
 ]
 
 /** One test, named by its file under `e2e/protocol/` and a part of its title. */
-export type FaultTest = { file: string; title: string }
+export type FaultTest = { file: string; title: string; suite?: 'system' }
 
 /**
  * One fault of a class: the tests that inject it, or `gap` naming why no
@@ -180,8 +180,8 @@ export const faultClasses: FaultClass[] = [
       },
       {
         fault: 'saturate storage',
-        tests: [t('reliability-a/overload.spec.ts', 'with the data volume full')],
-        gap: 'The full-volume test mounts a scratch volume with hdiutil, so it runs only with ADE_E2E_SYSTEM=1 and skips otherwise.',
+        tests: [{ ...t('reliability-a/overload.spec.ts', 'with the data volume full'), suite: 'system' }],
+        gap: 'The full-volume test mounts a scratch volume with hdiutil, so it requires the separate serial system suite with ADE_E2E_SYSTEM=1.',
       },
       {
         fault: 'saturate the runtime spool',
@@ -425,9 +425,6 @@ function escape(word: string): string {
 const classTitles = faultClasses.flatMap((entry) =>
   entry.faults.flatMap((fault) => fault.tests.map((test) => test.title)),
 )
-
-/** The load run (`e2e/protocol/load/load.spec.ts`). It measures latency, so it runs alone, outside the fault suite. */
-export const loadRun = /@load\b/
 
 /** Matches a test's full title (file path, describes and title) when it belongs to the fault suite. */
 export const faultSuite = new RegExp(

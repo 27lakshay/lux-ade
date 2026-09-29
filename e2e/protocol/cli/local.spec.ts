@@ -12,12 +12,19 @@ import { binaries } from '../fixtures/environment'
 const run = promisify(execFile)
 
 /** Drive `ade terminal attach` on a real PTY, signal it, and report its exit code and TTY state. */
-const signalAttachedPty = `import json, os, pty, select, signal, subprocess, sys, termios, time
-node, cli, socket, workspace, terminal, signal_name = sys.argv[1:]
+const signalAttachedPty = `import base64, json, os, pty, select, signal, subprocess, sys, termios, time, uuid
+node, cli, socket, workspace, terminal, signal_name, *options = sys.argv[1:]
+early = bool(options)
 master, slave = pty.openpty()
 mask = termios.ICANON | termios.ECHO
 before = termios.tcgetattr(slave)[3] & mask
-child = subprocess.Popen([node, cli, '--socket', socket, 'terminal', 'attach', workspace, terminal],
+command = [node]
+if early:
+    # Hold the real raw-mode transition open so the parent can signal this boundary reliably.
+    hook = 'const original=process.stdin.setRawMode.bind(process.stdin);process.stdin.setRawMode=function(raw){const result=original(raw);if(raw)Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,250);return result;};'
+    command.extend(['--import', 'data:text/javascript;base64,' + base64.b64encode(hook.encode()).decode()])
+command.extend([cli, '--socket', socket, 'terminal', 'attach', workspace, terminal])
+child = subprocess.Popen(command,
                          stdin=slave, stdout=slave, stderr=subprocess.PIPE, close_fds=True)
 output = bytearray()
 try:
@@ -27,13 +34,17 @@ try:
         if ready: output.extend(os.read(master, 65536))
     if termios.tcgetattr(slave)[3] & mask:
         raise RuntimeError('Attach did not enter raw mode: code=' + str(child.poll()) + ' output=' + repr(output[-1000:]))
-    os.write(master, b'echo __ADE_SIGNAL_READY__\\n')
-    deadline = time.monotonic() + 5
-    while time.monotonic() < deadline and output.count(b'__ADE_SIGNAL_READY__') < 2:
-        ready, _, _ = select.select([master], [], [], 0.05)
-        if ready: output.extend(os.read(master, 65536))
-    if output.count(b'__ADE_SIGNAL_READY__') < 2:
-        raise RuntimeError('Fresh shell result missing: code=' + str(child.poll()) + ' output=' + repr(output[-1000:]))
+    if not early:
+        nonce = uuid.uuid4().hex.encode()
+        marker = b'__ADE_SIGNAL_READY_' + nonce + b'__'
+        # Assemble the marker in shell output; echoed input never contains it.
+        os.write(master, b"printf '__ADE_SIGNAL_READY_%s__\\\\n' " + nonce + b'\\n')
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and marker not in output:
+            ready, _, _ = select.select([master], [], [], 0.05)
+            if ready: output.extend(os.read(master, 65536))
+        if marker not in output:
+            raise RuntimeError('Fresh shell result missing: code=' + str(child.poll()) + ' output=' + repr(output[-1000:]))
     os.kill(child.pid, getattr(signal, signal_name))
     deadline = time.monotonic() + 3
     while time.monotonic() < deadline and child.poll() is None:
@@ -100,4 +111,38 @@ test('terminal attach preserves signal exit status and restores the local TTY', 
   }
   // Ending the attach never ends the shell.
   expect(await inspect()).toMatchObject({ shell_pid: shellPid, shell_running: true })
+})
+
+test('terminal attach handles signals as soon as the local TTY enters raw mode', async ({ profile }) => {
+  const workspace = (await profile.call('catalog.get', {})).catalog.workspaces[0]!
+  const terminalId = await primaryShell(profile, workspace.id)
+  const inspect = async () =>
+    (await profile.cli('terminal', 'inspect', workspace.id, terminalId)).json!.metrics as {
+      shell_pid: number
+      shell_running: boolean
+    }
+  const shellPid = (await inspect()).shell_pid
+  for (const [signalName, exitCode] of [
+    ['SIGINT', 130],
+    ['SIGTERM', 143],
+    ['SIGHUP', 129],
+  ] as const) {
+    const result = await run(
+      'python3',
+      [
+        '-c',
+        signalAttachedPty,
+        process.execPath,
+        binaries.cli,
+        profile.socket,
+        workspace.id,
+        terminalId,
+        signalName,
+        'early',
+      ],
+      { timeout: 12_000, env: profile.env },
+    )
+    expect(JSON.parse(result.stdout)).toMatchObject({ code: exitCode, tty_restored: true, stderr: '' })
+    expect(await inspect()).toMatchObject({ shell_pid: shellPid, shell_running: true })
+  }
 })

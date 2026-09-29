@@ -24,5 +24,49 @@
         "sha256": "9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f"
       }
     }
+  },
+  "hyperfine": {
+    "version": "1.20.0",
+    "optional": true,
+    "archives": {
+      "Darwin-arm64": {
+        "url": "https://github.com/sharkdp/hyperfine/releases/download/v1.20.0/hyperfine-v1.20.0-aarch64-apple-darwin.tar.gz",
+        "sha256": "8ee7067016620447c9d2d6234ec9a4680f958b7ad983549b56334668f63075b5"
+      },
+      "Linux-x86_64": {
+        "url": "https://github.com/sharkdp/hyperfine/releases/download/v1.20.0/hyperfine-v1.20.0-x86_64-unknown-linux-gnu.tar.gz",
+        "sha256": "63ad53934062118f5b0be11785e0bb1603d4b91667d1921f2fd8df9a8712040a"
+      }
+    }
+  },
+  "actionlint": {
+    "version": "1.7.12",
+    "optional": true,
+    "archives": {
+      "Darwin-arm64": {
+        "url": "https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_darwin_arm64.tar.gz",
+        "sha256": "aba9ced2dee8d27fecca3dc7feb1a7f9a52caefa1eb46f3271ea66b6e0e6953f"
+      },
+      "Linux-x86_64": {
+        "url": "https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz",
+        "sha256": "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
+      }
+    }
+  },
+  "bacon": {
+    "version": "3.26.0",
+    "optional": true,
+    "archives": {
+      "Darwin-arm64": {
+        "url": "https://github.com/Canop/bacon/releases/download/v3.26.0/bacon_3.26.0.zip",
+        "sha256": "a23260e9f23f63b2363830f15c685da4032477d55258d9e646c39f9680f3f75a",
+        "member": "aarch64-apple-darwin/bacon"
+      },
+      "Linux-x86_64": {
+        "url": "https://github.com/Canop/bacon/releases/download/v3.26.0/bacon_3.26.0.zip",
+        "sha256": "a23260e9f23f63b2363830f15c685da4032477d55258d9e646c39f9680f3f75a",
+        "member": "x86_64-unknown-linux-gnu/bacon"
+      }
+    }
   }
 }

@@ -126,7 +126,6 @@
 /* ADE's own colours, beside the kit's. Status colours belong to the Status component: amber
    (attention) means "needs you" and nothing else. */
 @theme inline {
-  --color-base: var(--base);
   --color-panel: var(--panel);
   --color-attention: var(--attention);
   --color-attention-muted: var(--attention-muted);
@@ -138,6 +137,12 @@
   --color-diff-remove: var(--diff-remove);
   --color-diff-remove-muted: var(--diff-remove-muted);
   --color-terminal: var(--terminal);
+}
+
+/* Keep the base surface background-only. A color named base also makes
+   Tailwind's stock text-base font-size utility set this surface as text color. */
+@utility bg-base {
+  background-color: var(--base);
 }
 
 :root {

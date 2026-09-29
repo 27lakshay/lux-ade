@@ -9,13 +9,15 @@ import json
 import os
 from pathlib import Path
 import subprocess
-import tempfile
+import signal
+import sys
 import time
 import uuid
 
-from paths import TARGET_DIR
+from paths import PROJECT_ROOT, TARGET_DIR
+from live_profile import profile_environment, missing_prerequisites
 from runtime import rpc
-from runtime_test_support import track_runtime, cleanup_runtimes
+from runtime_test_support import track_runtime, cleanup_runtimes, scratch_directory
 
 
 def wait_for(check, seconds):
@@ -49,17 +51,10 @@ def intended_write(request, provider, target, marker):
 
 def run(providers, seconds, tool_probe=False, cancel_probe=False, approval_probe=False):
     results = []
-    with tempfile.TemporaryDirectory(prefix="ade-live-provider-") as directory:
+    with scratch_directory(prefix="ade-live-provider-") as directory:
         root = Path(directory)
         socket = root / "daemon.sock"
-        environment = dict(os.environ)
-        for key in tuple(environment):
-            if key.startswith("ADE_MOCK_") or key in ("ADE_CLAUDE_BRIDGE_BIN", "ADE_OMP_BIN", "ADE_OPENCODE_BIN"):
-                environment.pop(key)
-        environment.update({
-            "ADE_SOCKET": str(socket), "ADE_DATA_DIR": str(root / "data"),
-            "ADE_ROOT": str(root), "ADE_CODEX_TRANSPORT": "stdio", "SHELL": "/bin/sh",
-        })
+        environment = profile_environment(root)
         daemon_binary = TARGET_DIR / "debug/ade-daemon"
         if not daemon_binary.is_file():
             raise RuntimeError("Build the daemon first with pnpm build:backend")
@@ -69,8 +64,7 @@ def run(providers, seconds, tool_probe=False, cancel_probe=False, approval_probe
             try:
                 hello = wait_for(lambda: rpc(socket, {"op": "hello"}), 10)
                 track_runtime(hello)
-                catalog = rpc(socket, {"op": "catalog.get"})
-                workspace = catalog["catalog"]["workspaces"][0]["id"]
+                workspace = rpc(socket, {"op": "workspace.open", "path": environment["ADE_ROOT"]})["workspace"]["id"]
                 for provider in providers:
                     started = time.monotonic()
                     result = None
@@ -83,7 +77,7 @@ def run(providers, seconds, tool_probe=False, cancel_probe=False, approval_probe
                             target.write_text(marker + "\n")
                             prompt = (f"Read {target} with a file-reading tool. Reply with exactly "
                                       "the token in that file. Do not infer its contents or edit files.")
-                        created = rpc(socket, {"op": "conversation.create", "workspace_id": workspace,
+                        created = rpc(socket, {"op": "conversation.create", "operation_id": str(uuid.uuid4()), "workspace_id": workspace,
                                                "provider": provider, "title": f"Live {provider}"})["conversation"]
                         conversation_id = created["id"]
                         rpc(socket, {"op": "agent.send", "conversation_id": conversation_id,
@@ -108,7 +102,7 @@ def run(providers, seconds, tool_probe=False, cancel_probe=False, approval_probe
                                   "tool_visible": tool_visible if tool_probe else None,
                                   "message_kinds": sorted({str(message.get("kind", "")) for message in snapshot["messages"]}),
                                   "assistant_marker_seen": expected in answer,
-                                  "error": snapshot["conversation"].get("error")}
+                                  "provider_error": bool(snapshot["conversation"].get("error"))}
                         if passed and cancel_probe:
                             rpc(socket, {"op": "agent.send", "conversation_id": conversation_id,
                                          "request_id": str(uuid.uuid4()),
@@ -120,10 +114,10 @@ def run(providers, seconds, tool_probe=False, cancel_probe=False, approval_probe
                                 observed = current()
                                 return observed if observed["conversation"]["status"] in states else None
                             wait_for(lambda: at_status("running", "waiting"), seconds)
-                            rpc(socket, {"op": "agent.cancel", "conversation_id": conversation_id})
+                            rpc(socket, {"op": "agent.cancel", "operation_id": str(uuid.uuid4()), "conversation_id": conversation_id})
                             stopped = wait_for(lambda: at_status("interrupted", "error", "disconnected"), seconds)
                             result["cancel_status"] = stopped["conversation"]["status"]
-                            rpc(socket, {"op": "agent.resume", "conversation_id": conversation_id})
+                            rpc(socket, {"op": "agent.resume", "operation_id": str(uuid.uuid4()), "conversation_id": conversation_id})
                             wait_for(lambda: at_status("ready"), seconds)
                             rpc(socket, {"op": "agent.send", "conversation_id": conversation_id,
                                          "request_id": str(uuid.uuid4()),
@@ -146,7 +140,7 @@ def run(providers, seconds, tool_probe=False, cancel_probe=False, approval_probe
                             approval_target = root / f"ade-approval-{provider}.txt"
                             approval_marker = f"ADE_APPROVED_{uuid.uuid4().hex}"
                             approval_config = {"permission_mode": "read-only"} if provider == "codex" else {}
-                            approval_conversation = rpc(socket, {"op": "conversation.create",
+                            approval_conversation = rpc(socket, {"op": "conversation.create", "operation_id": str(uuid.uuid4()),
                                 "workspace_id": workspace, "provider": provider,
                                 "title": f"Approval {provider}", "provider_config": approval_config})["conversation"]["id"]
                             approval_command = f"printf '%s' '{approval_marker}' > '{approval_target}'"
@@ -198,7 +192,7 @@ def run(providers, seconds, tool_probe=False, cancel_probe=False, approval_probe
                                     result["approval_status"] == "ready" and result["approved_file_written"]):
                                 result["status"] = "fail"
                             decline_target = root / f"ade-declined-{provider}.txt"
-                            decline_conversation = rpc(socket, {"op": "conversation.create",
+                            decline_conversation = rpc(socket, {"op": "conversation.create", "operation_id": str(uuid.uuid4()),
                                 "workspace_id": workspace, "provider": provider,
                                 "title": f"Decline {provider}", "provider_config": approval_config})["conversation"]["id"]
                             decline_command = f"printf '%s' '{approval_marker}' > '{decline_target}'"
@@ -232,7 +226,7 @@ def run(providers, seconds, tool_probe=False, cancel_probe=False, approval_probe
                                     rpc(socket, decline_answer)
                                     result["repeat_decline_acknowledged"] = True
                                 except RuntimeError as error:
-                                    result["decline_error"] = str(error)
+                                    result["decline_error_kind"] = type(error).__name__
                                     result["repeat_decline_acknowledged"] = False
                                 if result["repeat_decline_acknowledged"]:
                                     try:
@@ -259,17 +253,19 @@ def run(providers, seconds, tool_probe=False, cancel_probe=False, approval_probe
                     except Exception as error:
                         failure = result or {"provider": provider}
                         failure.update({"status": "fail", "elapsed_seconds": round(time.monotonic() - started, 2),
-                                        "error": str(error)})
+                                        "error_kind": type(error).__name__})
                         results.append(failure)
             finally:
-                if daemon.poll() is None:
-                    daemon.terminate()
-                    try:
-                        daemon.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        daemon.kill()
-                        daemon.wait(timeout=5)
-                cleanup_runtimes()
+                try:
+                    if daemon.poll() is None:
+                        daemon.terminate()
+                        try:
+                            daemon.wait(timeout=2)
+                        except subprocess.TimeoutExpired:
+                            daemon.kill()
+                            daemon.wait(timeout=2)
+                finally:
+                    cleanup_runtimes()
     return results
 
 
@@ -284,11 +280,34 @@ def main():
     parser.add_argument("--approval-probe", action="store_true",
                         help="Accept and decline real native write approvals")
     args = parser.parse_args()
-    results = run(args.providers, args.timeout, args.tool_probe, args.cancel_probe, args.approval_probe)
-    print(json.dumps({"type": "live_provider_check", "results": results}, indent=2))
-    if any(item["status"] != "pass" for item in results):
-        raise SystemExit(1)
+    missing = missing_prerequisites(args.providers, os.environ.get("ADE_RUN_LIVE_PROVIDERS") == "1")
+    report = {"type": "live_provider_check", "providers": args.providers,
+              "authentication_preflight": "unverified", "results": [],
+              "acceptanceScope": {"requirementIds": ["F021"] + (["F038"] if args.approval_probe else []),
+                                  "coverage": "selected native provider probes",
+                                  "fullRequirementAcceptance": "unverified"}}
+    if missing:
+        report.update(status="failed", failureCategory="prerequisite-unavailable",
+                      missing=missing, unexecutedProviders=args.providers)
+    else:
+        try:
+            report["results"] = run(args.providers, args.timeout, args.tool_probe, args.cancel_probe, args.approval_probe)
+            report["status"] = "passed" if all(item["status"] == "pass" for item in report["results"]) else "failed"
+        except KeyboardInterrupt:
+            report.update(status="interrupted")
+        except Exception as error:
+            # Native provider errors may contain account or credential details.
+            report.update(status="failed", failureCategory="execution-error", error_kind=type(error).__name__)
+    directory = PROJECT_ROOT / "test-results" / "runs" / f"live-provider-{uuid.uuid4()}"
+    directory.mkdir(parents=True)
+    payload = json.dumps(report, indent=2) + "\n"
+    (directory / "summary.json").write_text(payload)
+    print(payload, end="")
+    print(f"Test report: {directory}", file=sys.stderr)
+    if report["status"] != "passed":
+        raise SystemExit(130 if report["status"] == "interrupted" else 1)
 
 
 if __name__ == "__main__":
+    signal.signal(signal.SIGTERM, signal.default_int_handler)
     main()

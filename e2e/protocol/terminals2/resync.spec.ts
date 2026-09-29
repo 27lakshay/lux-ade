@@ -9,65 +9,11 @@
 import { createServer } from 'node:net'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { Worker } from 'node:worker_threads'
 import { expect, primaryShell, type ScratchProfile, test } from '../fixtures'
-import { binaries } from '../fixtures/environment'
 import type { ProcessLedger } from '../fixtures/processes'
 import { attachThroughTty, clientSdk, terminalMetrics, TerminalStream, type TerminalFrame } from '../fixtures/terminals'
-import { restoredScreen, terminalSource, type ScreenState } from './viewer'
-
-interface ViewerReport {
-  sdk: { offset: number | null; resyncs: number; incarnation: string | null }
-  feed: { ready: boolean; failed: boolean }
-  snapshots: number
-  /** Snapshots marked `resync: true` that the feed was given. */
-  resyncs: number
-  errors: TerminalFrame[]
-  statuses: string[]
-  closed: string | null
-  screen: ScreenState
-}
-
-/**
- * A desktop-shaped viewer (SDK, TerminalFeed, Ghostty core) on a worker thread that
- * reads slowly until released. See `viewer-worker.mjs`.
- */
-async function slowViewer(profile: ScratchProfile, workspaceId: string, terminalId: string, bytesPerMs: number) {
-  const gateBuffer = new SharedArrayBuffer(4)
-  const gate = new Int32Array(gateBuffer)
-  const worker = new Worker(join(__dirname, 'viewer-worker.mjs'), {
-    workerData: {
-      clientPath: binaries.client,
-      terminalSource,
-      socket: profile.socket,
-      workspaceId,
-      terminalId,
-      gateBuffer,
-      bytesPerMs,
-    },
-  })
-  const failure = new Promise<never>((_, reject) => worker.once('error', reject))
-  await Promise.race([new Promise((resolveStart) => worker.once('message', resolveStart)), failure])
-  return {
-    report: () =>
-      Promise.race([
-        failure,
-        new Promise<ViewerReport>((resolveReport) => {
-          worker.once('message', resolveReport)
-          worker.postMessage({ type: 'report' })
-        }),
-      ]),
-    /** Let the viewer read at full speed. */
-    release: () => {
-      Atomics.store(gate, 0, 1)
-      Atomics.notify(gate, 0)
-    },
-    close: async () => {
-      worker.postMessage({ type: 'close' })
-      await worker.terminate()
-    },
-  }
-}
+import { restoredScreen, type ScreenState } from './viewer'
+import { slowViewer, type ViewerReport } from './slow-viewer'
 
 async function openTerminal(profile: ScratchProfile) {
   const { workspace } = await profile.call('workspace.open', { path: profile.defaultWorkspaceRoot })

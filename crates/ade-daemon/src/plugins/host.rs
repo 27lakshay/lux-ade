@@ -34,9 +34,7 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
-const ACTIVATE_TIMEOUT: Duration = Duration::from_secs(15);
 pub const INVOKE_TIMEOUT: Duration = Duration::from_secs(60);
-const DEACTIVATE_TIMEOUT: Duration = Duration::from_secs(5);
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(2);
 /// How long the exit path waits for the stdout reader to deliver responses
 /// the host wrote before it exited.
@@ -144,11 +142,13 @@ pub fn hook_verdict(called: &Reply) -> HookVerdict {
     }
 }
 
-/// The open calls of one host. Once `closed`, no call can be added.
+/// The open calls of one host. Retirement closes admission to new work;
+/// calls already registered keep their drain grace. Once `closed`, no call can be added.
 #[derive(Default)]
 struct Pending {
     calls: HashMap<u64, mpsc::Sender<Reply>>,
     closed: Option<String>,
+    retired: bool,
 }
 
 struct Shared {
@@ -206,6 +206,9 @@ impl HostProcess {
             let mut pending = self.shared.pending.lock().unwrap();
             if let Some(reason) = &pending.closed {
                 return Err(CallError::NotRun(format!("Plugin host {reason}")));
+            }
+            if pending.retired && method != "deactivate" {
+                return Err(CallError::NotRun("Plugin host is retired".into()));
             }
             if pending.calls.len() >= MAX_PENDING {
                 return Err(CallError::NotRun(format!(
@@ -602,7 +605,7 @@ impl Hosts {
                     process.is_closed(),
                     started,
                     now_ms(),
-                    dev::DRAIN_GRACE_MS,
+                    crate::timing::policy().plugin_drain_ms,
                 ) {
                     DrainStep::Wait => std::thread::sleep(Duration::from_millis(50)),
                     DrainStep::Deactivate { forced } => {
@@ -619,7 +622,7 @@ impl Hosts {
                         let _ = process.call(
                             "deactivate",
                             json!({"generation": process.key.generation}),
-                            DEACTIVATE_TIMEOUT,
+                            crate::timing::policy().plugin_deactivate,
                         );
                         process.kill();
                         break;
@@ -725,7 +728,7 @@ impl Hosts {
                 "settings": spec.settings,
                 "credentials": credentials,
             }),
-            ACTIVATE_TIMEOUT,
+            crate::timing::policy().plugin_activate,
         );
         drop(busy);
         if let Err(error) = activated {
@@ -838,7 +841,7 @@ impl Hosts {
         let _ = process.call(
             "deactivate",
             json!({"generation": process.key.generation}),
-            DEACTIVATE_TIMEOUT,
+            crate::timing::policy().plugin_deactivate,
         );
         process.kill();
     }
@@ -867,7 +870,7 @@ impl Hosts {
             let _ = process.call(
                 "deactivate",
                 json!({"generation": process.key.generation}),
-                DEACTIVATE_TIMEOUT,
+                crate::timing::policy().plugin_deactivate,
             );
             process.kill();
         }
@@ -1118,7 +1121,13 @@ fn retire(state: &mut SlotState) -> Option<Arc<HostProcess>> {
     if let Phase::Running { key, .. } = state.supervision.phase {
         state.supervision.exited(key, now_ms(), true);
     }
-    state.process.take()
+    let process = state.process.take();
+    if let Some(process) = &process {
+        // Serialize retirement with call admission. An Arc returned by ensure
+        // can outlive this slot, but it may not dispatch fresh work into a drain.
+        process.shared.pending.lock().unwrap().retired = true;
+    }
+    process
 }
 
 #[cfg(test)]

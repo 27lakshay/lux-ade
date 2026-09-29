@@ -1,5 +1,5 @@
 import { beforeEach, expect, test } from 'vitest'
-import { swapSidebars } from './model/layout-store'
+import { layoutNow, swapSidebars } from './model/layout-store'
 import { renderWorkspace, resetLayout, section } from './testing'
 
 beforeEach(resetLayout)
@@ -55,4 +55,31 @@ test('swapping sidebars moves each to the other side', async () => {
   expect(left('Navigator')).toBeLessThan(left('Inspector'))
   await swapSidebars()
   await expect.poll(() => left('Navigator') > left('Inspector')).toBe(true)
+})
+
+test('restoring a sidebar keeps its exact width when the gutter finishes resizing', async () => {
+  const screen = await renderWorkspace()
+  const paneWidth = () => section('Pane')!.getBoundingClientRect().width
+  const before = paneWidth()
+  const saved = { ...layoutNow().widths }
+  await screen.getByRole('button', { name: 'Toggle left sidebar' }).click()
+  await expect.poll(() => section('Navigator')!.getBoundingClientRect().width).toBe(0)
+  await expect.poll(() => document.querySelector('[data-layout-animating]')).toBeNull()
+
+  // Hold the opening gutter just short of its final 8px. The real panel library
+  // must reconcile its pixel shares after this last part of the transition.
+  const gutter = document.querySelector('[aria-label="Resize navigator"]') as HTMLElement
+  gutter.style.transition = 'none'
+  gutter.style.width = '7px'
+  expect(gutter.getBoundingClientRect().width).toBe(7)
+  try {
+    await screen.getByRole('button', { name: 'Toggle left sidebar' }).click()
+  } finally {
+    gutter.style.removeProperty('width')
+    gutter.style.removeProperty('transition')
+  }
+  await expect.poll(() => section('Navigator')!.getBoundingClientRect().width).toBe(saved.navigator)
+  await expect.poll(() => section('Inspector')!.getBoundingClientRect().width).toBe(saved.inspector)
+  await expect.poll(paneWidth).toBe(before)
+  expect(layoutNow().widths).toEqual(saved)
 })

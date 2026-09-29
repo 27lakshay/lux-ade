@@ -28,7 +28,7 @@
 //! `reload.rs` (F139, F060, 04-S11); their pure decisions are in `dev.rs`.
 mod activation;
 mod artifact;
-mod dev;
+pub(crate) mod dev;
 mod host;
 mod manifest;
 mod reload;
@@ -455,8 +455,8 @@ impl Core {
         // Outside the registry lock: the plugin's deactivate hook runs with a
         // bounded wait, and every generation issued so far is retired.
         self.hosts.stop(id, through);
-        let draining = self.hosts.draining(id);
         let mut state = self.state.lock().unwrap();
+        let draining = self.hosts.draining(id);
         self.settle(&mut state, id, &draining)?;
         detail_reply(&state, id)
     }
@@ -572,6 +572,9 @@ impl Core {
             Ok(process) => process,
             Err(error) => return Ok(self.settle_failure(&operation_id, error)),
         };
+        // Debug-only handshake: exercise retirement after host lookup and the
+        // durable dispatch receipt, before registering this call with the host.
+        receipts::e2e_pause("plugin.command.invoke");
         let called = process.call(
             "invoke",
             json!({

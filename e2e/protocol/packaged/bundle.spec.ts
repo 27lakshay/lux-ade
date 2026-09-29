@@ -7,7 +7,9 @@ import { join, relative, sep } from 'node:path'
 import { repositoryRoot } from '../fixtures/environment'
 import { bundle, bundleMissing, expect, minimalPath, packagedEnvironment, test } from '../fixtures/packaged'
 
-test.skip(bundleMissing !== null, bundleMissing ?? '')
+test.beforeAll(() => {
+  if (bundleMissing) throw new Error(bundleMissing)
+})
 
 type Run = { code: number; stdout: string; stderr: string }
 function run(file: string, args: string[], env: Record<string, string>, cwd: string): Promise<Run> {

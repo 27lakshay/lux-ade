@@ -50,7 +50,9 @@ Paths below are relative to `apps/desktop`.
 
 ## Verification
 
-Run `pnpm check:static` from the repository root after every change. Renderer stores and
-components have Vitest browser tests. For a built-app flow, run `pnpm test:e2e:desktop` with
-scratch profiles and mocks; see its [README](../../e2e/desktop/README.md). Look at the running
-app for UI changes, including hover, focus, pointer release and selected text width.
+For renderer behavior, Electron boundaries or accessibility changes, follow the
+[test-layer selection](../../docs/testing.md#workflow-for-a-change). Use the
+[desktop E2E guide](../../e2e/desktop/README.md) for scratch profiles, provider mocks,
+keyboard and axe checks, and Electron failure traces. Verify changed UI in the running app,
+including hover, focus, pointer release and selected text width. Report automated checks
+and observed interactions separately.

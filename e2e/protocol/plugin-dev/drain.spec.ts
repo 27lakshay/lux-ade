@@ -1,22 +1,25 @@
 // Bounded drain (F060, F139 backend part). A development-mode reload hands the
 // superseded backend host to a drain: its open calls may finish for at most
-// 15 s. A call still open when that grace ends is cut off and settles as
+// 15 s in production (2 s with this case’s explicit debug preset). A call
+// still open when that grace ends is cut off and settles as
 // `outcome_unknown`, never as done, and a replay never runs it again. While
 // a superseded host drains, its artifact stays and the plugin cannot be
 // uninstalled. `plugins/dev-reload.spec.ts` proves the drain whose call
 // finishes inside the grace.
 import { existsSync } from 'node:fs'
+import { mkdir, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { expect, isRunning, test } from '../fixtures'
 import { stageFaultyPlugin } from '../fixtures/faulty-plugin'
 import { installAndEnable, pluginLines, stagePlugin } from '../fixtures/plugins'
 import { current, echoed, editFile, generations, invoke, setVersion, states } from './dev'
 
-const GRACE_MS = 15_000
+const GRACE_MS = 2_000
 
 test('a call still open when the drain grace ends is cut off as outcome_unknown and never rerun; uninstall waits for the drain', async ({
   ade,
-  profile,
 }) => {
+  const profile = await ade.profile({ env: { ADE_E2E_TIMING_POLICY: 'short' } })
   test.setTimeout(120_000)
   const source = await stagePlugin(ade.root, 'backend')
   const { pluginId, outDir } = await installAndEnable(profile, source)
@@ -88,10 +91,8 @@ test('a call still open when the drain grace ends is cut off as outcome_unknown 
   expect(uninstalled.type).toBeTruthy()
 })
 
-test('the drain stays bounded when the superseded host is frozen and cannot answer deactivate', async ({
-  ade,
-  profile,
-}) => {
+test('the drain stays bounded when the superseded host is frozen and cannot answer deactivate', async ({ ade }) => {
+  const profile = await ade.profile({ env: { ADE_E2E_TIMING_POLICY: 'short' } })
   test.setTimeout(120_000)
   const source = await stageFaultyPlugin(ade.root)
   const { pluginId, outDir } = await installAndEnable(profile, source)
@@ -108,8 +109,9 @@ test('the drain stays bounded when the superseded host is frozen and cannot answ
     .poll(async () => (await pluginLines(outDir, 'lifecycle.jsonl')).some((line) => line.event === 'freeze'))
     .toBe(true)
   await editFile(source, 'backend.mjs', (text) => `${text}\n// edited\n`)
+  // Query throughout publication: a live old host must not retire before its drain is registered.
   await expect
-    .poll(() => states(profile, pluginId), { timeout: 20_000 })
+    .poll(() => states(profile, pluginId), { timeout: 20_000, intervals: [1] })
     .toEqual([`${before}:draining`, `${before + 1}:current`])
   const fresh = (await invoke(profile, pluginId, 'e2e.faulty.echo')).outcome as {
     value: { pid: number; generation: number }
@@ -117,7 +119,7 @@ test('the drain stays bounded when the superseded host is frozen and cannot answ
   expect(fresh.value).toMatchObject({ generation: before + 1 })
   expect(fresh.value.pid).not.toBe(old.value.pid)
 
-  // Grace (15 s) plus the deactivate bound (5 s): the old host is stopped, and the call is unknown.
+  // Explicit debug grace (2 s) plus the deactivate bound (1 s): the old host is stopped, and the call is unknown.
   expect(await frozen).toMatchObject({ error: { code: 'outcome_unknown' } })
   await expect.poll(() => isRunning(old.value.pid), { timeout: 30_000 }).toBe(false)
   await expect
@@ -132,3 +134,57 @@ test('the drain stays bounded when the superseded host is frozen and cannot answ
     value: { generation: before + 1, pid: fresh.value.pid },
   })
 })
+
+for (const retirement of ['disable', 'reload'])
+  test(`F060: an invocation holding a retired host is not_applied before dispatch during ${retirement}, even when deactivate freezes`, async ({
+    ade,
+  }) => {
+    const pause = join(ade.root, 'invoke-pause')
+    await mkdir(pause)
+    const profile = await ade.profile({ env: { ADE_E2E_RECEIPT_PAUSE_DIR: pause } })
+    const source = await stagePlugin(ade.root, 'backend')
+    await editFile(source, 'backend.mjs', (text) =>
+      text
+        .replace('console.log(`fixture echo ${VERSION}`)', "record('echoes.jsonl', { invocation: meta.invocationId })")
+        .replace(
+          "record('lifecycle.jsonl', { event: 'deactivate' })",
+          "record('lifecycle.jsonl', { event: 'deactivate' }); for (;;) {}",
+        ),
+    )
+    const { pluginId, outDir } = await installAndEnable(profile, source)
+    if (retirement === 'reload') await profile.call('plugin.dev.enter', { plugin_id: pluginId, debounce_ms: 100 })
+    const old = await echoed(profile, pluginId)
+    const point = 'plugin.command.invoke'
+    await writeFile(join(pause, `${point}.armed`), '')
+    const args = { marker: 'must-never-run' }
+    const operation = 'invoke-after-retirement'
+    const pending = invoke(profile, pluginId, 'e2e.backend.echo', args, operation).then(
+      (reply) => ({ reply }),
+      (error: unknown) => ({ error }),
+    )
+    let disabling: Promise<unknown> | undefined
+    try {
+      await expect.poll(() => existsSync(join(pause, `${point}.paused`))).toBe(true)
+      // The real caller now holds the old host, but no call has reached its stdin.
+      if (retirement === 'disable') disabling = profile.call('plugin.disable', { plugin_id: pluginId })
+      else await setVersion(source, 'v2')
+      await expect
+        .poll(async () => (await pluginLines(outDir, 'lifecycle.jsonl')).some((line) => line.event === 'deactivate'))
+        .toBe(true)
+      await writeFile(join(pause, `${point}.release`), '')
+      const observed = await pending
+      expect(observed).toMatchObject({ error: { code: 'not_applied' } })
+      expect(await pluginLines(outDir, 'echoes.jsonl')).toHaveLength(1)
+    } finally {
+      await writeFile(join(pause, `${point}.release`), '')
+      await pending
+      await disabling
+    }
+    await expect.poll(() => isRunning(old.value.pid)).toBe(false)
+    if (retirement === 'disable') await profile.call('plugin.enable', { plugin_id: pluginId })
+    // Replaying the same operation preserves the refusal even with a new active generation.
+    await expect(invoke(profile, pluginId, 'e2e.backend.echo', args, operation)).rejects.toMatchObject({
+      code: 'not_applied',
+    })
+    expect(await pluginLines(outDir, 'echoes.jsonl')).toHaveLength(1)
+  })

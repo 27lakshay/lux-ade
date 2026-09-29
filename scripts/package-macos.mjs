@@ -12,6 +12,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { candidateSource, writeCandidateMetadata } from './package-candidate.mjs'
 
 const root = resolve(import.meta.dirname, '..')
 const stage = join(root, '.ade/package-stage')
@@ -62,6 +63,7 @@ function validateProvider(folder) {
 }
 
 if (process.platform !== 'darwin') throw new Error('package:mac requires macOS')
+const source = candidateSource(root)
 run('pnpm', ['build'])
 run('node', [
   'scripts/cargo.mjs',
@@ -175,3 +177,9 @@ ELECTRON_RUN_AS_NODE=1 exec "\${0%/*}/../../MacOS/Lux ADE" "$@"
   { mode: 0o755 },
 )
 run('pnpm', ['exec', 'electron-builder', '--mac', '--dir', '--publish', 'never', '--config', 'electron-builder.yml'])
+if (candidateSource(root).sourceSha256 !== source.sourceSha256)
+  throw new Error('Source changed while packaging; candidate identity was not published. Rebuild from stable source.')
+writeCandidateMetadata(
+  join(root, `dist/electron/${process.arch === 'arm64' ? 'mac-arm64' : 'mac'}/Lux ADE.app`),
+  source,
+)

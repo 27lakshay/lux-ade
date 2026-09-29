@@ -11,6 +11,7 @@
 // lock is released.
 import { DatabaseSync } from 'node:sqlite'
 import { join } from 'node:path'
+import { Worker } from 'node:worker_threads'
 import { expect, prompts, test, type ScratchProfile } from '../fixtures'
 import { opId, parentIn } from '../orchestration/steps'
 
@@ -30,8 +31,14 @@ async function refusal(pending: Promise<unknown>): Promise<Refusal> {
 
 /** Take the profile database's write lock on a separate connection. */
 function holdWriteLock(profile: ScratchProfile): { release(): void } {
-  const db = new DatabaseSync(join(profile.dataDirectory, 'sessions.sqlite'))
-  db.exec('BEGIN IMMEDIATE')
+  // Wait only while acquiring the injected lock; the daemon's refusal assertions are unchanged.
+  const db = new DatabaseSync(join(profile.dataDirectory, 'sessions.sqlite'), { timeout: 5000 })
+  try {
+    db.exec('BEGIN IMMEDIATE')
+  } catch (error) {
+    db.close()
+    throw error
+  }
   return {
     release() {
       db.exec('ROLLBACK')
@@ -49,6 +56,33 @@ function expectTruthfulBusy(refused: Refusal): void {
   expect(refused.message).toContain('busy')
   expect(refused.message).not.toMatch(/disk space/i)
 }
+
+test('the storage fault harness waits for a short concurrent writer before holding its lock', async ({ profile }) => {
+  const writer = new Worker(
+    `
+    const { DatabaseSync } = require('node:sqlite')
+    const { parentPort, workerData } = require('node:worker_threads')
+    const db = new DatabaseSync(workerData, { timeout: 5000 })
+    db.exec('BEGIN IMMEDIATE')
+    parentPort.postMessage('locked')
+    setTimeout(() => {
+      db.exec('ROLLBACK')
+      db.close()
+    }, 300)
+  `,
+    { eval: true, workerData: join(profile.dataDirectory, 'sessions.sqlite') },
+  )
+  try {
+    await new Promise<void>((resolveReady, reject) => {
+      writer.once('message', () => resolveReady())
+      writer.once('error', reject)
+    })
+    const lock = holdWriteLock(profile)
+    lock.release()
+  } finally {
+    await writer.terminate()
+  }
+})
 
 test('a held profile database refuses a save as storage_busy, never as a full disk, and the retry saves it @fault', async ({
   profile,

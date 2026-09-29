@@ -9,5 +9,10 @@
     "types": ["node"],
     "skipLibCheck": true
   },
-  "include": ["**/*.ts", "../../apps/desktop/src/renderer/src/host.d.ts", "../../packages/terminal/src/assets.d.ts"]
+  "include": [
+    "**/*.ts",
+    "../packaged/current.spec.ts",
+    "../../apps/desktop/src/renderer/src/host.d.ts",
+    "../../packages/terminal/src/assets.d.ts"
+  ]
 }

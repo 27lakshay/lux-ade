@@ -166,11 +166,13 @@ test('a source that never goes quiet still reloads at the 10 s cap, and a retune
   const before = await current(profile, pluginId)
 
   let writes = 0
+  let completedWrites = 0
   let writing = true
   const started = Date.now()
   const writer = (async () => {
     while (writing) {
       await setVersion(source, `w${++writes}`)
+      completedWrites = writes
       await new Promise((resolve) => setTimeout(resolve, 150))
     }
   })()
@@ -178,7 +180,11 @@ test('a source that never goes quiet still reloads at the 10 s cap, and a retune
     await expect.poll(async () => (await generations(profile, pluginId)).dev?.reload_due_at ?? 0).toBeGreaterThan(0)
     const due = (await generations(profile, pluginId)).dev?.reload_due_at ?? 0
     expect(due - started).toBeLessThanOrEqual(10_000 + 1_000)
-    await expect.poll(() => current(profile, pluginId), { timeout: 30_000 }).toBe(before + 1)
+    await expect.poll(() => current(profile, pluginId), { timeout: 30_000, intervals: [25] }).toBe(before + 1)
+    // Keep writing through publication. A completed write after the committed
+    // generation must remain pending, regardless of when the query was sampled.
+    const writesAtCommit = writes
+    await expect.poll(() => completedWrites, { intervals: [25] }).toBeGreaterThan(writesAtCommit)
   } finally {
     writing = false
     await writer
@@ -189,10 +195,13 @@ test('a source that never goes quiet still reloads at the 10 s cap, and a retune
   const partial = await echoed(profile, pluginId)
   expect(partial.value.version).toMatch(/^w\d+$/)
   expect(partial.value.version).not.toBe(`w${writes}`)
+  await expect.poll(async () => (await generations(profile, pluginId)).dev?.reload_due_at ?? 0).toBeGreaterThan(0)
+  expect((await echoed(profile, pluginId)).value.version).toBe(partial.value.version)
 
   // Entering again retunes the debounce; the settled source reloads promptly.
   await profile.call('plugin.dev.enter', { plugin_id: pluginId, debounce_ms: 100 })
-  await expect.poll(async () => (await echoed(profile, pluginId)).value.version, { timeout: 15_000 }).toBe(`w${writes}`)
+  await expect.poll(() => current(profile, pluginId), { timeout: 15_000 }).toBe(before + 2)
+  expect((await echoed(profile, pluginId)).value.version).toBe(`w${writes}`)
 })
 
 test('a source directory that disappears is reported as a watch error while the current generation serves; its return reloads', async ({

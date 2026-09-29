@@ -1,4 +1,6 @@
+import { reporting } from './e2e/reporting'
 import { defineConfig } from '@playwright/test'
+import { suites } from './e2e/suites'
 
 // Desktop E2E: the built Electron app against a scratch daemon and runtime with the provider
 // mocks (e2e/desktop/README.md). Windows stay hidden and no debugging port is opened.
@@ -20,8 +22,7 @@ delete process.env.NO_COLOR
 const requested = Number(process.env.ADE_E2E_WORKERS)
 
 export default defineConfig({
-  testDir: './e2e/desktop',
-  testMatch: '**/*.spec.ts',
+  ...suites.desktop,
   outputDir: './test-results/desktop',
   fullyParallel: true,
   // Each test runs an Electron app beside a daemon and a runtime: two at a time by default.
@@ -32,4 +33,5 @@ export default defineConfig({
   expect: { timeout: 15_000 },
   forbidOnly: true,
   reporter: [['list']],
+  ...reporting('desktop'),
 })

@@ -9,7 +9,9 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "node ../../scripts/test-browser.mjs",
+    "test:watch": "vitest watch",
+    "test:ui": "vitest --ui --watch --open=false"
   },
   "dependencies": {
     "@ade/client": "workspace:*",
@@ -104,6 +106,7 @@
     "@types/turndown": "5.0.6",
     "@vitejs/plugin-react": "6.1.1",
     "@vitest/browser-playwright": "5.0.2",
+    "@vitest/ui": "5.0.2",
     "babel-plugin-react-compiler": "1.0.0",
     "electron": "44.4.5",
     "electron-vite": "6.0.0-beta.3",

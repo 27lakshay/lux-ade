@@ -31,6 +31,7 @@ pub mod services;
 pub mod sessions;
 pub mod skills;
 pub mod store;
+pub mod timing;
 mod toolchain;
 pub mod usage;
 pub mod worktrees;

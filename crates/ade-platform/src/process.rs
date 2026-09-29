@@ -173,7 +173,8 @@ mod tests {
             Command::new("/bin/sh")
                 .args([
                     "-c",
-                    "(sleep 0.15; printf survived > \"$1\") & wait",
+                    // Publish only the completed marker so existence proves the write finished.
+                    "(sleep 0.15; printf survived > \"$1.pending\"; mv \"$1.pending\" \"$1\") & wait",
                     "ade-test",
                 ])
                 .arg(&marker),

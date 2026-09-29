@@ -89,6 +89,9 @@ test('a prompt sent from the window starts one turn, and a repeat of it is not s
   await expect(row.getByRole('img', { name: 'Running' })).toBeVisible()
   expect(await userMessages(profile, conversationId)).toEqual([prompts.hold])
 
+  // Running includes provider startup; wait for native dispatch before checking replay.
+  await expect.poll(() => turns(profile)).toBe(1)
+
   // The same request again settles as the prompt already delivered; nothing is sent twice.
   expect(
     await request(page, 'agent.send', {

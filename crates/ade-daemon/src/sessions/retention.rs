@@ -837,15 +837,17 @@ impl Sessions {
     pub(super) fn start_retention_schedule(self: &Arc<Self>) {
         let weak = Arc::downgrade(self);
         let started_at = now_ms();
+        let timing = crate::timing::policy();
         std::thread::spawn(move || {
             let mut last_run = None;
             loop {
-                std::thread::sleep(std::time::Duration::from_secs(30));
+                std::thread::sleep(timing.receipt_tick);
                 let Some(hub) = weak.upgrade() else {
                     break;
                 };
                 let now = now_ms();
-                if !rules::prune_due(started_at, last_run, now) {
+                if !rules::prune_due_after(started_at, last_run, now, timing.receipt_first_delay_ms)
+                {
                     continue;
                 }
                 last_run = Some(now);

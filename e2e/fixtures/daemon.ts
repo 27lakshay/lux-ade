@@ -1,3 +1,4 @@
+import { liveDaemonEnvironment } from './live-environment'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createConnection } from 'node:net'
 import { access, mkdtemp, mkdir, readFile, realpath, rm } from 'node:fs/promises'
@@ -165,10 +166,11 @@ export async function startDaemon(
   const socket = join(rootDirectory, 'daemon.sock')
   const runtimeSocket = join(rootDirectory, 'runtime.sock')
   await mkdir(dataDirectory, { mode: 0o700 })
+  await mkdir(join(rootDirectory, '.ade-secrets'), { mode: 0o700 })
   const binary = resolve('target/debug/ade-daemon')
   const child = spawn(binary, [], {
     env: {
-      ...process.env,
+      ...liveDaemonEnvironment(rootDirectory, process.env),
       ADE_DATA_DIR: dataDirectory,
       ADE_SOCKET: socket,
       ADE_ROOT: rootDirectory,

@@ -265,7 +265,8 @@ test('declared pnpm, Bun and Yarn versions run with the installed project tools'
   ] as const
   const toolPaths = [shims, ...['pnpm', 'bun', 'node'].map(installedToolDirectory)].join(':')
   const profile = await ade.profile({
-    env: { PATH: '/no-system-tools', ADE_PROJECT_TOOL_PATHS: toolPaths, ...corepack },
+    // Installed tools must run without fetching package-manager metadata or a replacement version.
+    env: { PATH: '/no-system-tools', ADE_PROJECT_TOOL_PATHS: toolPaths, PNPM_CONFIG_OFFLINE: 'true', ...corepack },
   })
   const workspace_id = (await profile.call('workspace.open', { path: project })).workspace.id
   for (const [manager, version] of versions) {
@@ -287,6 +288,17 @@ test('declared pnpm, Bun and Yarn versions run with the installed project tools'
       .poll(() => outputOf(profile, workspace_id, started.run_id))
       .toContain(`ADE_${manager.toUpperCase()}_READY`)
   }
+  await writeFile(
+    join(project, 'package.json'),
+    JSON.stringify({
+      private: true,
+      packageManager: 'pnpm@0.0.0',
+      scripts: { hello: 'node -e "console.log(\'WRONG_VERSION\')"' },
+    }),
+  )
+  await expect(profile.call('script.start', { workspace_id, name: 'hello' })).rejects.toThrow(
+    /Project pnpm executable is unavailable or its version differs/,
+  )
 })
 
 test('a saturated script spool reports incomplete output without changing the verified exit', async ({

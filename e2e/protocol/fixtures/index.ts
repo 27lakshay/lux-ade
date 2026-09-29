@@ -1,7 +1,7 @@
 // The protocol E2E test API. Specs import `test` and `expect` from here, never
 // from @playwright/test directly, so every test gets the harness teardown.
 import { test as base, expect, type TestInfo } from '@playwright/test'
-import { access, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, open, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { scratchEnvironment } from './environment'
@@ -31,6 +31,38 @@ export class AdeHarness {
   readonly ledger = new ProcessLedger()
   private readonly profiles: ScratchProfile[] = []
   private repositories = 0
+  private readonly timingOrigin = performance.now()
+  private readonly timings: Array<{
+    phase: string
+    offsetMs: number
+    durationMs: number
+    status: 'passed' | 'failed'
+  }> = []
+
+  /** Durations can overlap: fixture use includes dependent fixture setup and test execution. */
+  async measure<T>(phase: string, operation: () => Promise<T>): Promise<T> {
+    const started = performance.now()
+    let status: 'passed' | 'failed' = 'failed'
+    try {
+      const result = await operation()
+      status = 'passed'
+      return result
+    } finally {
+      this.timings.push({
+        phase,
+        offsetMs: started - this.timingOrigin,
+        durationMs: performance.now() - started,
+        status,
+      })
+    }
+  }
+
+  async attachTimings(): Promise<void> {
+    await this.testInfo.attach('fixture-phases.json', {
+      body: JSON.stringify({ version: 1, overlaps: true, phases: this.timings }),
+      contentType: 'application/json',
+    })
+  }
   private constructor(
     readonly root: string,
     private readonly testInfo: TestInfo,
@@ -43,8 +75,10 @@ export class AdeHarness {
 
   /** Start another scratch profile with its own daemon and runtime. */
   async profile(options: ProfileOptions = {}): Promise<ScratchProfile> {
-    return ScratchProfile.start(join(this.root, `p${this.profiles.length + 1}`), this.ledger, options, (profile) =>
-      this.profiles.push(profile),
+    return this.measure('profile-startup', () =>
+      ScratchProfile.start(join(this.root, `p${this.profiles.length + 1}`), this.ledger, options, (profile) =>
+        this.profiles.push(profile),
+      ),
     )
   }
 
@@ -54,8 +88,10 @@ export class AdeHarness {
   ): Promise<ScratchRepo> {
     const name = options.name ?? `repo-${++this.repositories}`
     const home = join(this.root, 'git-home')
-    await mkdir(home, { recursive: true })
-    return ScratchRepo.create(join(this.root, 'repos', name), scratchEnvironment(home), options)
+    return this.measure('repository-creation', async () => {
+      await mkdir(home, { recursive: true })
+      return ScratchRepo.create(join(this.root, 'repos', name), scratchEnvironment(home), options)
+    })
   }
 
   /**
@@ -67,12 +103,12 @@ export class AdeHarness {
     const failures: string[] = []
     for (const profile of this.profiles) {
       try {
-        await profile.stop()
+        await this.measure('profile-shutdown', () => profile.stop())
       } catch (error) {
         failures.push(String(error))
       }
     }
-    const survivors = await this.settledSurvivors()
+    const survivors = await this.measure('process-ledger-cleanup', () => this.settledSurvivors())
     if (survivors.length) {
       for (const survivor of survivors) {
         try {
@@ -123,12 +159,19 @@ export class AdeHarness {
           ))
         )
           continue
-        const body = await readFile(file.path)
-        // Keep attachments bounded; the full file stays in the retained root.
-        await this.testInfo.attach(`p${index + 1}-${file.name}`, {
-          body: body.length > 1024 * 1024 ? body.subarray(body.length - 1024 * 1024) : body,
-          contentType: 'text/plain',
-        })
+        // Read only the tail: an output flood must not allocate its full log during cleanup.
+        const handle = await open(file.path, 'r')
+        try {
+          const { size } = await handle.stat()
+          const body = Buffer.alloc(Math.min(size, 1024 * 1024))
+          const { bytesRead } = await handle.read(body, 0, body.length, Math.max(0, size - body.length))
+          await this.testInfo.attach(`p${index + 1}-${file.name}`, {
+            body: body.subarray(0, bytesRead),
+            contentType: 'text/plain',
+          })
+        } finally {
+          await handle.close()
+        }
       }
     }
   }
@@ -148,9 +191,13 @@ export const test = base.extend<Fixtures>({
   ade: async ({}, use, testInfo) => {
     const harness = await AdeHarness.create(testInfo)
     try {
-      await use(harness)
+      await harness.measure('fixture-use', () => use(harness))
     } finally {
-      await harness.teardown()
+      try {
+        await harness.measure('teardown', () => harness.teardown())
+      } finally {
+        await harness.attachTimings()
+      }
     }
   },
   profile: async ({ ade }, use) => {

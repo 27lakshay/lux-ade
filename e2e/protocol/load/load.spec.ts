@@ -20,7 +20,9 @@
 import { writeFile } from 'node:fs/promises'
 import { cpus, loadavg, totalmem } from 'node:os'
 import { createConnection, type Socket } from 'node:net'
-import { expect, test, waitForIdle, type ScratchProfile } from '../fixtures'
+import { waitForIdle, type ScratchProfile } from '../fixtures'
+import { expect, test } from '../fixtures/performance'
+import type { LatencySample } from '../fixtures/performance-recording'
 import { ownerStorageProfile, startBrowserOwner, type BrowserOwner } from '../fixtures/browser-owner'
 import { subscribeFeed } from '../fixtures/feed'
 import { AdmissionClient, startWorkload, summarize, terminalEcho, timed, type Workload } from '../fixtures/load'
@@ -98,7 +100,12 @@ async function browserWithTabs(profile: ScratchProfile): Promise<BrowserOwner> {
  * index has caught up. Every message names a topic, so a search matches a
  * known share of the history.
  */
-async function largeHistory(profile: ScratchProfile, workspaceId: string, cwd: string) {
+async function largeHistory(
+  profile: ScratchProfile,
+  workspaceId: string,
+  cwd: string,
+  record: (sample: LatencySample) => void,
+) {
   const sessions = Array.from(
     { length: HISTORY_SESSIONS },
     (_, index) => `5e55${String(index).padStart(4, '0')}-0000-4000-8000-${String(index).padStart(12, '0')}`,
@@ -112,20 +119,27 @@ async function largeHistory(profile: ScratchProfile, workspaceId: string, cwd: s
     }))
     await claudeTranscript(profile.home, id, cwd, claudeRecords(id, cwd, turns))
   }
-  const imported = await timed(async () => {
-    for (const id of sessions) {
-      const reply = await call(profile, 'history.import.session', {
-        provider: 'claude',
-        native_session_id: id,
-        workspace_id: workspaceId,
-      })
-      expect(reply).toMatchObject({ outcome: 'imported', added_messages: HISTORY_MESSAGES_PER_SESSION })
-    }
-  })
-  const indexed = await timed(() =>
-    expect
-      .poll(async () => (await call(profile, 'history.index.status', {})).index.caught_up, { timeout: 120_000 })
-      .toBe(true),
+  const imported = await timed(
+    async () => {
+      for (const id of sessions) {
+        const reply = await call(profile, 'history.import.session', {
+          provider: 'claude',
+          native_session_id: id,
+          workspace_id: workspaceId,
+        })
+        expect(reply).toMatchObject({ outcome: 'imported', added_messages: HISTORY_MESSAGES_PER_SESSION })
+      }
+    },
+    record,
+    'history.import',
+  )
+  const indexed = await timed(
+    () =>
+      expect
+        .poll(async () => (await call(profile, 'history.index.status', {})).index.caught_up, { timeout: 120_000 })
+        .toBe(true),
+    record,
+    'history.index',
   )
   return {
     messages: HISTORY_SESSIONS * HISTORY_MESSAGES_PER_SESSION,
@@ -208,26 +222,62 @@ function merge(target: Record<string, number[]>, source: Record<string, number[]
 }
 
 test('ten agents, twenty terminals, three services, five browser tabs and a large history stay responsive through sustained, idle and crash phases @load', async ({
-  profile,
-  repo,
+  ade,
+  measurements,
+  dispose,
 }, testInfo) => {
   test.setTimeout(600_000)
+  let phase = 'setup'
+  const record = (sample: LatencySample) => measurements.record({ ...sample, name: `${phase}.${sample.name}` })
+  const diagnostic = process.env.ADE_PERFORMANCE_DIAGNOSTICS === '1'
+  measurements.details.workload = {
+    agents: 10,
+    terminals: 20,
+    services: 3,
+    scriptedBrowserTabs: TABS,
+    syntheticHistoryMessages: HISTORY_SESSIONS * HISTORY_MESSAGES_PER_SESSION,
+    diffLines: 5000,
+    streamedLines: 19 * STREAMED_LINES,
+  }
+  measurements.details.thresholds = {
+    provisional: true,
+    admissionP95Ms: ADMISSION_TARGET_MS,
+    echoP95Ms: ECHO_TARGET_MS,
+    echoAsserted: false,
+  }
+  const profile = await measurements.measure('setup.profile', () => ade.profile())
+  const repo = await measurements.measure('setup.repository', () => ade.repo())
   // A large diff: 5000 changed lines in one file.
   const big = Array.from({ length: 5000 }, (_, line) => `line ${line}`).join('\n')
   await repo.commit('Add a large file', { 'big.txt': `${big}\n` })
   await repo.dirty('big.txt', `${big.replace(/line /g, 'changed line ')}\n`)
 
-  const setup = await timed(() => startWorkload(profile, repo.path, { agents: 10, terminals: 20, services: 3 }))
+  const setup = await timed(
+    () => startWorkload(profile, repo.path, { agents: 10, terminals: 20, services: 3 }),
+    record,
+    'workload',
+  )
   const workload = setup.value
+  dispose(() => workload.stop())
   expect(workload.conversations).toHaveLength(10)
   expect(workload.terminals).toHaveLength(20)
-  const history = await largeHistory(profile, workload.workspaceId, repo.path)
+  const history = await measurements.measure('setup.history', () =>
+    largeHistory(profile, workload.workspaceId, repo.path, record),
+  )
   const owner = await browserWithTabs(profile)
+  dispose(() => owner.close())
   const fast = await subscribeFeed(profile)
+  dispose(() => fast.stop())
   await fast.connected()
   const stalled = await stalledSubscriber(profile.socket)
-  const before = await profile.call('diagnostics.status', {})
-  const client = AdmissionClient.start(profile)
+  dispose(() => {
+    stalled.destroy()
+  })
+  const before = diagnostic ? await profile.call('diagnostics.status', {}) : null
+  if (before) measurements.details['resources.setup'] = before.resources
+  const client = AdmissionClient.start(profile, record)
+  dispose(() => client.close())
+  phase = 'sustained'
 
   // Sustained phase: nineteen terminals each stream STREAMED_LINES lines.
   // Until every stream has finished (and for at least five rounds), every
@@ -254,7 +304,7 @@ test('ten agents, twenty terminals, three services, five browser tabs and a larg
     Promise.all([
       (async () => {
         for (let batch = 0; batch < 200 && (batch < 3 || !streamed); batch++) {
-          echoSustained.push(...(await terminalEcho(echoing, 10, 100_000 + batch * 10)))
+          echoSustained.push(...(await terminalEcho(echoing, 10, 100_000 + batch * 10, record)))
         }
       })(),
       (async () => {
@@ -274,16 +324,19 @@ test('ten agents, twenty terminals, three services, five browser tabs and a larg
     ]),
   )
   await streams
-  const underLoad = await profile.call('diagnostics.status', {})
+  const underLoad = diagnostic ? await profile.call('diagnostics.status', {}) : null
+  if (underLoad) measurements.details['resources.sustained'] = underLoad.resources
 
   // Idle phase: nothing streams; the same measurements again.
+  phase = 'idle'
   const idle: Record<string, number[]> = {}
   const idlePhase = await timed(async () => {
     for (let round = rounds + 1; round <= rounds + 3; round++)
       merge(idle, await commandRound(profile, client, workload, owner, round))
   })
-  const echoIdle = await terminalEcho(echoing, 30, 200_000)
-  const idleStatus = await profile.call('diagnostics.status', {})
+  const echoIdle = await terminalEcho(echoing, 30, 200_000, record)
+  const idleStatus = diagnostic ? await profile.call('diagnostics.status', {}) : null
+  if (idleStatus) measurements.details['resources.idle'] = idleStatus.resources
 
   // The fast feed consumer kept up; the stalled one never blocked anyone.
   expect(fast.client.getState().status).toBe('connected')
@@ -302,19 +355,24 @@ test('ten agents, twenty terminals, three services, five browser tabs and a larg
   // the time until the new daemon answers, then until its catalogue lists
   // every Conversation, a terminal answers input, every service still runs
   // and the browser tabs are relayed again.
+  phase = 'recovery'
   const catalogBefore = await profile.call('catalog.get', {})
   const conversationCount = catalogBefore.catalog.conversations.length
   const killed = performance.now()
   await profile.restartDaemon('kill')
   const helloMs = performance.now() - killed
+  record({ name: 'hello.ready-from-kill', ms: helloMs, status: 'passed' })
   await expect
     .poll(async () => (await profile.call('catalog.get', {})).catalog.conversations.length, { timeout: 60_000 })
     .toBe(conversationCount)
   const catalogMs = performance.now() - killed
+  record({ name: 'catalog.ready-from-kill', ms: catalogMs, status: 'passed' })
   const reopened = TerminalStream.open(profile, workload.workspaceId, echoing.terminalId)
+  dispose(() => reopened.close())
   await reopened.snapshot()
-  const [firstEcho] = await terminalEcho(reopened, 1, 300_000)
+  const [firstEcho] = await terminalEcho(reopened, 1, 300_000, record)
   const terminalMs = performance.now() - killed
+  record({ name: 'terminal.ready-from-kill', ms: terminalMs, status: 'passed' })
   reopened.close()
   // Every service kept running through the crash, observed by the new daemon.
   await expect
@@ -333,7 +391,9 @@ test('ten agents, twenty terminals, three services, five browser tabs and a larg
   const relayed = (await profile.call('browser.list', { profile_id: owner.profileId, owner_id: owner.ownerId })).tabs
     .length
   const recoveredMs = performance.now() - killed
-  const afterCrash = await profile.call('diagnostics.status', {})
+  record({ name: 'all.ready-from-kill', ms: recoveredMs, status: 'passed' })
+  const afterCrash = diagnostic ? await profile.call('diagnostics.status', {}) : null
+  if (afterCrash) measurements.details['resources.recovery'] = afterCrash.resources
   const crashAdmission: Record<string, number[]> = {}
   merge(crashAdmission, await commandRound(profile, client, { ...workload, terminals: [] }, owner, rounds + 4))
 
@@ -341,23 +401,27 @@ test('ten agents, twenty terminals, three services, five browser tabs and a larg
     all: summarize(Object.values(phase).flat()),
     ...Object.fromEntries(Object.entries(phase).map(([name, values]) => [name, summarize(values)])),
   })
-  type Status = typeof idleStatus
-  const memory = (status: Status) => ({
-    observed: status.resources.observed,
-    method: status.resources.method,
-    total_processes: status.resources.total_processes,
-    footprint_mib: Math.round((status.resources.total_footprint_bytes ?? 0) / 1024 / 1024),
-    cpu_time_ms: status.resources.total_cpu_time_ms,
-    load_average_milli: status.resources.host.load_average_milli,
-    groups: status.resources.groups.length,
-  })
+  type Status = NonNullable<typeof idleStatus>
+  const memory = (status: Status | null) =>
+    status
+      ? {
+          observed: status.resources.observed,
+          method: status.resources.method,
+          total_processes: status.resources.total_processes,
+          footprint_mib: Math.round((status.resources.total_footprint_bytes ?? 0) / 1024 / 1024),
+          cpu_time_ms: status.resources.total_cpu_time_ms,
+          load_average_milli: status.resources.host.load_average_milli,
+          groups: status.resources.groups.length,
+        }
+      : null
   // Process-tree CPU over a phase, as a share of one core.
-  const cpu = (from: Status, to: Status, wallMs: number) => {
+  const cpu = (from: Status | null, to: Status | null, wallMs: number) => {
+    if (!from || !to) return null
     const used = (to.resources.total_cpu_time_ms ?? 0) - (from.resources.total_cpu_time_ms ?? 0)
     return { cpu_time_ms: used, wall_ms: Math.round(wallMs), cores: Math.round((used / wallMs) * 100) / 100 }
   }
-  const queues = (status: Status) =>
-    status.queues.map((queue) => ({ name: queue.name, depth: queue.depth, capacity: queue.capacity }))
+  const queues = (status: Status | null) =>
+    status?.queues.map((queue) => ({ name: queue.name, depth: queue.depth, capacity: queue.capacity }))
   const results = {
     host: {
       logical_cpus: cpus().length,
@@ -365,7 +429,7 @@ test('ten agents, twenty terminals, three services, five browser tabs and a larg
       platform: process.platform,
       arch: process.arch,
       load_average_at_end: loadavg().map((value) => Math.round(value * 10) / 10),
-      e2e_workers: process.env.ADE_E2E_WORKERS ?? 'default',
+      e2e_workers: testInfo.config.workers,
     },
     workload: {
       agents: 10,
@@ -381,7 +445,7 @@ test('ten agents, twenty terminals, three services, five browser tabs and a larg
       viewer_resyncs: viewerResyncs,
     },
     history: { import_ms: history.import_ms, index_catch_up_ms: history.index_catch_up_ms },
-    targets: { admission_p95_ms: ADMISSION_TARGET_MS, echo_p95_ms: ECHO_TARGET_MS },
+    targets: { provisional: true, admission_p95_ms: ADMISSION_TARGET_MS, echo_p95_ms: ECHO_TARGET_MS },
     sustained: {
       admission: admission(sustained),
       echo: summarize(echoSustained),
@@ -407,8 +471,9 @@ test('ten agents, twenty terminals, three services, five browser tabs and a larg
       admission_after: admission(crashAdmission),
       memory: memory(afterCrash),
     },
-    counters: idleStatus.counters.map((counter) => ({ name: counter.name, value: counter.value })),
+    counters: idleStatus?.counters.map((counter) => ({ name: counter.name, value: counter.value })),
   }
+  measurements.details.results = results
   await testInfo.attach('load-results.json', {
     body: JSON.stringify(results, null, 2),
     contentType: 'application/json',
@@ -419,20 +484,19 @@ test('ten agents, twenty terminals, three services, five browser tabs and a larg
 
   // Bounded queues: no queue with a capacity is past it.
   for (const status of [underLoad, idleStatus, afterCrash]) {
+    if (!status) continue
     for (const queue of status.queues) {
       if (typeof queue.capacity === 'number') expect(queue.depth, queue.name).toBeLessThanOrEqual(queue.capacity)
     }
   }
-  expect(underLoad.resources.observed).toBe(true)
-  expect(afterCrash.resources.observed).toBe(true)
+  if (diagnostic) {
+    expect(underLoad?.resources.observed).toBe(true)
+    expect(afterCrash?.resources.observed).toBe(true)
+  }
   // The browser owner outlives the daemon, and the new daemon relays to it once it registers again.
   expect(relayed).toBe(TABS)
   // The provisional admission target holds in every phase.
   expect(results.sustained.admission.all.p95).toBeLessThan(ADMISSION_TARGET_MS)
   expect(results.idle.admission.all.p95).toBeLessThan(ADMISSION_TARGET_MS)
   expect(results.recovery.admission_after.all.p95).toBeLessThan(ADMISSION_TARGET_MS)
-
-  await client.close()
-  await owner.close()
-  for (const name of workload.services) await profile.call('service.stop', { workspace_id: workload.workspaceId, name })
 })

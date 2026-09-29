@@ -278,8 +278,8 @@ pub fn recorded_reply(receipt: &Receipt) -> Option<Value> {
 /// The env gate of [`e2e_pause`]: a directory for its handshake files.
 pub const E2E_PAUSE_DIR: &str = "ADE_E2E_RECEIPT_PAUSE_DIR";
 
-/// A deterministic crash point for E2E, between an effect's commit and the
-/// moment its reply is final. Debug builds only, and only when
+/// A deterministic handshake at an effect boundary for E2E. Callers use it
+/// before dispatch or between commit and final reply. Debug builds only, and only when
 /// [`E2E_PAUSE_DIR`] names a directory holding `<point>.armed`: the daemon
 /// writes `<point>.paused`, then waits up to 30 seconds for
 /// `<point>.release`, so a spec can SIGKILL it there. Release builds compile

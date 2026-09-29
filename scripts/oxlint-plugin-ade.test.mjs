@@ -1,20 +1,27 @@
-// Runs each rule in oxlint-plugin-ade.mjs through the real oxlint binary against small fixtures.
-import assert from 'node:assert/strict'
+// Batch fixtures by rule through the real Oxlint binary, retaining case-level diagnostics.
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
+import { assertFixtureDiagnostics, fixtureDiagnostics } from './oxlint-fixture-report.mjs'
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const oxlint = join(root, 'node_modules/.bin/oxlint')
 const plugin = join(root, 'scripts/oxlint-plugin-ade.mjs')
+const fixtures = []
+const batches = new Map()
 
-function lint(rule, source, file = 'fixture.ts') {
+function lint(rule) {
+  if (batches.has(rule)) return batches.get(rule)
   const directory = mkdtempSync(join(tmpdir(), 'ade-oxlint-rule-'))
   try {
-    writeFileSync(join(directory, file), source)
+    const selected = fixtures.filter((fixture) => fixture.rule === rule)
+    for (const fixture of selected) {
+      mkdirSync(join(directory, String(fixture.index)))
+      writeFileSync(join(directory, fixture.path), fixture.source)
+    }
     writeFileSync(
       join(directory, 'config.json'),
       JSON.stringify({
@@ -23,24 +30,26 @@ function lint(rule, source, file = 'fixture.ts') {
         rules: { [`ade/${rule}`]: 'error' },
       }),
     )
-    const result = spawnSync(oxlint, ['-c', 'config.json', file], { cwd: directory, encoding: 'utf8' })
-    return { failed: result.status !== 0, output: `${result.stdout}${result.stderr}` }
+    const files = selected.map((fixture) => fixture.path)
+    const result = spawnSync(oxlint, ['-c', 'config.json', '--format', 'json', ...files], {
+      cwd: directory,
+      encoding: 'utf8',
+    })
+    const diagnostics = fixtureDiagnostics(result, directory, files)
+    const batch = new Map(selected.map((fixture) => [fixture.index, diagnostics.get(resolve(directory, fixture.path))]))
+    batches.set(rule, batch)
+    return batch
   } finally {
     rmSync(directory, { recursive: true, force: true })
   }
 }
 
-const valid = (rule, name, source, file) =>
-  test(`${rule}: ${name}`, () => {
-    const { failed, output } = lint(rule, source, file)
-    assert.equal(failed, false, output)
-  })
-const invalid = (rule, name, source, message, file) =>
-  test(`${rule}: ${name}`, () => {
-    const { failed, output } = lint(rule, source, file)
-    assert.equal(failed, true, 'expected the rule to report')
-    assert.match(output, message)
-  })
+function collect(rule, name, source, message, file = 'fixture.ts') {
+  const index = fixtures.length
+  fixtures.push({ rule, name, source, message, index, path: join(String(index), file) })
+}
+const valid = (rule, name, source, file) => collect(rule, name, source, null, file)
+const invalid = (rule, name, source, message, file) => collect(rule, name, source, message, file)
 
 const safe = 'contextIsolation: true, sandbox: true, nodeIntegration: false'
 
@@ -423,3 +432,10 @@ invalid(
   /layout properties/,
   'fixture.tsx',
 )
+
+// Register after collection, so every case can access its complete rule batch.
+for (const fixture of fixtures) {
+  test(`${fixture.rule}: ${fixture.name}`, () => {
+    assertFixtureDiagnostics(fixture.rule, fixture.name, lint(fixture.rule).get(fixture.index), fixture.message)
+  })
+}

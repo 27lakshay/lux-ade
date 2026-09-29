@@ -5,7 +5,7 @@
 // bundle's Electron binary runs only as Node, as the bundled CLI runs it.
 //
 // Import `test` from this file to get `host`: a managed-profile host whose
-// launcher is the bundle. Specs skip when no bundle has been built.
+// launcher is the bundle. Explicit package execution fails when no bundle has been built.
 //
 // Machine safety: a release daemon refuses the test-only file secret store,
 // so a packaged daemon's secret store is the Keychain. It reaches the Keychain

@@ -62,7 +62,7 @@ async function refusal(action: Promise<unknown>): Promise<string> {
   )
 }
 
-test('with the data volume full, new work is refused and a running turn is still stopped', async ({
+test('R004: with the data volume full, new work is refused and a running turn is still stopped @system', async ({
   ade,
   volume,
 }, testInfo) => {

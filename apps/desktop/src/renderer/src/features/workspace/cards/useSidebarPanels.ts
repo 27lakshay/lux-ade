@@ -17,6 +17,16 @@ const IDS = ['navigator', 'inspector'] as const
 /** A sidebar panel's width on screen. The library's getSize() can lag a frame behind it. */
 const drawnWidth = (id: SidebarId): number => document.getElementById(id)?.getBoundingClientRect().width ?? 0
 
+/** The pixels shared by panels after the current gutter widths are excluded. */
+function availablePanelWidth(element: HTMLElement): number {
+  const style = getComputedStyle(element)
+  const gutters = [...element.querySelectorAll(':scope > [role=separator]')].reduce(
+    (total, separator) => total + separator.getBoundingClientRect().width,
+    0,
+  )
+  return element.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) - gutters
+}
+
 /** `group` is the sidebars' and centre's group element, which this hook owns and returns. */
 export function useSidebarPanels(
   refs: Record<SidebarId, RefObject<PanelImperativeHandle | null>>,
@@ -124,10 +134,16 @@ export function useSidebarPanels(
       () => {
         settle.current = null
         const now = layoutNow()
+        const element = group.current
+        if (!element) return
+        const space = availablePanelWidth(element)
+        if (space <= 0) return
         for (const id of IDS) {
           const panel = refs[id].current
           if (!panel || !shownNow.current[id] || panel.isCollapsed()) continue
-          if (Math.abs(drawnWidth(id) - now.widths[id]) > 0.5) panel.resize(`${now.widths[id]}px`)
+          // Pixel conversion can still use the library's earlier gutter measurement.
+          // Use the drawn row directly, including subpixel differences after a toggle.
+          if (drawnWidth(id) !== now.widths[id]) panel.resize(`${(now.widths[id] / space) * 100}%`)
         }
       },
       DURATION.base * 1000 + 100,
@@ -146,12 +162,7 @@ export function useSidebarPanels(
     if (!handle || !element || closing.length === 0) return
     const next = { ...handle.getLayout() }
     // The pixels 100% stands for: the group's content less its gutters.
-    const style = getComputedStyle(element)
-    const gutters = [...element.querySelectorAll(':scope > [role=separator]')].reduce(
-      (total, separator) => total + separator.getBoundingClientRect().width,
-      0,
-    )
-    const space = element.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) - gutters
+    const space = availablePanelWidth(element)
     const layout = layoutNow()
     const toPercent = (pixels: number): number => (pixels / space) * 100
     const centreMin = toPercent(minSize(layout.root, layout.tabs).width)

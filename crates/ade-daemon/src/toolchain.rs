@@ -174,6 +174,11 @@ fn version(program: &Path, cwd: &Path, path: &str) -> Option<String> {
         .env("COREPACK_ENABLE_NETWORK", "0")
         .env("COREPACK_DEFAULT_TO_LATEST", "0")
         .env("COREPACK_ENABLE_AUTO_PIN", "0");
+    if program.file_name().is_some_and(|name| name == "pnpm") {
+        // ADE checks the installed version itself. pnpm 12 otherwise resolves
+        // package-manager metadata and writes a lockfile even for --version.
+        command.env("PNPM_CONFIG_PM_ON_FAIL", "ignore");
+    }
     let result = run_input(command, 5, None, None).ok()?;
     if result["exit_code"] != 0 {
         return None;
@@ -287,6 +292,10 @@ pub(crate) fn select(workspace: &Path, explicit_program: Option<&str>) -> Result
     env.insert("COREPACK_ENABLE_NETWORK".into(), "0".into());
     env.insert("COREPACK_DEFAULT_TO_LATEST".into(), "0".into());
     env.insert("COREPACK_ENABLE_AUTO_PIN".into(), "0".into());
+    if command == "pnpm" {
+        // Keep the executable we verified; pnpm must not replace it at launch.
+        env.insert("PNPM_CONFIG_PM_ON_FAIL".into(), "ignore".into());
+    }
     Ok(Selected {
         program: program.to_string_lossy().into_owned(),
         env,

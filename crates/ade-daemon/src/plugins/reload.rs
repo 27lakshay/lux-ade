@@ -83,7 +83,6 @@ enum Outcome {
 
 /// A committed reload whose hosts still need switching.
 struct Committed {
-    old: u64,
     new: u64,
     has_backend: bool,
 }
@@ -298,7 +297,6 @@ impl Core {
         self.activation_changed.store(true, Ordering::SeqCst);
         // The old host finishes its calls on a drain thread; the new one
         // starts now so a broken reload is visible at once.
-        self.hosts.supersede(id, committed.old);
         let host_error = committed
             .has_backend
             .then(|| {
@@ -308,8 +306,9 @@ impl Core {
                     .err()
             })
             .flatten();
+        let mut state = self.state.lock().unwrap();
         let draining = self.hosts.draining(id);
-        if let Err(error) = self.settle(&mut self.state.lock().unwrap(), id, &draining) {
+        if let Err(error) = self.settle(&mut state, id, &draining) {
             tracing::warn!(target: "ade", event = "plugin_generation_settle_failed", error = %error);
         }
         Outcome::Activated {
@@ -423,8 +422,10 @@ impl Core {
                 activated_at: now,
             },
         );
+        // Publish the drain while the registry still protects the generation change.
+        // Otherwise a concurrent generation query can retire its live artifact.
+        self.hosts.supersede(id, live.activation.generation);
         Ok(Committed {
-            old: live.activation.generation,
             new: generation,
             has_backend: manifest.entry_points.backend.is_some(),
         })
@@ -509,8 +510,8 @@ impl Core {
 
     pub(super) fn generation_list(&self, request: PluginGenerationListRequest) -> Result<Value> {
         let id = &request.plugin_id;
-        let draining = self.hosts.draining(id);
         let mut state = self.state.lock().unwrap();
+        let draining = self.hosts.draining(id);
         installed(&state, id)?;
         self.settle(&mut state, id, &draining)?;
         let current = state.live.get(id).map(|live| live.activation.generation);
@@ -739,8 +740,8 @@ impl Plugins {
     /// Ends a provider session's lease. Returns whether it held one. A
     /// superseded generation that nothing else holds retires.
     pub fn release_provider(&self, plugin_id: &str, session_id: &str) -> Result<bool> {
-        let draining = self.0.hosts.draining(plugin_id);
         let mut state = self.0.state.lock().unwrap();
+        let draining = self.0.hosts.draining(plugin_id);
         let released = state.db.execute(
             "DELETE FROM plugin_provider_leases WHERE plugin_id=?1 AND session_id=?2",
             params![plugin_id, session_id],

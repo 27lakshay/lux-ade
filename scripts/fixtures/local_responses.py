@@ -39,7 +39,14 @@ class Responses:
                             {'type':'message_stop'},
                         ]
                         body=''.join('event: '+e['type']+'\ndata: '+json.dumps(e)+'\n\n' for e in events).encode();content_type='text/event-stream'
-                    self.send_response(200);self.send_header('Content-Type',content_type);self.send_header('Content-Length',str(len(body)));self.end_headers();self.wfile.write(body);return
+                    self.send_response(200);self.send_header('Content-Type',content_type);self.send_header('Content-Length',str(len(body)));self.end_headers()
+                    if owner.pause_before_completion is not None and payload.get('stream'):
+                        split=body.index(b'event: message_delta')
+                        self.wfile.write(body[:split]);self.wfile.flush()
+                        owner.pause_before_completion.wait(45)
+                        self.wfile.write(body[split:])
+                    else:self.wfile.write(body)
+                    return
                 if not route.endswith('/responses'):
                     self.send_error(404);return
                 part={'type':'output_text','text':ANSWER,'annotations':[]}

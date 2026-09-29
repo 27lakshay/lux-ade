@@ -109,6 +109,9 @@ importers:
 
   .:
     devDependencies:
+      '@axe-core/playwright':
+        specifier: 4.13.0
+        version: 4.13.0(playwright-core@1.60.0)
       '@playwright/test':
         specifier: 1.60.0
         version: 1.60.0
@@ -148,6 +151,9 @@ importers:
       oxlint-tsgolint:
         specifier: 7.0.2003
         version: 7.0.2003
+      playwright-core:
+        specifier: 1.60.0
+        version: 1.60.0
       typescript:
         specifier: 7.0.2
         version: 7.0.2
@@ -438,6 +444,9 @@ importers:
       '@vitest/browser-playwright':
         specifier: 5.0.2
         version: 5.0.2(playwright@1.60.0)(vite@8.3.1(@types/node@24.6.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))(vitest@5.0.2)
+      '@vitest/ui':
+        specifier: 5.0.2
+        version: 5.0.2(vitest@5.0.2)
       babel-plugin-react-compiler:
         specifier: 1.0.0
         version: 1.0.0
@@ -609,6 +618,11 @@ packages:
 
   '@atlaskit/pragmatic-drag-and-drop@4.0.0':
     resolution: {integrity: sha512-pyDo2B5NiaExoKGmgeXKGNUL4aR4UzzSZm8QWWjYTEyBLVqSqKyKUwtVxMw2YEkakagOGFONUdHM32LAH2nPug==}
+
+  '@axe-core/playwright@4.13.0':
+    resolution: {integrity: sha512-6YLx+kxXu5GJceG4ozFg+33a2EMTdjYwWGloJ3sb9Kta5pp+ZNS53uxGVog5JetIY8s++P5UrtX+cri+u0VAVg==}
+    peerDependencies:
+      playwright-core: '>= 1.0.0'
 
   '@babel/code-frame@7.29.7':
     resolution: {integrity: sha512-Aup7aUOfpbAUg2ROOJN6Iw5f9DMBlzu0mIkm/malLQFN/YQgO48wCj0Kxa3sEHJvPVFg7siR+qRInwXd2qhQKw==}
@@ -7551,6 +7565,11 @@ snapshots:
       '@babel/runtime': 7.29.7
       bind-event-listener: 3.0.0
       raf-schd: 4.0.3
+
+  '@axe-core/playwright@4.13.0(playwright-core@1.60.0)':
+    dependencies:
+      axe-core: 4.13.0
+      playwright-core: 1.60.0
 
   '@babel/code-frame@7.29.7':
     dependencies:

@@ -9,7 +9,9 @@ import { isRunning } from '../fixtures'
 import { processTable } from '../fixtures/processes'
 import { bundle, bundleMissing, expect, test } from '../fixtures/packaged'
 
-test.skip(bundleMissing !== null, bundleMissing ?? '')
+test.beforeAll(() => {
+  if (bundleMissing) throw new Error(bundleMissing)
+})
 
 async function digest(path: string): Promise<string> {
   return createHash('sha256')

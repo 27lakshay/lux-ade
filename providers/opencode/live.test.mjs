@@ -20,7 +20,10 @@ test(
     const project = join(root, 'project')
     await mkdir(project)
     const env = {
-      ...process.env,
+      PATH: process.env.PATH,
+      HOME: root,
+      TMPDIR: tmpdir(),
+      TERM: 'dumb',
       XDG_DATA_HOME: join(root, 'data'),
       XDG_CACHE_HOME: join(root, 'cache'),
       XDG_STATE_HOME: join(root, 'state'),
@@ -32,14 +35,6 @@ test(
       OPENCODE_DISABLE_MODELS_FETCH: '1',
       OPENCODE_DISABLE_FFF: '1',
       OPENCODE_DISABLE_FILEWATCHER: '1',
-    }
-    // Drop explicit config/auth inherited from a developer's terminal as well.
-    for (const key of Object.keys(env)) {
-      if (
-        /API_KEY|AUTH_TOKEN|ACCESS_TOKEN/.test(key) ||
-        ['OPENCODE_CONFIG', 'OPENCODE_CONFIG_CONTENT', 'OPENCODE_DB'].includes(key)
-      )
-        delete env[key]
     }
     let server
     try {

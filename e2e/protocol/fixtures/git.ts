@@ -21,10 +21,17 @@ export class ScratchRepo {
   ): Promise<ScratchRepo> {
     await mkdir(path, { recursive: true })
     const repo = new ScratchRepo(await realpath(path), env)
-    await repo.git('init', '--quiet', `--initial-branch=${options.branch ?? 'main'}`)
-    await repo.git('config', 'user.name', 'ADE E2E')
-    await repo.git('config', 'user.email', 'e2e@example.invalid')
-    await repo.git('config', 'commit.gpgsign', 'false')
+    // Git copies these immutable settings into this repository's own config.
+    // No object store, index, hooks or writable config is shared between tests.
+    await repo.git(
+      'init',
+      '--quiet',
+      `--template=${join(__dirname, 'git-template')}`,
+      `--initial-branch=${options.branch ?? 'main'}`,
+    )
+    // The minimal template omits sample files, but specs still install hooks
+    // and exclusions in the directories provided by Git's default template.
+    await Promise.all(['hooks', 'info'].map((name) => mkdir(join(repo.path, '.git', name), { recursive: true })))
     await repo.commit('Initial commit', options.initialFiles ?? { 'README.md': '# Scratch repository\n' })
     return repo
   }
@@ -89,7 +96,8 @@ export class ScratchRepo {
 
   /** `git status --porcelain=v1` lines. */
   async status(): Promise<string[]> {
-    const output = await this.git('status', '--porcelain=v1', '--untracked-files=all')
+    // Polling must not refresh the index and contend with a daemon Git operation.
+    const output = await this.git('--no-optional-locks', 'status', '--porcelain=v1', '--untracked-files=all')
     return output ? output.split('\n') : []
   }
 }

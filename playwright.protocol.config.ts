@@ -1,5 +1,7 @@
+import { reporting } from './e2e/reporting'
 import { availableParallelism } from 'node:os'
 import { defineConfig } from '@playwright/test'
+import { suites } from './e2e/suites'
 
 // Headless backend E2E: real daemon and runtime processes, no Electron.
 // Specs must not inherit a profile, socket or data directory from the caller.
@@ -18,12 +20,14 @@ for (const name of [
 delete process.env.NO_COLOR
 
 const requested = Number(process.env.ADE_E2E_WORKERS)
+// Bound automatic concurrency to the largest locally measured complete-suite setting.
 const workers =
-  Number.isInteger(requested) && requested > 0 ? requested : Math.max(1, Math.floor(availableParallelism() / 2))
+  Number.isInteger(requested) && requested > 0
+    ? requested
+    : Math.max(1, Math.min(5, Math.floor(availableParallelism() / 2)))
 
 export default defineConfig({
-  testDir: './e2e/protocol',
-  testMatch: '**/*.spec.ts',
+  ...suites.protocol,
   outputDir: './test-results/protocol',
   fullyParallel: true,
   workers,
@@ -35,4 +39,5 @@ export default defineConfig({
   reporter: [['list']],
   // After every run, the slowest spec files: where a long suite spends its time.
   reportSlowTests: { max: 15, threshold: 10_000 },
+  ...reporting('protocol'),
 })

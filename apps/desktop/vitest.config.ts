@@ -13,6 +13,9 @@ export default defineConfig({
   // (say a Base UI subpath) reloads the page and loads a second React, failing that run.
   optimizeDeps: { entries: ['src/renderer/**/*.{ts,tsx}'] },
   test: {
+    ...(process.env.ADE_BROWSER_HTML_DIR
+      ? { reporters: ['default', 'json', ['html', { outputDir: process.env.ADE_BROWSER_HTML_DIR }]] as const }
+      : {}),
     // The terminal package's engine tests run here too: they need the same real Chromium.
     include: ['src/renderer/**/*.test.{ts,tsx}', '../../packages/terminal/src/**/*.test.ts'],
     browser: {

@@ -270,8 +270,18 @@ pub fn generation(selected: &mut [Selected], truncated: bool, policy: &Retention
 /// Whether a scheduled prune is due. The first run waits after start so the
 /// daemon's own recovery settles first.
 pub fn prune_due(started_at: i64, last_run: Option<i64>, now: i64) -> bool {
+    prune_due_after(started_at, last_run, now, PRUNE_FIRST_DELAY_MS)
+}
+
+/// Decide against an explicit first delay and timestamp, without sleeping.
+pub fn prune_due_after(
+    started_at: i64,
+    last_run: Option<i64>,
+    now: i64,
+    first_delay_ms: i64,
+) -> bool {
     match last_run {
-        None => now.saturating_sub(started_at) >= PRUNE_FIRST_DELAY_MS,
+        None => now.saturating_sub(started_at) >= first_delay_ms,
         Some(last) => now.saturating_sub(last) >= PRUNE_INTERVAL_MS || now < last,
     }
 }
@@ -491,6 +501,9 @@ mod tests {
 
     #[test]
     fn pruning_waits_after_start_then_runs_on_the_interval() {
+        assert!(!prune_due_after(NOW, None, NOW + 4_999, 5_000));
+        assert!(prune_due_after(NOW, None, NOW + 5_000, 5_000));
+        assert!(!prune_due_after(NOW, None, NOW - 1, 5_000));
         assert!(!prune_due(NOW, None, NOW + PRUNE_FIRST_DELAY_MS - 1));
         assert!(prune_due(NOW, None, NOW + PRUNE_FIRST_DELAY_MS));
         assert!(!prune_due(NOW, Some(NOW), NOW + PRUNE_INTERVAL_MS - 1));

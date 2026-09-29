@@ -78,3 +78,17 @@ lint, dead-code checks, in-process JavaScript and renderer tests, Clippy and Rus
 not run the built-desktop or protocol E2E suites. Use `pnpm test:e2e:protocol` for real daemon
 and runtime behavior, and `pnpm test:e2e:desktop` for Electron flows with scratch profiles and
 provider mocks. See each suite's README before adding a spec.
+
+`pnpm test:acceptance` runs the complete ordinary local gate: static checks,
+shared build prerequisites, protocol correctness and built-desktop acceptance.
+Deterministic provider checks and native suite discovery belong to the static
+gate. Correctness retries stay at zero. `pnpm test:affected --base <ref> --list`
+explains a conservative development selection; it does not replace acceptance.
+
+Performance, candidate, installed-provider, live, physical-device and system
+requirements use separate explicit commands and prerequisite checks described
+in [testing guidance](testing.md). `pnpm test:candidate --app <candidate.app>`
+uses the actual packaged executables and records their build/content identity.
+The current packaged workspace and bridge checks do not prove the unbuilt
+profile/composer flows retained in the legacy package project. Hosted CI and
+release evidence remain pending where no actual run is recorded.

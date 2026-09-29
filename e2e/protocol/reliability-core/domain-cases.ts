@@ -524,8 +524,22 @@ export const domainCases: EffectCase[] = [
   },
   {
     op: 'hook.delivery.retry',
-    outcome: settledReply,
-    unknown: () => false,
+    // The receipt settles queue admission. The later delivery can become unknown
+    // if the daemon dies after its durable claim and before the host verdict.
+    outcome: async (context, state: { effectId: string }, _id, receipt) => {
+      let { delivery } = await context.profile.call('hook.delivery.inspect', { effect_id: state.effectId })
+      await expect
+        .poll(
+          async () => {
+            delivery = (await context.profile.call('hook.delivery.inspect', { effect_id: state.effectId })).delivery
+            return delivery.status
+          },
+          { timeout: 30_000 },
+        )
+        .toMatch(/^(delivered|failed|unknown)$/)
+      return { receipt, delivery }
+    },
+    unknown: (outcome) => (outcome.delivery as { status: string }).status === 'unknown',
     setup: async (context) => {
       const { pluginId, outDir } = await installAndEnable(
         context.profile,

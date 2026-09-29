@@ -20,6 +20,7 @@
     "test:e2e:desktop": "pnpm build:backend && pnpm build:sdk && pnpm --filter @ade/cli build && pnpm --filter @ade/desktop build && pnpm test:e2e:desktop:only",
     "test:e2e:desktop:only": "playwright test --config playwright.desktop.config.ts",
     "test:e2e:package": "playwright test --config playwright.package.config.ts",
+    "test:candidate": "node scripts/test-candidate.mjs",
     "test:e2e:live": "python3 scripts/live_provider_check.py",
     "test:e2e:live:desktop": "playwright test --config playwright.live.config.ts",
     "format": "oxfmt",
@@ -28,9 +29,23 @@
     "lint:fix": "oxlint --type-aware --fix",
     "deadcode": "fallow dead-code --workspace '@ade/*'",
     "check:static": "node scripts/check-static.mjs",
-    "check": "pnpm check:static"
+    "check": "pnpm check:static",
+    "test:providers": "node scripts/test-providers.mjs",
+    "test:performance": "node scripts/test-performance.mjs",
+    "test:e2e:system": "playwright test --config playwright.system.config.ts",
+    "test:discovery": "node scripts/check-test-discovery.mjs",
+    "test:benchmark": "node scripts/benchmark-tests.mjs",
+    "test:acceptance": "node scripts/test-acceptance.mjs",
+    "test:affected": "node scripts/test-affected.mjs",
+    "test:rust:watch": "node scripts/watch-rust.mjs",
+    "test:providers:handoff": "python3 scripts/test_agent_handoff_loopback.py --run",
+    "test:providers:installed": "node scripts/test-installed-providers.mjs",
+    "test:e2e:devices": "pnpm build:backend && pnpm build:sdk && pnpm --filter @ade/cli build && pnpm test:e2e:devices:only",
+    "test:e2e:devices:only": "playwright test --config playwright.devices.config.ts",
+    "test:e2e:live:handoff": "python3 scripts/test_agent_handoff_live.py"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
     "@playwright/test": "1.60.0",
     "@shadcn/lint": "0.2.0",
     "@types/node": "24.6.0",
@@ -44,6 +59,7 @@
     "oxlint": "1.85.0",
     "oxlint-plugin-react-doctor": "0.9.14",
     "oxlint-tsgolint": "7.0.2003",
+    "playwright-core": "1.60.0",
     "typescript": "7.0.2"
   }
 }

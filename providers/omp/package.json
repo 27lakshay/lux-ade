@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "bun test"
+    "test": "node ../../scripts/test-providers.mjs --provider omp"
   },
   "dependencies": {
     "@oh-my-pi/pi-coding-agent": "18.3.0"

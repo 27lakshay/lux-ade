@@ -14,6 +14,7 @@ import { access, mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { expect, test, type AdeHarness } from '../fixtures'
 import { sendAndLoseReply } from '../fixtures/lost-reply'
+import { pluginLines } from '../fixtures/plugins'
 import { call, pauseEnvironment } from '../reliability-a/effects'
 import { domainCases as effectCases, type Context, type EffectCase } from './domain-cases'
 
@@ -78,13 +79,25 @@ for (const effect of effectCases) {
       expect(await effect.effect(ctx, state)).toBe(base + 1)
     })
 
-    for (const point of ['at once', 'after the effect'] as const) {
+    const points =
+      effect.op === 'hook.delivery.retry'
+        ? ['at once', 'after the effect', 'after dispatch']
+        : ['at once', 'after the effect']
+    for (const point of points) {
       test(`R001: ${effect.op} with a lost reply and a daemon crash ${point} runs once`, async ({ ade }) => {
         const ctx = await context(ade)
         const state = await effect.setup(ctx)
         const base = await effect.effect(ctx, state)
         const request = effect.request(state, 'reliability-lost', false)
+        if (point === 'after dispatch')
+          await writeFile(join((state as { outDir: string }).outDir, 'hold-retry-before-effect'), '')
         await sendAndLoseReply(ctx.profile, { op: effect.op, ...request })
+        if (point === 'after dispatch') {
+          await expect
+            .poll(async () => (await pluginLines((state as { outDir: string }).outDir, 'retry-held.jsonl')).length)
+            .toBe(1)
+          expect(await effect.effect(ctx, state)).toBe(base)
+        }
         if (point === 'after the effect') {
           await expect.poll(() => effect.effect(ctx, state), { timeout: 30_000 }).toBe(base + 1)
         }
@@ -92,6 +105,7 @@ for (const effect of effectCases) {
         await ctx.profile.restartDaemon()
 
         const outcome = await attempt(effect, ctx, state, 'reliability-lost', request)
+        if (point === 'after dispatch') expect(unknown(effect, outcome), JSON.stringify(outcome)).toBe(true)
         if (!unknown(effect, outcome)) {
           // A known outcome took effect exactly once, possibly after its reply.
           await expect

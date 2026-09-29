@@ -63,7 +63,13 @@ test('a closed view, a daemon kill and a graceful restart leave the run, its too
   const requestId = await send(worker, conversationId, codexPrompts.heldTool)
   const tool = await toolPid(worker)
   const providerPid = (await worker.mockCalls('codex'))[0].pid
-  await view.settle((snapshot) => snapshot.conversation.status === 'running')
+  // The mock records its child PID before the tool event reaches the daemon.
+  // Capture the baseline after that event so restart equality compares the same history.
+  await view.settle(
+    (snapshot) =>
+      snapshot.conversation.status === 'running' &&
+      snapshot.messages.some((message) => message.id === `${conversationId}:tool-${requestId}`),
+  )
   const before = await worker.call('conversation.get', { conversation_id: conversationId })
   const shellBefore = (await terminalMetrics(worker, ...shell))!
   expect(shellBefore.shell_running).toBe(true)

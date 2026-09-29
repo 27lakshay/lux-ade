@@ -1,0 +1,44 @@
+# Optional local watcher. Full acceptance remains an explicit pnpm command.
+default_job = "check-core"
+need_stdout = true
+default_watch = false
+watch = ["crates/ade-core", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "scripts/cargo.mjs"]
+on_change_strategy = "wait_then_restart"
+
+[jobs.check-core]
+command = ["node", "scripts/cargo.mjs", "check", "--locked", "-p", "ade-core"]
+
+[jobs.clippy-core]
+command = ["node", "scripts/cargo.mjs", "clippy", "--locked", "-p", "ade-core", "--all-targets"]
+
+[jobs.test-core]
+command = ["node", "scripts/cargo.mjs", "nextest", "run", "--locked", "-p", "ade-core", "--profile", "ci"]
+analyzer = "nextest"
+
+[jobs.check-runtime]
+command = [
+  "node",
+  "scripts/cargo.mjs",
+  "check",
+  "--locked",
+  "-p",
+  "ade-runtime",
+  "--features",
+  "ade-runtime/native-terminal",
+]
+watch = [
+  "crates/ade-core",
+  "crates/ade-runtime",
+  "crates/ade-platform",
+  "Cargo.toml",
+  "Cargo.lock",
+  "rust-toolchain.toml",
+  "scripts/cargo.mjs",
+  "native",
+  "scripts/bootstrap.py",
+]
+
+[keybindings]
+c = "job:clippy-core"
+t = "job:test-core"
+r = "job:check-runtime"

@@ -14,6 +14,7 @@ import { turnReply } from './providers'
 import { configureService, nodeService, waitForReadiness, writeServicePrograms } from './services'
 import { primaryShell, TerminalStream } from './terminals'
 import { expect } from '@playwright/test'
+import type { LatencySample } from './performance-recording'
 
 export type Workload = {
   workspaceId: string
@@ -84,16 +85,28 @@ export async function startWorkload(
 }
 
 /** Run `action` and return its wall time in milliseconds with its result. */
-export async function timed<T>(action: () => Promise<T>): Promise<{ ms: number; value: T }> {
+export async function timed<T>(
+  action: () => Promise<T>,
+  record?: (sample: LatencySample) => void,
+  name = 'operation',
+): Promise<{ ms: number; value: T }> {
   const started = performance.now()
-  const value = await action()
-  return { ms: performance.now() - started, value }
+  try {
+    const value = await action()
+    const ms = performance.now() - started
+    record?.({ name, ms, status: 'passed' })
+    return { ms, value }
+  } catch (error) {
+    record?.({ name, ms: performance.now() - started, status: 'failed', error: String(error) })
+    throw error
+  }
 }
 
-export type LatencySummary = { count: number; p50: number; p95: number; max: number }
+export type LatencySummary = { count: number; p50: number | null; p95: number | null; max: number | null }
 
 /** Nearest-rank percentiles of `samples`, rounded to 0.1 ms. */
 export function summarize(samples: number[]): LatencySummary {
+  if (!samples.length) return { count: 0, p50: null, p95: null, max: null }
   const sorted = [...samples].sort((a, b) => a - b)
   const rank = (p: number) => sorted[Math.max(0, Math.ceil((p / 100) * sorted.length) - 1)] ?? 0
   const round = (value: number) => Math.round(value * 10) / 10
@@ -104,15 +117,24 @@ export function summarize(samples: number[]): LatencySummary {
  * Time terminal echo: write a shell arithmetic expression and wait for its
  * result, which the input echo cannot contain. Returns one sample per round.
  */
-export async function terminalEcho(terminal: TerminalStream, rounds: number, base: number): Promise<number[]> {
+export async function terminalEcho(
+  terminal: TerminalStream,
+  rounds: number,
+  base: number,
+  record?: (sample: LatencySample) => void,
+): Promise<number[]> {
   const samples: number[] = []
   for (let round = 0; round < rounds; round++) {
     const value = base + round
     const pattern = new RegExp(`(^|\\n)${value}\\r?\\n`)
-    const { ms } = await timed(async () => {
-      terminal.send({ op: 'input', data: `echo $((${value - 1}+1))\n` })
-      await terminal.waitForText(pattern, 30_000)
-    })
+    const { ms } = await timed(
+      async () => {
+        terminal.send({ op: 'input', data: `echo $((${value - 1}+1))\n` })
+        await terminal.waitForText(pattern, 30_000)
+      },
+      record,
+      'terminal.echo',
+    )
     samples.push(ms)
   }
   return samples
@@ -131,7 +153,10 @@ export class AdmissionClient {
   private next = 0
   private readonly pending = new Map<number, (reply: WorkerReply) => void>()
 
-  private constructor(private readonly worker: Worker) {
+  private constructor(
+    private readonly worker: Worker,
+    private readonly record?: (sample: LatencySample) => void,
+  ) {
     worker.on('message', (reply: WorkerReply) => {
       this.pending.get(reply.id)?.(reply)
       this.pending.delete(reply.id)
@@ -139,7 +164,7 @@ export class AdmissionClient {
     worker.unref()
   }
 
-  static start(profile: ScratchProfile): AdmissionClient {
+  static start(profile: ScratchProfile, record?: (sample: LatencySample) => void): AdmissionClient {
     const code = `
       const { parentPort, workerData } = require('node:worker_threads')
       const { performance } = require('node:perf_hooks')
@@ -159,6 +184,7 @@ export class AdmissionClient {
         eval: true,
         workerData: { client: pathToFileURL(binaries.client).href, socket: profile.socket },
       }),
+      record,
     )
   }
 
@@ -168,6 +194,12 @@ export class AdmissionClient {
     const reply = await new Promise<WorkerReply>((resolveReply) => {
       this.pending.set(id, resolveReply)
       this.worker.postMessage({ id, op, request })
+    })
+    this.record?.({
+      name: `admission.${op}`,
+      ms: reply.ms,
+      status: reply.error === undefined ? 'passed' : 'failed',
+      ...(reply.error === undefined ? {} : { error: reply.error }),
     })
     if (reply.error !== undefined) throw new Error(`${op} failed on the admission client: ${reply.error}`)
     return { ms: reply.ms, value: reply.value as Response<O> }

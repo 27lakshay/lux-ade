@@ -1,3 +1,4 @@
+import { Heading } from '@/components/Typography'
 import { BottomBar } from './chrome/BottomBar'
 import { Rail } from './chrome/Rail'
 import { TitleBar } from './chrome/TitleBar'
@@ -10,10 +11,11 @@ export function Workspace({ renderContent }: { renderContent?: RenderContent }) 
   return (
     <div className="flex h-full flex-col bg-base text-foreground">
       <TitleBar />
-      <div className="flex min-h-0 flex-1">
+      <main className="flex min-h-0 flex-1" aria-label="Workspace">
+        <Heading className="sr-only">ADE workspace</Heading>
         <Rail />
         <CardArea />
-      </div>
+      </main>
       <BottomBar />
       <ContentHosts render={renderContent} />
     </div>

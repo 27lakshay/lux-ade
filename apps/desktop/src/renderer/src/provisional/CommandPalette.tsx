@@ -28,6 +28,7 @@ export function CommandPalette({ service }: { service: CommandService }) {
     setOpen(false)
     service.execute(command.id)
   }
+  if (!open) return null
   return (
     <CommandDialog open={open} onOpenChange={setOpen}>
       <CommandRoot>

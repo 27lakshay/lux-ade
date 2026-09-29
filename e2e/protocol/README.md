@@ -24,6 +24,32 @@ pnpm test:e2e:protocol:only boot --grep "restart"
   test always keeps it and prints its path.
 - `pnpm typecheck` (part of `pnpm check:static`) typechecks this directory.
 
+## Suite selection
+
+Ordinary protocol correctness excludes `@load`, `@system` and artifact-dependent package
+specs. Setting external opt-in variables does not change default discovery. The fault command
+selects a subset of this correctness suite; do not rerun it after a full correctness pass.
+The fault coverage map separately names system cases and their missing-environment gaps.
+
+| Command | Scope and prerequisites |
+|---|---|
+| `pnpm test:e2e:protocol:only` | Correctness; build backend, SDK and CLI first |
+| `pnpm test:e2e:protocol:faults:only` | Fault subset of correctness; same builds |
+| `pnpm test:performance` | Isolated load, startup and streaming/resync workloads; builds debug backend, SDK and CLI; one worker |
+| `pnpm test:e2e:system` | `@system` cases alone, one worker; same builds, macOS disk services and explicit `ADE_E2E_SYSTEM=1` |
+| `pnpm test:e2e:package` | Packaged protocol and desktop projects; a built candidate at `ADE_E2E_PACKAGE_APP` or the normal package output |
+| `pnpm test:e2e:live:desktop` | Live built/packaged desktop cases; `ADE_RUN_LIVE_PROVIDERS=1`, a candidate and installed/authenticated providers |
+| `pnpm test:e2e:live <provider>` | Existing Python live-provider probe; explicit `ADE_RUN_LIVE_PROVIDERS=1`, backend build and installed/authenticated provider |
+
+Append `--list` to a Playwright command to inspect native discovery without running tests or
+requiring an artifact. Actual execution of package, live and system suites fails on missing
+prerequisites instead of succeeding with skipped tests. Provider authentication failures remain
+execution failures. No live usage or system-volume run is implied by ordinary acceptance.
+
+Package acceptance has `package-protocol` and `package-desktop` projects; use `--project` to
+focus one. All correctness configs use zero retries. Existing scratch fixtures retain ownership
+of profiles, processes and cleanup. Shared Playwright selection is defined in `e2e/suites.ts`.
+
 ## Writing a spec
 
 Put a spec in the subdirectory for its area (`<area>/<topic>.spec.ts`, such as
@@ -133,7 +159,7 @@ p95 command admission and records echo, CPU, memory, queues and recovery
 time. It is heavy and measures latency, so it is left out of the fault suite.
 Run it alone:
 
-    ADE_E2E_WORKERS=1 ADE_E2E_LOAD_RESULTS=/tmp/load.json pnpm test:e2e:protocol:only load/load.spec.ts
+    ADE_E2E_LOAD_RESULTS=/tmp/load.json pnpm test:performance
 
 `fixtures/load.ts` has the workload and `AdmissionClient`, which times SDK
 calls on a worker thread so the test's own terminal parsing is not counted.
@@ -157,8 +183,33 @@ keychains, or touch the login keychain from a spec or fixture. Secret storage is
 tested through the test-only file backend (`ADE_SECRET_STORE=file`, set by
 `scratchEnvironment`); `ScratchProfile` refuses to launch a daemon without it.
 A release daemon refuses that setting, so the file backend never ships. Specs that use other system services
-(the `volume` fixture uses `hdiutil`) skip unless `ADE_E2E_SYSTEM=1`. Run those
-alone:
+(the `volume` fixture uses `hdiutil`) belong to the explicit system suite. Its prerequisite
+check requires `ADE_E2E_SYSTEM=1`. Run it alone:
 
-    ADE_E2E_SYSTEM=1 ADE_E2E_WORKERS=1 pnpm test:e2e:protocol:only <spec>
+    ADE_E2E_SYSTEM=1 pnpm test:e2e:system
 
+
+
+### Interactive failure diagnosis
+
+```sh
+pnpm test:e2e:protocol:only e2e/protocol/ops/diagnostic-correlation.spec.ts --ui
+ADE_TEST_HTML=1 pnpm test:e2e:protocol:only e2e/protocol/ops/diagnostic-correlation.spec.ts --workers 1
+pnpm exec playwright show-report test-results/runs/protocol-<run-id>/html
+```
+
+Use the UI to select and rerun a case. The diagnostic-correlation spec has named steps for
+sending, viewer disconnect and export checks. Add similarly meaningful `test.step` boundaries
+to complex scenarios. Headless daemon tests have no browser page to trace: inspect the retained
+operation log, provider calls, daemon/runtime logs and fixture phase attachment. Optional HTML
+reports preserve the terminal and native JSON reporters and never open automatically. Stop the
+UI process before collecting uninstrumented timings.
+
+### Focused device acceptance
+
+Run `pnpm test:e2e:devices` to build prerequisites and execute the maintained device specs,
+including `devplug/device-input.spec.ts`. The `:only` variant requires existing debug backend,
+SDK and CLI builds. The same cases remain in ordinary protocol acceptance. They use scripted
+simulator/Android tools, and their report explicitly leaves physical-device acceptance
+unexecuted. F098 display/application input remains a known gap. No hardware is provisioned or
+operated by this command.

@@ -3,7 +3,8 @@
 // `e2e/protocol/conversations/cli-journal.spec.ts`.
 // Run after `pnpm build:sdk`: node --test packages/client/src/journals.test.mjs
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import fs, { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { syncBuiltinESMExports } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -13,6 +14,7 @@ import {
   openClientJournals,
   sendGitMutation,
   GitOperationBlocked,
+  GitJournal,
   SendHeld,
   SendPipeline,
   sendJournaled,
@@ -89,6 +91,66 @@ test('a version 1 Git journal is refused and left in place', async (t) => {
   await writeFile(join(directory, 'git-intents-v1.json'), old)
   await assert.rejects(openClientJournals(directory), /Git recovery journal version 1 is not read by this build/)
   assert.equal(await readFile(join(directory, 'git-intents-v1.json'), 'utf8'), old)
+})
+
+test('a refused journal waits for its outstanding owner-file write before returning', { timeout: 5000 }, async (t) => {
+  const directory = await scratch(t)
+  await writeFile(join(directory, 'git-intents-v1.json'), JSON.stringify({ version: 1, active: [], archived: [] }))
+  let entered
+  let release
+  const writing = new Promise((resolve) => {
+    entered = resolve
+  })
+  const gate = new Promise((resolve) => {
+    release = resolve
+  })
+  let refused
+  const refusal = new Promise((resolve) => {
+    refused = resolve
+  })
+  const originalGitOpen = GitJournal.open.bind(GitJournal)
+  const gitOpen = t.mock.method(GitJournal, 'open', async (...args) => {
+    try {
+      return await originalGitOpen(...args)
+    } catch (error) {
+      refused()
+      throw error
+    }
+  })
+  const original = fs.open
+  const patched = t.mock.method(fs, 'open', async (file, ...args) => {
+    if (String(file).startsWith(join(directory, 'window-owner-v1.json.'))) {
+      entered()
+      await gate
+    }
+    return original(file, ...args)
+  })
+  syncBuiltinESMExports()
+  let settled = false
+  const opening = openClientJournals(directory).then(
+    () => {
+      settled = true
+      return null
+    },
+    (error) => {
+      settled = true
+      return error
+    },
+  )
+  try {
+    await writing
+    await refusal
+    // Flush rejection handlers after the real read failed, while the sibling write is held.
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(settled, false, 'A rejected open must not leave a writer racing directory cleanup')
+  } finally {
+    release()
+    const error = await opening
+    patched.mock.restore()
+    gitOpen.mock.restore()
+    syncBuiltinESMExports()
+    assert.match(error?.message ?? '', /Git recovery journal version 1/)
+  }
 })
 
 test('a corrupt journal file is refused and left for recovery', async (t) => {

@@ -40,8 +40,21 @@ pnpm check:static
 ```
 
 This required gate checks formatting, contracts, architecture, API parity, builds, TypeScript,
-lint, dead code, JavaScript and renderer tests, Clippy and Rust tests. Protocol and desktop E2E
-run separately:
+lint, dead code, discovery, deterministic providers, retained Python checks, JavaScript and
+renderer tests, Clippy and Rust tests. During development, inspect and run the affected suites:
+
+```sh
+pnpm test:affected --base main --list
+pnpm test:affected --base main
+```
+
+For complete local acceptance, including builds, static checks, protocol and desktop E2E:
+
+```sh
+pnpm test:acceptance
+```
+
+Protocol and desktop E2E also run separately:
 
 ```sh
 pnpm test:e2e:protocol
@@ -52,6 +65,10 @@ The [protocol suite](e2e/protocol/README.md) starts real daemon and runtime proc
 scratch profiles and provider mocks. The [desktop suite](e2e/desktop/README.md) launches the
 built Electron app against the same kind of scratch backend. Inspect the running app after a UI
 change; tests alone do not show every pointer, focus or drawn-state regression.
+
+Follow [the testing workflow](docs/testing.md#workflow-for-a-change) for test placement,
+regression evidence and rerun decisions. Packaged, installed-provider, live, system, device
+and performance checks have separate commands and prerequisites in that guide.
 
 ## Where work belongs
 
