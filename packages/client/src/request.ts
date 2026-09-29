@@ -56,6 +56,7 @@ export const daemonRefusalCodes = [
   'provider_not_found',
   'invalid_keybinding',
   'keybinding_conflict',
+  'review_file_unavailable',
 ] as const
 
 export type KnownDaemonErrorCode = (typeof categoryErrorCodes)[number] | (typeof daemonRefusalCodes)[number]

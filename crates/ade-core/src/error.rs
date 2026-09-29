@@ -201,6 +201,13 @@ fn delete_blocked_message(blockers: &[crate::workspaces::DeleteBlocker]) -> Stri
 #[error("{0}")]
 pub struct ReviewAnchorStale(pub &'static str);
 
+/// `review.diff` or `review.diff_page` named a file the workspace's status
+/// does not list as changed, or a side (staged or unstaged) with no changes.
+/// Refresh Changes and pick the file again.
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub struct ReviewFileUnavailable(pub &'static str);
+
 /// Review feedback would replace text or attachments the window's draft
 /// still holds.
 #[derive(Debug, thiserror::Error)]
@@ -672,6 +679,10 @@ pub fn error_envelope(error: anyhow::Error) -> serde_json::Value {
     if let Some(stale) = error.downcast_ref::<ReviewAnchorStale>() {
         return serde_json::json!({"type":"error","message":stale.to_string(),
             "code":"review_anchor_stale","recovery":"refresh_changes"});
+    }
+    if let Some(unavailable) = error.downcast_ref::<ReviewFileUnavailable>() {
+        return serde_json::json!({"type":"error","message":unavailable.to_string(),
+            "code":"review_file_unavailable","recovery":"refresh_changes"});
     }
     if error.downcast_ref::<DraftNotEmpty>().is_some() {
         return serde_json::json!({"type":"error","message":DraftNotEmpty.to_string(),

@@ -99,6 +99,7 @@ the shared "key" and the "commands" that would share it.
   28 draft_not_empty                     29 lifecycle_busy
   30 review_prompt_too_long              31 provider_not_found
   32 invalid_keybinding                  33 keybinding_conflict
+  34 review_file_unavailable
   16 also: a workspace worktree operation that ended "failed"
 Commands that change state take --operation-id ID, before or after the command.
 Without it the CLI generates one, and an error names it as "operation_id".
@@ -499,6 +500,7 @@ const exitCodes: Record<ErrorCode | KnownDaemonErrorCode, number> = {
   provider_not_found: 31,
   invalid_keybinding: 32,
   keybinding_conflict: 33,
+  review_file_unavailable: 34,
 }
 
 void main()

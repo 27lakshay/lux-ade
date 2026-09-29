@@ -148,6 +148,28 @@ impl Mutation {
         }
     }
 
+    /// Refuses malformed fields before anything is recorded: a path outside
+    /// the tree, a token Changes never showed, a blank or oversized message.
+    fn check(&self) -> Result<()> {
+        if let Some(path) = self.path() {
+            path_arg(path)?;
+        }
+        match self {
+            Self::Stage(request) => token("revision", &request.revision),
+            Self::Unstage(request) => token("revision", &request.revision),
+            Self::Discard(request) => {
+                token("revision", &request.revision)?;
+                token("diff_token", &request.diff_token)
+            }
+            Self::Commit(request) => {
+                let message = text("message", &request.message)?;
+                ensure!(!message.trim().is_empty(), "Commit message is empty");
+                token("index_token", &request.index_token)
+            }
+            Self::Hunk(_) | Self::Sync(_) => Ok(()),
+        }
+    }
+
     /// The canonical payload the receipt fingerprints.
     fn payload(&self) -> Result<Value> {
         Ok(match self {
@@ -940,16 +962,7 @@ impl Git<'_> {
     }
     fn diff_source(&self, path: &str, staged: bool, state: &Value) -> Result<String> {
         path_arg(path)?;
-        let file = state["files"]
-            .as_array()
-            .context("Missing changed files")?
-            .iter()
-            .find(|file| file["path"] == path)
-            .context("File is no longer changed; refresh")?;
-        ensure!(
-            file[if staged { "staged" } else { "unstaged" }] == true,
-            "This file has no changes in that area"
-        );
+        let file = changed_file(state, path, staged)?;
         let mut args = vec![
             "diff",
             "--no-ext-diff",
@@ -974,16 +987,7 @@ impl Git<'_> {
     fn diff(&self, path: &str, staged: bool) -> Result<ReviewDiff> {
         path_arg(path)?;
         let state = self.status()?;
-        let file = state["files"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|f| f["path"] == path)
-            .context("File is no longer changed; refresh")?;
-        ensure!(
-            file[if staged { "staged" } else { "unstaged" }] == true,
-            "This file has no changes in that area"
-        );
+        let file = changed_file(&state, path, staged)?;
         let mut args = vec![
             "diff",
             "--no-ext-diff",
@@ -1038,6 +1042,39 @@ impl Git<'_> {
         })
     }
 }
+/// The status entry of a changed file with changes on the requested side, or
+/// `review_file_unavailable`.
+fn changed_file<'a>(state: &'a Value, path: &str, staged: bool) -> Result<&'a Value> {
+    let file = state["files"]
+        .as_array()
+        .context("Missing changed files")?
+        .iter()
+        .find(|file| file["path"] == path)
+        .ok_or(ade_core::error::ReviewFileUnavailable(
+            "This file is no longer changed; refresh Changes",
+        ))?;
+    ensure!(
+        file[if staged { "staged" } else { "unstaged" }] == true,
+        ade_core::error::ReviewFileUnavailable(
+            "This file has no changes on that side; refresh Changes"
+        )
+    );
+    Ok(file)
+}
+
+/// A status revision, diff token or index token as the daemon hands them out:
+/// 16 lowercase hexadecimal digits.
+fn token(key: &str, value: &str) -> Result<()> {
+    ensure!(
+        value.len() == 16
+            && value
+                .bytes()
+                .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')),
+        "Invalid {key}: expected the 16-digit token Changes showed"
+    );
+    Ok(())
+}
+
 fn parse_status(raw: &str) -> Result<Value> {
     let mut files = Vec::new();
     let mut branch = "";
@@ -1550,6 +1587,7 @@ impl Review {
             });
         }
         let mutation = Mutation::decode(request)?;
+        mutation.check()?;
         let id = text("operation_id", mutation.id())?.to_owned();
         ensure!(id.len() <= 256, "Operation ID too long");
         let payload = mutation.payload()?;
