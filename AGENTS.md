@@ -40,8 +40,6 @@ in UI copy.
 - Renderer stores and components are tested with Vitest in browser mode, beside the code.
 - Deterministic in-process tests stay allowed for pure cores: fingerprints, reducers, codecs,
   schema round-trips and reconciliation deciders, kept beside the code they test.
-- `e2e/specs` holds legacy CLI and daemon specs that `e2e/protocol` does not cover yet. Port one
-  into `e2e/protocol`, then delete it.
 
 ## Architecture
 
