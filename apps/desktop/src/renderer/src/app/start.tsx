@@ -8,8 +8,6 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import { TITLEBAR_HEIGHT, TRAFFIC_LIGHTS_INSET } from '../../../shared/window-chrome'
 import { Workspace } from '../features/workspace/Workspace'
 import { handleLayoutCommand, registerLayoutCommands } from '../features/workspace/model/layout-commands'
-import { startLayoutImport } from '../features/workspace/model/layout-import'
-import { layoutBridge } from '../features/workspace/model/layout-store'
 import { hostConnection, startLayoutSync } from '../features/workspace/model/layout-sync'
 import { createDaemonStore } from '../state/daemon-store'
 import { DaemonStoreContext } from '../state/hooks'
@@ -59,7 +57,6 @@ export async function start(): Promise<void> {
   // This window's layouts come from the daemon; the bench serves its own (dev/bench.tsx).
   if (daemon && !bench) {
     startLayoutSync(hostConnection(window.adeHost, daemon.store))
-    startLayoutImport(daemon.store, layoutBridge)
   }
   // Menu commands that change the screen. Any other command acts on the workspace, so it first
   // returns there from a full-screen view.
