@@ -185,10 +185,10 @@ test('resolves scope and provider selection per workspace into each native docum
     definition: stdio({ providers: { kind: 'only', provider_ids: ['codex'] }, env: {} }),
   })
   await call(profile, 'mcp.server.add', { name: 'switched-off', definition: stdio({ enabled: false, env: {} }) })
-  expect(alpha.repository_id).toBeTruthy()
+  expect(alpha.project_id).toBeTruthy()
   await call(profile, 'mcp.server.add', {
     name: 'alpha-repo',
-    definition: stdio({ scope: { kind: 'repositories', repository_ids: [alpha.repository_id] }, env: {} }),
+    definition: stdio({ scope: { kind: 'repositories', repository_ids: [alpha.project_id] }, env: {} }),
   })
 
   const names = (resolution: any) => resolution.servers.map((server: any) => server.name).sort()
@@ -261,11 +261,11 @@ test('a repository-scoped entry reaches Oh My Pi in that repository only', async
   const other = await ade.repo({ name: 'other' })
   const workspace = (await profile.call('workspace.open', { path: repo.path })).workspace
   const outside = (await profile.call('workspace.open', { path: other.path })).workspace
-  expect(workspace.repository_id).toBeTruthy()
-  expect(outside.repository_id).not.toBe(workspace.repository_id)
+  expect(workspace.project_id).toBeTruthy()
+  expect(outside.project_id).not.toBe(workspace.project_id)
   await call(profile, 'mcp.server.add', {
     name: 'repo-tools',
-    definition: stdio({ scope: { kind: 'repositories', repository_ids: [workspace.repository_id] }, env: {} }),
+    definition: stdio({ scope: { kind: 'repositories', repository_ids: [workspace.project_id] }, env: {} }),
   })
   const resolved = await call(profile, 'mcp.resolve', { workspace_id: workspace.id, provider: 'omp' })
   expect(resolved.format).toBe('omp_mcp_json')

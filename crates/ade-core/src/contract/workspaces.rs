@@ -401,8 +401,7 @@ mod tests {
 
     fn workspace() -> Value {
         json!({
-            "id": "workspace_1", "repository_id": null,
-            "root": "/tmp/project", "name": "project",
+            "id": "workspace_1", "root": "/tmp/project", "name": "project",
             "needs_rebind": false, "worktree_lifecycle_needs_rebind": false,
             "project_id": "project_1", "kind": "folder", "branch": null,
             "default": false, "ade_owned": false,
@@ -503,7 +502,8 @@ mod tests {
             json!({"type": "ack", "workspace": workspace()}),
         );
         let mut linked = workspace();
-        linked["repository_id"] = json!("repo_1");
+        linked["project_id"] = json!("repo_1");
+        linked["kind"] = json!("linked_worktree");
         response::<WorkspaceAck>(
             "workspace.rebind",
             json!({"type": "ack", "workspace": linked}),

@@ -143,7 +143,6 @@ export type ContractDefinition =
   | CatalogFrame
   | CatalogGetRequest
   | CatalogProject
-  | CatalogRepository
   | Catalogue
   | CheckState
   | CheckedPreset
@@ -4558,11 +4557,6 @@ export interface Catalogue {
    */
   projects: CatalogProject[]
   /**
-   * Deprecated: the repository projects alone, in registration order.
-   * Kept for clients written before `projects`; read `projects` instead.
-   */
-  repositories: CatalogRepository[]
-  /**
    * The listed workspaces' terminals, in creation order.
    */
   terminals: TerminalRecord[]
@@ -4643,23 +4637,6 @@ export interface CatalogProject {
   name: string
   /**
    * A repository's Git common directory, or the folder.
-   */
-  root: string
-  [k: string]: unknown
-}
-/**
- * A repository project as the deprecated `Catalogue::repositories` lists
- * it. `Catalogue::projects` lists every project, plain folders included.
- */
-export interface CatalogRepository {
-  id: string
-  /**
-   * The display name: the top-level checkout folder's name (see
-   * `crate::workspaces::project_name`).
-   */
-  name: string
-  /**
-   * The Git common directory, as `RepositoryRecord::root` holds it.
    */
   root: string
   [k: string]: unknown
@@ -4789,12 +4766,11 @@ export interface WorkspaceRecord {
   name: string
   needs_rebind: boolean
   /**
-   * The project this workspace belongs to; never empty in a reply. A
-   * repository workspace's project is its repository (`repository_id` is
-   * kept as a deprecated alias of it); a plain folder is a project of its own.
+   * The project this workspace belongs to; never empty. A repository
+   * workspace's project is its repository; a plain folder is a project of
+   * its own.
    */
   project_id: string
-  repository_id: string | null
   root: string
   worktree_lifecycle_needs_rebind: boolean
   [k: string]: unknown

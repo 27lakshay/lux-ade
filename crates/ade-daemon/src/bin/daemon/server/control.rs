@@ -45,7 +45,7 @@ pub(super) fn refusal(op: &str) -> Value {
 }
 
 /// Opens the control lane. A daemon that cannot open it still serves its
-/// owner socket; clients then fall back to that socket, as with an older daemon.
+/// owner socket; clients then fall back to that socket.
 pub(super) fn start(host: &Arc<Host>) -> Option<runtime::SocketGuard> {
     let path = control_socket(&host.socket);
     match runtime::SocketGuard::bind(&path) {

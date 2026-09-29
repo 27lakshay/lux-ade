@@ -732,8 +732,9 @@ impl Sessions {
                 let id = string("workspace_id")?;
                 data.store.ensure_workspace_bound(id)?;
                 let workspace = data.store.workspace(id)?;
-                let common_binding = workspace
-                    .repository_id
+                let common_binding = data
+                    .store
+                    .workspace_repository(id)?
                     .as_deref()
                     .map(|repository_id| data.store.repository_binding_identity(repository_id))
                     .transpose()?;

@@ -4736,28 +4736,6 @@
       ],
       "type": "object"
     },
-    "CatalogRepository": {
-      "description": "A repository project as the deprecated `Catalogue::repositories` lists\nit. `Catalogue::projects` lists every project, plain folders included.",
-      "properties": {
-        "id": {
-          "type": "string"
-        },
-        "name": {
-          "description": "The display name: the top-level checkout folder's name (see\n`crate::workspaces::project_name`).",
-          "type": "string"
-        },
-        "root": {
-          "description": "The Git common directory, as `RepositoryRecord::root` holds it.",
-          "type": "string"
-        }
-      },
-      "required": [
-        "id",
-        "root",
-        "name"
-      ],
-      "type": "object"
-    },
     "Catalogue": {
       "properties": {
         "conversations": {
@@ -4767,23 +4745,13 @@
           "type": "array"
         },
         "projects": {
-          "default": [],
           "description": "The projects of the listed workspaces, in the order their first\nworkspace was registered.",
           "items": {
             "$ref": "#/$defs/CatalogProject"
           },
           "type": "array"
         },
-        "repositories": {
-          "default": [],
-          "description": "Deprecated: the repository projects alone, in registration order.\nKept for clients written before `projects`; read `projects` instead.",
-          "items": {
-            "$ref": "#/$defs/CatalogRepository"
-          },
-          "type": "array"
-        },
         "terminals": {
-          "default": [],
           "description": "The listed workspaces' terminals, in creation order.",
           "items": {
             "$ref": "#/$defs/TerminalRecord"
@@ -4806,7 +4774,6 @@
       },
       "required": [
         "projects",
-        "repositories",
         "workspaces",
         "conversations",
         "windows",
@@ -29673,15 +29640,8 @@
           "type": "boolean"
         },
         "project_id": {
-          "default": "",
-          "description": "The project this workspace belongs to; never empty in a reply. A\nrepository workspace's project is its repository (`repository_id` is\nkept as a deprecated alias of it); a plain folder is a project of its own.",
+          "description": "The project this workspace belongs to; never empty. A repository\nworkspace's project is its repository; a plain folder is a project of\nits own.",
           "type": "string"
-        },
-        "repository_id": {
-          "type": [
-            "string",
-            "null"
-          ]
         },
         "root": {
           "type": "string"
@@ -29693,7 +29653,6 @@
       },
       "required": [
         "id",
-        "repository_id",
         "root",
         "name",
         "needs_rebind",

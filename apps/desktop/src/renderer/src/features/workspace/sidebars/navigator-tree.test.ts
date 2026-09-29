@@ -6,7 +6,6 @@ const workspace = (id: string, name: string, project_id: string, extra: Partial<
   id,
   name,
   project_id,
-  repository_id: null,
   root: `/code/${name}`,
   needs_rebind: false,
   worktree_lifecycle_needs_rebind: false,

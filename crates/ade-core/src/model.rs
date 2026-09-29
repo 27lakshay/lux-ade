@@ -14,17 +14,15 @@ pub struct Repository {
 #[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
 pub struct WorkspaceRecord {
     pub id: String,
-    pub repository_id: Option<String>,
     pub root: String,
     pub name: String,
     #[serde(default)]
     pub needs_rebind: bool,
     #[serde(default)]
     pub worktree_lifecycle_needs_rebind: bool,
-    /// The project this workspace belongs to; never empty in a reply. A
-    /// repository workspace's project is its repository (`repository_id` is
-    /// kept as a deprecated alias of it); a plain folder is a project of its own.
-    #[serde(default)]
+    /// The project this workspace belongs to; never empty. A repository
+    /// workspace's project is its repository; a plain folder is a project of
+    /// its own.
     pub project_id: String,
     /// Whether this is a repository's primary checkout, a linked worktree or
     /// a plain folder.
@@ -267,17 +265,6 @@ impl PendingRequest {
         }
     }
 }
-/// A repository project as the deprecated `Catalogue::repositories` lists
-/// it. `Catalogue::projects` lists every project, plain folders included.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
-pub struct CatalogRepository {
-    pub id: String,
-    /// The Git common directory, as `RepositoryRecord::root` holds it.
-    pub root: String,
-    /// The display name: the top-level checkout folder's name (see
-    /// `crate::workspaces::project_name`).
-    pub name: String,
-}
 /// What a project is.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -304,18 +291,12 @@ pub struct CatalogProject {
 pub struct Catalogue {
     /// The projects of the listed workspaces, in the order their first
     /// workspace was registered.
-    #[serde(default)]
     pub projects: Vec<CatalogProject>,
-    /// Deprecated: the repository projects alone, in registration order.
-    /// Kept for clients written before `projects`; read `projects` instead.
-    #[serde(default)]
-    pub repositories: Vec<CatalogRepository>,
     pub workspaces: Vec<WorkspaceRecord>,
     pub conversations: Vec<Conversation>,
     /// Every window, open and closed, as `window.list` gives them.
     pub windows: Vec<crate::contract::layout::Window>,
     /// The listed workspaces' terminals, in creation order.
-    #[serde(default)]
     pub terminals: Vec<crate::contract::terminals::TerminalRecord>,
 }
 #[derive(Serialize, Deserialize, Clone, Debug)]

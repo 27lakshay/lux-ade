@@ -28,8 +28,8 @@ test('Git and ordinary folders retain identity and report missing or replaced bi
 
   const ordinary = (await profile.call('workspace.open', { path: plain })).workspace
   const repository = (await profile.call('workspace.open', { path: checkout })).workspace
-  expect(ordinary.repository_id).toBeNull()
-  expect(repository.repository_id).toEqual(expect.any(String))
+  expect(ordinary.kind).toBe('folder')
+  expect(repository.kind).toBe('primary_checkout')
   expect((await profile.call('workspace.open', { path: alias })).workspace).toMatchObject({
     id: ordinary.id,
     root: ordinary.root,
@@ -39,12 +39,12 @@ test('Git and ordinary folders retain identity and report missing or replaced bi
   await profile.restartDaemon()
   expect((await profile.call('workspace.open', { path: plain })).workspace).toMatchObject({
     id: ordinary.id,
-    repository_id: null,
+    project_id: ordinary.project_id,
     needs_rebind: false,
   })
   expect((await profile.call('workspace.open', { path: checkout })).workspace).toMatchObject({
     id: repository.id,
-    repository_id: repository.repository_id,
+    project_id: repository.project_id,
     needs_rebind: false,
   })
 

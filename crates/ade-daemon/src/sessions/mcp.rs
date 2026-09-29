@@ -111,11 +111,12 @@ pub(super) fn launch_servers(
     }
     ensure(&store.connection)?;
     let servers = read_all(&store.connection)?;
+    let repository = store.workspace_repository(&workspace.id)?;
     let resolution = catalog::resolve(
         &servers,
         &Target {
             workspace_id: &workspace.id,
-            repository_id: workspace.repository_id.as_deref(),
+            repository_id: repository.as_deref(),
             provider,
         },
     );
@@ -268,11 +269,12 @@ fn mcp_command(store: &Store, request: &Value) -> Result<Value> {
             let workspace = store.workspace(workspace_id)?;
             ensure(connection)?;
             let servers = read_all(connection)?;
+            let repository = store.workspace_repository(workspace_id)?;
             let resolution = catalog::resolve(
                 &servers,
                 &Target {
                     workspace_id,
-                    repository_id: workspace.repository_id.as_deref(),
+                    repository_id: repository.as_deref(),
                     provider,
                 },
             );

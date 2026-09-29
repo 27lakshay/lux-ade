@@ -241,7 +241,7 @@ test('a removed ADE-made worktree can then be removed by worktree.remove without
   )
 })
 
-test('the catalog lists each repository once, named after its checkout folder, for a main checkout and a linked worktree', async ({
+test('the catalog lists each repository project once, named after its checkout folder, for a main checkout and a linked worktree', async ({
   ade,
   profile,
 }) => {
@@ -252,25 +252,24 @@ test('the catalog lists each repository once, named after its checkout folder, f
   const tree = (await profile.call('workspace.open', { path: linked })).workspace
   const plain = (await profile.call('workspace.open', { path: await folder(profile, 'notes') })).workspace
 
-  const listed = await catalog(profile)
-  expect(main.repository_id).not.toBeNull()
-  expect(tree.repository_id).toBe(main.repository_id)
-  expect(plain.repository_id).toBeNull()
-  expect(listed.repositories).toEqual([
-    { id: main.repository_id, root: join(repo.path, '.git'), name: basename(repo.path) },
+  const repositories = async () => (await catalog(profile)).projects.filter((project) => project.kind === 'repository')
+  expect(tree.project_id).toBe(main.project_id)
+  expect(plain.project_id).not.toBe(main.project_id)
+  expect(await repositories()).toEqual([
+    { id: main.project_id, kind: 'repository', root: join(repo.path, '.git'), name: basename(repo.path) },
   ])
   expect(basename(repo.path)).toBe('shop')
 
-  // The SDK's catalog parser keeps the repositories.
+  // The SDK's catalog parser keeps the projects.
   const feed = await subscribeFeed(profile)
   await feed.connected()
   const state = feed.client.getState().catalog!
-  expect(state.repositories).toEqual(listed.repositories)
+  expect(state.projects).toEqual((await catalog(profile)).projects)
   feed.stop()
 
-  // A repository leaves the catalog with the last of its workspaces.
+  // A repository project leaves the catalog with the last of its workspaces.
   await profile.call('workspace.remove', { workspace_id: main.id })
-  expect((await catalog(profile)).repositories).toHaveLength(1)
+  expect(await repositories()).toHaveLength(1)
   await profile.call('workspace.remove', { workspace_id: tree.id })
-  expect((await catalog(profile)).repositories).toEqual([])
+  expect(await repositories()).toEqual([])
 })

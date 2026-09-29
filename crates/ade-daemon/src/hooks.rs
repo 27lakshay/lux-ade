@@ -105,7 +105,7 @@ impl Event {
             kind: HookEvent::WorkspaceCreated,
             source_key: format!("workspace:{}:created", workspace.id),
             payload: json!({"workspace_id": workspace.id, "root": workspace.root,
-                "repository_id": workspace.repository_id}),
+                "project_id": workspace.project_id}),
         }
     }
 

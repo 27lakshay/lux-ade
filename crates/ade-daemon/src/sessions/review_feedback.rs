@@ -110,8 +110,9 @@ impl Sessions {
             Self::ensure_not_imported(&current)?;
             d.store.ensure_workspace_bound(&current.workspace_id)?;
             let workspace = d.store.workspace(&current.workspace_id)?;
-            let common_binding = workspace
-                .repository_id
+            let common_binding = d
+                .store
+                .workspace_repository(&workspace.id)?
                 .as_deref()
                 .map(|repository| d.store.repository_binding_identity(repository))
                 .transpose()?;

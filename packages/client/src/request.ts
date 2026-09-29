@@ -137,8 +137,8 @@ export function controlSocketPath(socketPath: string): string {
  * One version-checked request over the selected profile's Unix command socket.
  * A control operation goes over the profile's control lane, which ordinary
  * traffic cannot saturate. It falls back to the profile socket only when the
- * control lane took nothing: it is absent, as with an older daemon, or
- * refused or closed the connection before the request was sent.
+ * control lane took nothing: the daemon could not open it, or it refused or
+ * closed the connection before the request was sent.
  */
 export async function requestDaemon(
   socketPath: string,

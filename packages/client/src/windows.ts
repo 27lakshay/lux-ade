@@ -56,7 +56,7 @@ export function parseWindow(value: unknown): Window | null {
   if (source.state !== 'open' && source.state !== 'closed') return null
   const bounds = parseBounds(source.bounds)
   const view = record(source.view)
-  const layouts = record(source.layouts ?? {})
+  const layouts = record(source.layouts)
   if (bounds === undefined || !view || !layouts) return null
   if (!strings(view.collapsed_projects) || !strings(view.recent_workspaces)) return null
   if (!Object.values(layouts).every((revision) => Number.isSafeInteger(revision) && (revision as number) >= 0))
@@ -71,11 +71,11 @@ export function parseWindow(value: unknown): Window | null {
   }
 }
 
-/** The catalog's windows, a malformed one dropped alone; null when the list itself is malformed. */
+/** The catalog's windows, or null when the list or any window in it is malformed. */
 export function parseWindows(value: unknown): Window[] | null {
-  if (value === undefined) return []
   if (!Array.isArray(value)) return null
-  return value.map(parseWindow).filter((window) => window !== null)
+  const windows = value.map(parseWindow)
+  return windows.includes(null) ? null : (windows as Window[])
 }
 
 /**

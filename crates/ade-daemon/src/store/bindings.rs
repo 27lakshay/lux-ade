@@ -219,9 +219,26 @@ fn verify_binding_identity(root: &str, identity: (u64, u64)) -> Result<()> {
     Ok(())
 }
 
+/// The repository record a workspace belongs to, or `None` for a plain
+/// folder. A repository workspace's project ID is the repository's ID.
+pub(crate) fn repository_of(db: &Connection, workspace_id: &str) -> Result<Option<String>> {
+    Ok(db
+        .query_row(
+            "SELECT repository_id FROM workspaces WHERE id=?1",
+            [workspace_id],
+            |row| row.get(0),
+        )
+        .optional()?
+        .flatten())
+}
+
 impl Store {
     pub fn workspace(&self, id: &str) -> Result<WorkspaceRecord> {
         one(&self.connection, "workspaces", id)
+    }
+    /// The repository a workspace belongs to, or `None` for a plain folder.
+    pub fn workspace_repository(&self, id: &str) -> Result<Option<String>> {
+        repository_of(&self.connection, id)
     }
     pub fn rebind_workspaces(&self) -> Result<Vec<WorkspaceRebindEntry>> {
         let workspaces: Vec<WorkspaceRecord> = all(
@@ -235,7 +252,7 @@ impl Store {
         workspaces
             .into_iter()
             .map(|workspace| {
-                let repository_unbound = match &workspace.repository_id {
+                let repository_unbound = match &repository_of(&self.connection, &workspace.id)? {
                     Some(id) => {
                         let repository = self.repository(id)?;
                         repository.needs_rebind
@@ -329,7 +346,7 @@ impl Store {
         if !binding_matches(&self.connection, "workspace", id, &workspace.root)? {
             return Err(ade_core::error::NeedsRebind.into());
         }
-        if let Some(repository_id) = &workspace.repository_id {
+        if let Some(repository_id) = &repository_of(&self.connection, id)? {
             let repository: Repository = one(&self.connection, "repositories", repository_id)?;
             if repository.needs_rebind
                 || !binding_matches(
@@ -382,7 +399,7 @@ impl Store {
             )? {
                 return Ok(true);
             }
-            if let Some(repository_id) = &workspace.repository_id {
+            if let Some(repository_id) = &repository_of(&self.connection, &workspace.id)? {
                 let repository: Repository = one(&self.connection, "repositories", repository_id)?;
                 if !linked_common_matches(&workspace.root, &repository.root) {
                     return Ok(true);
@@ -483,13 +500,13 @@ impl Store {
             source_identity != identity,
             "Select a different physical directory from the saved workspace"
         );
+        let repository_id = repository_of(&tx, id)?;
         ensure!(
-            workspace.repository_id.is_some() || common.is_none(),
+            repository_id.is_some() || common.is_none(),
             "An ordinary workspace cannot rebind to a Git checkout; bind a repository first"
         );
         ensure_not_source_directory(&tx, root)?;
-        let linked_repository = workspace
-            .repository_id
+        let linked_repository = repository_id
             .as_ref()
             .map(|repository_id| one::<Repository>(&tx, "repositories", repository_id))
             .transpose()?;
@@ -571,17 +588,13 @@ impl Store {
         // A removed workspace leaves the catalog with its Conversations; they
         // return when its folder is opened again. Windows are all listed: a
         // removal moves the windows that showed it.
-        let repositories: Vec<Repository> = all(&tx, VISIBLE_REPOSITORIES)?;
+        let repositories: std::collections::HashMap<String, Repository> =
+            all::<Repository>(&tx, VISIBLE_REPOSITORIES)?
+                .into_iter()
+                .map(|repository| (repository.id.clone(), repository))
+                .collect();
         let mut result = Catalogue {
             projects: Vec::new(),
-            repositories: repositories
-                .into_iter()
-                .map(|repository| CatalogRepository {
-                    name: ade_core::workspaces::project_name(&repository.root),
-                    id: repository.id,
-                    root: repository.root,
-                })
-                .collect(),
             workspaces: all(
                 &tx,
                 concat!(
@@ -603,7 +616,7 @@ impl Store {
                 .map(|terminal| self.terminal_record(terminal))
                 .collect(),
         };
-        self.present_catalog(&tx, &mut result)?;
+        self.present_catalog(&tx, &mut result, &repositories)?;
         tx.commit()?;
         Ok(result)
     }
@@ -615,8 +628,7 @@ impl Store {
             .workspaces
             .iter()
             .map(|workspace| {
-                let repository = workspace
-                    .repository_id
+                let repository = repository_of(&self.connection, &workspace.id)?
                     .as_ref()
                     .map(|id| {
                         let record: Repository = one(&self.connection, "repositories", id)?;
@@ -673,14 +685,15 @@ impl Store {
                 "DELETE FROM workspace_tombstones WHERE workspace_id=?1",
                 [&workspace.id],
             )?;
-            let repository_changed = if let Some(repository_id) = &workspace.repository_id {
-                let repository: Repository = one(&tx, "repositories", repository_id)?;
-                repository.needs_rebind
-                    || !binding_matches(&tx, "repository", repository_id, &repository.root)?
-                    || !linked_common_matches(&workspace.root, &repository.root)
-            } else {
-                false
-            };
+            let repository_changed =
+                if let Some(repository_id) = &repository_of(&tx, &workspace.id)? {
+                    let repository: Repository = one(&tx, "repositories", repository_id)?;
+                    repository.needs_rebind
+                        || !binding_matches(&tx, "repository", repository_id, &repository.root)?
+                        || !linked_common_matches(&workspace.root, &repository.root)
+                } else {
+                    false
+                };
             if !workspace.needs_rebind
                 && (repository_changed
                     || !binding_matches(&tx, "workspace", &workspace.id, &workspace.root)?)
@@ -739,9 +752,8 @@ impl Store {
             needs_rebind |= repository.needs_rebind
                 || !binding_matches(&tx, "repository", id, &repository.root)?;
         }
-        let mut workspace = WorkspaceRecord {
+        let workspace = WorkspaceRecord {
             id: new_id("workspace"),
-            repository_id,
             root: root.into(),
             needs_rebind,
             worktree_lifecycle_needs_rebind,
@@ -750,18 +762,19 @@ impl Store {
                 .and_then(|s| s.to_str())
                 .unwrap_or(root)
                 .into(),
-            project_id: String::new(),
+            // A repository workspace's project is its repository; a plain
+            // folder is a project of its own.
+            project_id: repository_id.clone().unwrap_or_else(|| new_id("project")),
             kind: Default::default(),
             branch: None,
             default: false,
             ade_owned: false,
         };
-        workspace.project_id = super::projects::project_of(&workspace);
         tx.execute(
             "INSERT INTO workspaces VALUES(?1,?2,?3,?4)",
             params![
                 workspace.id,
-                workspace.repository_id,
+                repository_id,
                 workspace.root,
                 encode(&workspace)?
             ],

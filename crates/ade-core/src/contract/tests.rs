@@ -157,8 +157,8 @@ fn every_operation_declares_a_tier_and_named_types() {
 fn catalog_get_round_trips() {
     request_round_trip("catalog.get", &CatalogGetRequest {});
     let workspace = serde_json::from_value(json!({
-        "id": "workspace_1", "repository_id": null, "root": "/tmp/project",
-        "name": "project", "terminal_id": "terminal_1",
+        "id": "workspace_1", "root": "/tmp/project", "name": "project",
+        "project_id": "project_1",
     }))
     .unwrap();
     let frame = CatalogFrame {
@@ -178,11 +178,6 @@ fn catalog_get_round_trips() {
                     root: "/tmp/notes".into(),
                 },
             ],
-            repositories: vec![crate::model::CatalogRepository {
-                id: "repo_1".into(),
-                root: "/tmp/project/.git".into(),
-                name: "project".into(),
-            }],
             workspaces: vec![workspace],
             conversations: vec![conversation()],
             windows: Vec::new(),

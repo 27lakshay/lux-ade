@@ -1,5 +1,6 @@
 use super::*;
 use ade_core::contract::layout::{LayoutAction, Tab, TabTarget, WindowState};
+use ade_core::model::ProjectKind;
 #[test]
 fn terminal_reservation_is_atomic_durable_and_fences_prompt_admission() {
     let db = Database::new();
@@ -586,7 +587,7 @@ fn reopen_retains_identity_history_resume_and_windows() {
         .workspace_open(&test_root("project"), Some(&test_root("project")))
         .unwrap();
     assert_eq!(workspace.id, reopened.id);
-    assert_eq!(workspace.repository_id, reopened.repository_id);
+    assert_eq!(workspace.project_id, reopened.project_id);
     assert_eq!(primary, store.primary_terminal(&reopened.id).unwrap());
     assert_eq!(
         store
@@ -1011,7 +1012,7 @@ fn a_removed_workspace_whose_folder_is_gone_does_not_fence_the_profile() {
     assert!(!store.has_pending_rebind().unwrap());
     assert!(store.rebind_workspaces().unwrap().is_empty());
     assert!(store.rebind_repositories().unwrap().is_empty());
-    assert!(store.catalog().unwrap().repositories.is_empty());
+    assert!(store.catalog().unwrap().projects.is_empty());
     let other = store
         .workspace_open(&test_root(&new_id("other")), None)
         .unwrap();
@@ -1036,11 +1037,13 @@ fn the_catalog_names_each_repository_after_its_checkout_folder() {
         .workspace_open(&test_root(&new_id("folder")), None)
         .unwrap();
     let catalog = store.catalog().unwrap();
-    assert_eq!(catalog.repositories.len(), 1);
-    let repository = &catalog.repositories[0];
+    assert_eq!(catalog.projects.len(), 2);
+    let repository = &catalog.projects[0];
+    assert_eq!(repository.kind, ProjectKind::Repository);
     assert_eq!(repository.root, common);
     assert_eq!(repository.name, project);
-    assert_eq!(first.repository_id.as_ref(), Some(&repository.id));
-    assert_eq!(second.repository_id.as_ref(), Some(&repository.id));
-    assert_eq!(folder.repository_id, None);
+    assert_eq!(first.project_id, repository.id);
+    assert_eq!(second.project_id, repository.id);
+    assert_eq!(catalog.projects[1].kind, ProjectKind::Folder);
+    assert_eq!(folder.project_id, catalog.projects[1].id);
 }

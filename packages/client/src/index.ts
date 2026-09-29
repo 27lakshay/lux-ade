@@ -108,18 +108,12 @@ export interface Workspace {
   root: string
   /** The name ADE shows; `workspace.rename` changes it, never the folder. */
   name: string
-  /**
-   * The workspace's repository, or null for a plain folder.
-   * @deprecated Read `project_id`, which a plain folder has too; kept for one release.
-   */
-  repository_id: string | null
   needs_rebind: boolean
   worktree_lifecycle_needs_rebind: boolean
   /**
    * The project the workspace belongs to; never empty. The SDK's catalog
    * parser always sets it and the fields below; they are optional only so
-   * hand-built fixtures stay valid. From an older daemon, a plain folder's
-   * project is the workspace's own ID.
+   * hand-built fixtures stay valid.
    */
   project_id?: string
   kind?: WorkspaceKind
@@ -142,19 +136,6 @@ export interface CatalogProject {
   name: string
   /** A repository's Git common directory, or the folder. */
   root: string
-}
-
-/**
- * A Git repository in the catalog: the project its workspaces
- * (`Workspace.repository_id`) belong to. A plain folder has none.
- * @deprecated Read `Catalog.projects`; kept for one release.
- */
-export interface CatalogRepository {
-  id: string
-  /** The Git common directory. */
-  root: string
-  /** The checkout folder's name, such as `app` for `/src/app/.git`. */
-  name: string
 }
 
 export interface Conversation {
@@ -209,16 +190,9 @@ export type Attention = 'idle' | 'running' | 'needs_you' | 'error'
 export interface Catalog {
   /**
    * Every project of the listed workspaces. The SDK's catalog parser always
-   * sets it, building it from `repositories` for an older daemon; it is
-   * optional only so hand-built fixtures stay valid.
+   * sets it; it is optional only so hand-built fixtures stay valid.
    */
   projects?: CatalogProject[]
-  /**
-   * The repositories the listed workspaces use. The SDK's catalog parser
-   * always sets it; it is optional only so hand-built fixtures stay valid.
-   * @deprecated Read `projects`; kept for one release.
-   */
-  repositories?: CatalogRepository[]
   workspaces: Workspace[]
   conversations: Conversation[]
   /**
@@ -274,38 +248,25 @@ function stringFields(value: unknown, keys: string[]): string[] | null {
 }
 
 function parseWorkspace(value: unknown): Workspace | null {
-  const fields = stringFields(value, ['id', 'root', 'name'])
+  const fields = stringFields(value, ['id', 'root', 'name', 'project_id'])
   const source = record(value)
   if (!fields || !source) return null
-  const repositoryId = source.repository_id
-  if (repositoryId !== undefined && repositoryId !== null && typeof repositoryId !== 'string') return null
-  if (source.needs_rebind !== undefined && typeof source.needs_rebind !== 'boolean') return null
-  if (
-    source.worktree_lifecycle_needs_rebind !== undefined &&
-    typeof source.worktree_lifecycle_needs_rebind !== 'boolean'
-  )
-    return null
-  const projectId = source.project_id ?? null
-  if (projectId !== null && typeof projectId !== 'string') return null
-  const kind = source.kind ?? null
-  if (kind !== null && !workspaceKinds.has(kind as string)) return null
-  const branch = source.branch ?? null
+  for (const flag of ['needs_rebind', 'worktree_lifecycle_needs_rebind', 'default', 'ade_owned'] as const)
+    if (typeof source[flag] !== 'boolean') return null
+  if (!workspaceKinds.has(source.kind as string)) return null
+  const branch = source.branch
   if (branch !== null && typeof branch !== 'string') return null
-  for (const flag of ['default', 'ade_owned'] as const)
-    if (source[flag] !== undefined && typeof source[flag] !== 'boolean') return null
   return {
     id: fields[0],
     root: fields[1],
     name: fields[2],
-    repository_id: repositoryId ?? null,
-    needs_rebind: source.needs_rebind === true,
-    worktree_lifecycle_needs_rebind: source.worktree_lifecycle_needs_rebind === true,
-    // An older daemon sends none of these: a folder is then its own project.
-    project_id: projectId || (repositoryId as string | undefined) || fields[0],
-    kind: (kind as WorkspaceKind | null) ?? (repositoryId ? 'primary_checkout' : 'folder'),
+    needs_rebind: source.needs_rebind as boolean,
+    worktree_lifecycle_needs_rebind: source.worktree_lifecycle_needs_rebind as boolean,
+    project_id: fields[3],
+    kind: source.kind as WorkspaceKind,
     branch,
-    default: source.default === true,
-    ade_owned: source.ade_owned === true,
+    default: source.default as boolean,
+    ade_owned: source.ade_owned as boolean,
   }
 }
 
@@ -317,35 +278,28 @@ function parseConversation(value: unknown): Conversation | null {
   const source = record(value)
   const title = source?.title
   if (!fields || typeof title !== 'string') return null
-  const accountId = source?.account_id
+  const accountId = link(source?.account_id)
   const accountContext = source?.account_context
-  if (accountId !== undefined && accountId !== null && typeof accountId !== 'string') return null
-  if (accountContext !== undefined && accountContext !== 'managed' && accountContext !== 'legacy_ambient') return null
+  if (accountContext !== 'managed' && accountContext !== 'legacy_ambient') return null
   const attention = source?.attention
   const unread = source?.unread
-  const parent = optionalLink(source?.parent_conversation_id)
-  const group = optionalLink(source?.group_id)
-  if (attention !== undefined && !attentions.has(attention as string)) return null
-  if (unread !== undefined && typeof unread !== 'boolean') return null
-  if (parent === false || group === false) return null
+  const parent = link(source?.parent_conversation_id)
+  const group = link(source?.group_id)
+  if (!attentions.has(attention as string) || typeof unread !== 'boolean') return null
+  if (accountId === false || parent === false || group === false) return null
   return {
     id: fields[0],
     workspace_id: fields[1],
     title,
     provider: fields[2],
     status: fields[3],
-    ...(accountId !== undefined ? { account_id: accountId } : {}),
-    ...(accountContext !== undefined ? { account_context: accountContext } : {}),
-    ...(attention !== undefined ? { attention: attention as Attention } : {}),
-    ...(unread !== undefined ? { unread } : {}),
-    ...(parent !== undefined ? { parent_conversation_id: parent } : {}),
-    ...(group !== undefined ? { group_id: group } : {}),
+    account_id: accountId,
+    account_context: accountContext,
+    attention: attention as Attention,
+    unread,
+    parent_conversation_id: parent,
+    group_id: group,
   }
-}
-
-function optionalString(value: unknown): string | null | undefined {
-  if (value === undefined || value === null) return null
-  return typeof value === 'string' ? value : undefined
 }
 
 function parseTerminal(value: unknown): Terminal | null {
@@ -354,13 +308,11 @@ function parseTerminal(value: unknown): Terminal | null {
   if (!fields || !source) return null
   const { kind, title, status } = source
   if (typeof kind !== 'string' || typeof status !== 'string' || typeof title !== 'string') return null
-  const exitCode = source.exit_code ?? null
+  const exitCode = source.exit_code
   if (exitCode !== null && !Number.isInteger(exitCode)) return null
-  for (const flag of [source.busy, source.primary]) {
-    if (flag !== undefined && typeof flag !== 'boolean') return null
-  }
-  const links = [source.foreground, source.service_id, source.script_run_id, source.conversation_id].map(optionalString)
-  if (links.includes(undefined)) return null
+  if (typeof source.busy !== 'boolean' || typeof source.primary !== 'boolean') return null
+  const links = [source.foreground, source.service_id, source.script_run_id, source.conversation_id].map(link)
+  if (links.includes(false)) return null
   const [foreground, serviceId, scriptRunId, conversationId] = links as (string | null)[]
   return {
     id: fields[0],
@@ -369,24 +321,18 @@ function parseTerminal(value: unknown): Terminal | null {
     title,
     status,
     exit_code: exitCode as number | null,
-    busy: source.busy === true,
+    busy: source.busy,
     foreground,
-    primary: source.primary === true,
+    primary: source.primary,
     service_id: serviceId,
     script_run_id: scriptRunId,
     conversation_id: conversationId,
   }
 }
 
-/** An optional ID that may be null; `false` when it is something else. */
-function optionalLink(value: unknown): string | null | undefined | false {
-  if (value === undefined || value === null || typeof value === 'string') return value
-  return false
-}
-
-function parseRepository(value: unknown): CatalogRepository | null {
-  const fields = stringFields(value, ['id', 'root', 'name'])
-  return fields ? { id: fields[0], root: fields[1], name: fields[2] } : null
+/** A string or null; `false` when it is anything else, or absent. */
+function link(value: unknown): string | null | false {
+  return value === null || typeof value === 'string' ? value : false
 }
 
 function parseProject(value: unknown): CatalogProject | null {
@@ -395,62 +341,25 @@ function parseProject(value: unknown): CatalogProject | null {
   return { id: fields[0], kind: fields[1], name: fields[2], root: fields[3] }
 }
 
-/**
- * An older daemon lists repositories only: its projects are those, then each
- * plain folder workspace as its own project.
- */
-function legacyProjects(repositories: CatalogRepository[], workspaces: Workspace[]): CatalogProject[] {
-  const projects: CatalogProject[] = repositories.map((repository) => ({ ...repository, kind: 'repository' }))
-  for (const workspace of workspaces)
-    if (workspace.repository_id === null)
-      projects.push({
-        id: workspace.project_id ?? workspace.id,
-        kind: 'folder',
-        name: basename(workspace.root),
-        root: workspace.root,
-      })
-  return projects
-}
-
-function basename(path: string): string {
-  const trimmed = path.replace(/\/+$/, '')
-  return trimmed.slice(trimmed.lastIndexOf('/') + 1) || path
-}
-
 /** A catalog as the daemon sends it, or null when it is malformed. */
 export function parseCatalog(value: unknown): Catalog | null {
   const source = record(value)
-  if (!source || !Array.isArray(source.workspaces) || !Array.isArray(source.conversations)) return null
-  const listed = source.repositories ?? []
-  const listedTerminals = source.terminals ?? []
-  if (!Array.isArray(listed) || !Array.isArray(listedTerminals)) return null
-  const listedProjects = source.projects ?? null
-  if (!Array.isArray(listed) || (listedProjects !== null && !Array.isArray(listedProjects))) return null
-  const repositories = listed.map(parseRepository)
-  const projects = listedProjects?.map(parseProject) ?? []
-  const workspaces = source.workspaces.map(parseWorkspace)
-  const conversations = source.conversations.map(parseConversation)
-  // A malformed terminal is dropped alone, so a newer daemon's records never
-  // blank an older client's catalog.
-  const terminals = listedTerminals.map(parseTerminal).filter((terminal) => terminal !== null)
+  if (!source) return null
+  const { projects, workspaces, conversations, terminals } = source
+  if (![projects, workspaces, conversations, terminals].every(Array.isArray)) return null
+  const lists = {
+    projects: (projects as unknown[]).map(parseProject),
+    workspaces: (workspaces as unknown[]).map(parseWorkspace),
+    conversations: (conversations as unknown[]).map(parseConversation),
+    terminals: (terminals as unknown[]).map(parseTerminal),
+  }
   const windows = parseWindows(source.windows)
-  if (
-    repositories.includes(null) ||
-    projects.includes(null) ||
-    workspaces.includes(null) ||
-    conversations.includes(null) ||
-    !windows
-  )
-    return null
+  if (!windows || Object.values(lists).some((list) => list.includes(null))) return null
   return {
-    projects:
-      listedProjects === null
-        ? legacyProjects(repositories as CatalogRepository[], workspaces as Workspace[])
-        : (projects as CatalogProject[]),
-    repositories: repositories as CatalogRepository[],
-    workspaces: workspaces as Workspace[],
-    conversations: conversations as Conversation[],
-    terminals,
+    projects: lists.projects as CatalogProject[],
+    workspaces: lists.workspaces as Workspace[],
+    conversations: lists.conversations as Conversation[],
+    terminals: lists.terminals as Terminal[],
     windows,
   }
 }

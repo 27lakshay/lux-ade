@@ -548,8 +548,9 @@ impl Sessions {
                             "Review feedback targets a different workspace"
                         );
                         let binding = data.store.workspace_binding_identity(&workspace.id)?;
-                        let common_binding = workspace
-                            .repository_id
+                        let common_binding = data
+                            .store
+                            .workspace_repository(&workspace.id)?
                             .as_deref()
                             .map(|id| data.store.repository_binding_identity(id))
                             .transpose()?;

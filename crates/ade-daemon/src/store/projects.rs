@@ -4,7 +4,7 @@
 //! every reply carries (a Conversation's attention, unread state and
 //! orchestration links, and the default workspace).
 use super::*;
-use ade_core::model::{CatalogProject, CatalogRepository, ProjectKind, WorkspaceKind};
+use ade_core::model::{CatalogProject, ProjectKind, WorkspaceKind};
 use std::collections::{HashMap, HashSet};
 
 /// A message the person did not write themselves: what makes a Conversation
@@ -47,14 +47,6 @@ pub fn seen_as_is(db: &Connection, conversation: &str) -> Result<()> {
         [conversation],
     )?;
     Ok(())
-}
-
-/// A new workspace's project: its repository, or a new folder project.
-pub(super) fn project_of(workspace: &WorkspaceRecord) -> String {
-    workspace
-        .repository_id
-        .clone()
-        .unwrap_or_else(|| new_id("project"))
 }
 
 /// What the daemon last recorded about a workspace's folder, and where to
@@ -255,9 +247,6 @@ impl Store {
     /// Fills the fields a workspace reply carries but the record never stores.
     pub fn present_workspace(&self, workspace: &mut WorkspaceRecord) {
         workspace.default = self.default_workspace.as_deref() == Some(workspace.id.as_str());
-        if let Some(repository) = &workspace.repository_id {
-            workspace.project_id = repository.clone();
-        }
     }
 
     /// Fills a Conversation's attention, unread state and orchestration links.
@@ -266,14 +255,15 @@ impl Store {
         Ok(())
     }
 
-    /// Lists the projects of `catalog`'s workspaces and fills every
-    /// presentation field, inside the catalog's read transaction.
-    pub(super) fn present_catalog(&self, db: &Connection, catalog: &mut Catalogue) -> Result<()> {
-        let repositories: HashMap<String, CatalogRepository> = catalog
-            .repositories
-            .iter()
-            .map(|repository| (repository.id.clone(), repository.clone()))
-            .collect();
+    /// Lists the projects of `catalog`'s workspaces, the repository ones from
+    /// `repositories`, and fills every presentation field, inside the
+    /// catalog's read transaction.
+    pub(super) fn present_catalog(
+        &self,
+        db: &Connection,
+        catalog: &mut Catalogue,
+        repositories: &HashMap<String, Repository>,
+    ) -> Result<()> {
         let mut listed = HashSet::new();
         for workspace in &mut catalog.workspaces {
             self.present_workspace(workspace);
@@ -286,7 +276,7 @@ impl Store {
                     Some(repository) => CatalogProject {
                         id: repository.id.clone(),
                         kind: ProjectKind::Repository,
-                        name: repository.name.clone(),
+                        name: ade_core::workspaces::project_name(&repository.root),
                         root: repository.root.clone(),
                     },
                     None => CatalogProject {
@@ -369,19 +359,22 @@ impl Store {
                 "SELECT data FROM workspaces WHERE id NOT IN (SELECT workspace_id FROM workspace_tombstones) ORDER BY rowid",
             )?,
         };
-        Ok(workspaces
+        workspaces
             .into_iter()
-            .map(|workspace| FactTarget {
-                repository: workspace.repository_id.is_some(),
-                facts: WorkspaceFacts {
-                    kind: workspace.kind,
-                    branch: workspace.branch.clone(),
-                    ade_owned: workspace.ade_owned,
-                },
-                id: workspace.id,
-                root: workspace.root,
+            .map(|workspace| {
+                Ok(FactTarget {
+                    repository: super::bindings::repository_of(&self.connection, &workspace.id)?
+                        .is_some(),
+                    facts: WorkspaceFacts {
+                        kind: workspace.kind,
+                        branch: workspace.branch.clone(),
+                        ade_owned: workspace.ade_owned,
+                    },
+                    id: workspace.id,
+                    root: workspace.root,
+                })
             })
-            .collect())
+            .collect()
     }
 
     /// Stores a workspace's folder facts. Returns whether they changed.
@@ -471,9 +464,12 @@ mod tests {
         let folder = store
             .workspace_open(&test_root(&new_id("notes")), None)
             .unwrap();
-        assert_eq!(Some(&checkout.project_id), checkout.repository_id.as_ref());
+        assert_eq!(
+            store.workspace_repository(&checkout.id).unwrap(),
+            Some(checkout.project_id.clone())
+        );
         assert!(folder.project_id.starts_with("project_"));
-        assert_eq!(folder.repository_id, None);
+        assert_eq!(store.workspace_repository(&folder.id).unwrap(), None);
         let catalog = store.catalog().unwrap();
         let kinds: Vec<_> = catalog
             .projects
@@ -488,7 +484,6 @@ mod tests {
             ]
         );
         assert_eq!(catalog.projects[1].root, folder.root);
-        assert_eq!(catalog.repositories.len(), 1);
         assert!(matches!(
             store.project(&folder.project_id).unwrap().kind,
             ProjectKind::Folder

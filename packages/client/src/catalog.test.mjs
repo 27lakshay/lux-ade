@@ -8,25 +8,14 @@ const workspace = (fields = {}) => ({
   id: 'workspace_1',
   root: '/src/app',
   name: 'app',
-  repository_id: 'repo_1',
+  project_id: 'repo_1',
+  kind: 'primary_checkout',
+  branch: 'main',
+  default: false,
+  ade_owned: false,
   needs_rebind: false,
   worktree_lifecycle_needs_rebind: false,
   ...fields,
-})
-
-test('the catalog keeps repositories', () => {
-  const catalog = parseCatalog({
-    repositories: [{ id: 'repo_1', root: '/src/app/.git', name: 'app' }],
-    workspaces: [workspace()],
-    conversations: [],
-    windows: [],
-  })
-  assert.deepEqual(catalog.repositories, [{ id: 'repo_1', root: '/src/app/.git', name: 'app' }])
-})
-
-test('a malformed repository list rejects the catalog', () => {
-  assert.equal(parseCatalog({ repositories: [{ id: 'repo_1' }], workspaces: [], conversations: [] }), null)
-  assert.equal(parseCatalog({ repositories: {}, workspaces: [], conversations: [] }), null)
 })
 
 const terminal = (fields = {}) => ({
@@ -45,120 +34,19 @@ const terminal = (fields = {}) => ({
   ...fields,
 })
 
-test('the catalog keeps terminal records, and an older daemon lists none', () => {
-  const catalog = parseCatalog({ workspaces: [workspace()], conversations: [], terminals: [terminal()] })
-  assert.deepEqual(catalog.terminals, [terminal()])
-  assert.deepEqual(parseCatalog({ workspaces: [workspace()], conversations: [] }).terminals, [])
-  const exited = parseCatalog({
-    workspaces: [workspace()],
-    conversations: [],
-    terminals: [{ id: 't', workspace_id: 'w', kind: 'script', title: 'build', status: 'exited', exit_code: 2 }],
-  }).terminals[0]
-  assert.equal(exited.exit_code, 2)
-  assert.equal(exited.busy, false)
-  assert.equal(exited.script_run_id, null)
-})
-
-test('an unknown terminal kind or status is kept as sent', () => {
-  const catalog = parseCatalog({
-    workspaces: [],
-    conversations: [],
-    terminals: [terminal({ kind: 'pty', status: 'paused' })],
-  })
-  assert.equal(catalog.terminals[0].kind, 'pty')
-  assert.equal(catalog.terminals[0].status, 'paused')
-})
-
-test('a malformed terminal record is dropped alone, keeping the catalog', () => {
-  for (const bad of [
-    terminal({ kind: 3 }),
-    terminal({ status: null }),
-    terminal({ exit_code: 'one' }),
-    terminal({ busy: 'yes' }),
-    terminal({ foreground: 3 }),
-    terminal({ title: undefined }),
-    terminal({ id: '' }),
-  ]) {
-    const catalog = parseCatalog({ workspaces: [workspace()], conversations: [], terminals: [bad, terminal()] })
-    assert.deepEqual(catalog.terminals, [terminal()])
-    assert.equal(catalog.workspaces.length, 1)
-  }
-  assert.equal(parseCatalog({ workspaces: [], conversations: [], terminals: {} }), null)
-})
-
 const conversation = (fields = {}) => ({
   id: 'conversation_1',
   workspace_id: 'workspace_1',
   title: 'Fix the build',
   provider: 'codex',
   status: 'running',
+  account_id: null,
+  account_context: 'managed',
+  attention: 'running',
+  unread: false,
+  parent_conversation_id: null,
+  group_id: null,
   ...fields,
-})
-
-test('the catalog keeps projects, workspace facts and conversation attention', () => {
-  const catalog = parseCatalog({
-    projects: [
-      { id: 'repo_1', kind: 'repository', name: 'app', root: '/src/app/.git' },
-      { id: 'project_2', kind: 'folder', name: 'notes', root: '/src/notes' },
-    ],
-    repositories: [{ id: 'repo_1', root: '/src/app/.git', name: 'app' }],
-    workspaces: [
-      workspace({
-        project_id: 'repo_1',
-        kind: 'linked_worktree',
-        branch: 'feature',
-        default: false,
-        ade_owned: true,
-      }),
-    ],
-    conversations: [
-      conversation({ attention: 'needs_you', unread: true, parent_conversation_id: 'conversation_0', group_id: null }),
-    ],
-  })
-  assert.equal(catalog.projects.length, 2)
-  assert.deepEqual(catalog.projects[1], { id: 'project_2', kind: 'folder', name: 'notes', root: '/src/notes' })
-  const [listed] = catalog.workspaces
-  assert.equal(listed.project_id, 'repo_1')
-  assert.equal(listed.kind, 'linked_worktree')
-  assert.equal(listed.branch, 'feature')
-  assert.equal(listed.ade_owned, true)
-  // The deprecated alias stays.
-  assert.equal(listed.repository_id, 'repo_1')
-  assert.deepEqual(catalog.conversations[0], {
-    ...conversation(),
-    attention: 'needs_you',
-    unread: true,
-    parent_conversation_id: 'conversation_0',
-    group_id: null,
-  })
-})
-
-test('an older daemon catalog gets projects from its repositories and plain folders', () => {
-  const catalog = parseCatalog({
-    repositories: [{ id: 'repo_1', root: '/src/app/.git', name: 'app' }],
-    workspaces: [workspace(), workspace({ id: 'workspace_2', root: '/src/notes/', repository_id: null })],
-    conversations: [conversation()],
-  })
-  assert.deepEqual(catalog.projects, [
-    { id: 'repo_1', kind: 'repository', name: 'app', root: '/src/app/.git' },
-    { id: 'workspace_2', kind: 'folder', name: 'notes', root: '/src/notes/' },
-  ])
-  assert.equal(catalog.workspaces[0].kind, 'primary_checkout')
-  assert.equal(catalog.workspaces[1].kind, 'folder')
-  assert.equal(catalog.workspaces[1].project_id, 'workspace_2')
-  assert.equal(catalog.workspaces[0].branch, null)
-  // Without attention the conversation carries only what the daemon sent.
-  assert.deepEqual(catalog.conversations[0], conversation())
-})
-
-test('a malformed project, kind or attention rejects the catalog', () => {
-  const base = { workspaces: [], conversations: [] }
-  assert.equal(parseCatalog({ ...base, projects: [{ id: 'p', kind: 'club', name: 'n', root: '/' }] }), null)
-  assert.equal(parseCatalog({ ...base, projects: {} }), null)
-  assert.equal(parseCatalog({ workspaces: [workspace({ kind: 'bare' })], conversations: [] }), null)
-  assert.equal(parseCatalog({ workspaces: [workspace({ branch: 3 })], conversations: [] }), null)
-  assert.equal(parseCatalog({ workspaces: [], conversations: [conversation({ attention: 'busy' })] }), null)
-  assert.equal(parseCatalog({ workspaces: [], conversations: [conversation({ group_id: 7 })] }), null)
 })
 
 const window = (fields = {}) => ({
@@ -171,16 +59,75 @@ const window = (fields = {}) => ({
   ...fields,
 })
 
-test('the catalog keeps windows, drops a malformed one alone, and an older daemon lists none', () => {
-  const bounds = { x: 0, y: 20, width: 1200, height: 800 }
-  const catalog = parseCatalog({
-    workspaces: [workspace()],
-    conversations: [],
-    windows: [window({ bounds }), window({ id: 'bad', state: 'hidden' }), window({ id: 'w2', layouts: { a: -1 } })],
-  })
-  assert.deepEqual(catalog.windows, [window({ bounds })])
-  assert.deepEqual(parseCatalog({ workspaces: [], conversations: [] }).windows, [])
-  assert.equal(parseCatalog({ workspaces: [], conversations: [], windows: {} }), null)
+/** A catalog as the daemon sends it, with `fields` replacing its lists. */
+const catalog = (fields = {}) => ({
+  projects: [{ id: 'repo_1', kind: 'repository', name: 'app', root: '/src/app/.git' }],
+  workspaces: [workspace()],
+  conversations: [conversation()],
+  terminals: [terminal()],
+  windows: [window()],
+  ...fields,
+})
+
+test('the catalog keeps projects, workspace facts, terminals, conversation attention and windows', () => {
+  const parsed = parseCatalog(
+    catalog({
+      projects: [
+        { id: 'repo_1', kind: 'repository', name: 'app', root: '/src/app/.git' },
+        { id: 'project_2', kind: 'folder', name: 'notes', root: '/src/notes' },
+      ],
+      workspaces: [workspace({ kind: 'linked_worktree', branch: 'feature', ade_owned: true })],
+      conversations: [conversation({ attention: 'needs_you', unread: true, parent_conversation_id: 'conversation_0' })],
+      windows: [window({ bounds: { x: 0, y: 20, width: 1200, height: 800 } })],
+    }),
+  )
+  assert.deepEqual(parsed.projects[1], { id: 'project_2', kind: 'folder', name: 'notes', root: '/src/notes' })
+  assert.deepEqual(parsed.workspaces, [workspace({ kind: 'linked_worktree', branch: 'feature', ade_owned: true })])
+  assert.deepEqual(parsed.terminals, [terminal()])
+  assert.deepEqual(parsed.conversations, [
+    conversation({ attention: 'needs_you', unread: true, parent_conversation_id: 'conversation_0' }),
+  ])
+  assert.deepEqual(parsed.windows, [window({ bounds: { x: 0, y: 20, width: 1200, height: 800 } })])
+  const exited = parseCatalog(catalog({ terminals: [terminal({ status: 'exited', exit_code: 2, busy: false })] }))
+  assert.equal(exited.terminals[0].exit_code, 2)
+})
+
+test('an unknown terminal kind or status is kept as sent', () => {
+  const parsed = parseCatalog(catalog({ terminals: [terminal({ kind: 'pty', status: 'paused' })] }))
+  assert.equal(parsed.terminals[0].kind, 'pty')
+  assert.equal(parsed.terminals[0].status, 'paused')
+})
+
+test('a missing list or any malformed record rejects the catalog', () => {
+  for (const list of ['projects', 'workspaces', 'conversations', 'terminals', 'windows']) {
+    const missing = catalog()
+    delete missing[list]
+    assert.equal(parseCatalog(missing), null, `without ${list}`)
+    assert.equal(parseCatalog(catalog({ [list]: {} })), null, `${list} not a list`)
+  }
+  const malformed = [
+    { projects: [{ id: 'p', kind: 'club', name: 'n', root: '/' }] },
+    { workspaces: [workspace({ kind: 'bare' })] },
+    { workspaces: [workspace({ branch: 3 })] },
+    { workspaces: [workspace({ project_id: undefined })] },
+    { workspaces: [workspace({ needs_rebind: undefined })] },
+    { conversations: [conversation({ attention: 'busy' })] },
+    { conversations: [conversation({ attention: undefined })] },
+    { conversations: [conversation({ group_id: 7 })] },
+    { conversations: [conversation({ account_context: undefined })] },
+    { terminals: [terminal({ kind: 3 })] },
+    { terminals: [terminal({ status: null })] },
+    { terminals: [terminal({ exit_code: 'one' })] },
+    { terminals: [terminal({ busy: 'yes' })] },
+    { terminals: [terminal({ primary: undefined })] },
+    { terminals: [terminal({ foreground: 3 })] },
+    { terminals: [terminal({ title: undefined })] },
+    { terminals: [terminal({ id: '' })] },
+    { windows: [window({ state: 'hidden' })] },
+    { windows: [window({ layouts: { a: -1 } })] },
+    { windows: [window({ layouts: undefined })] },
+  ]
+  for (const fields of malformed) assert.equal(parseCatalog(catalog(fields)), null, JSON.stringify(fields))
 })
 
 test('window and layout frames keep the windows and their layout revisions current', () => {
