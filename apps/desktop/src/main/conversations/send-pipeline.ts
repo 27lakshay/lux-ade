@@ -1,11 +1,10 @@
 // Electron main's wiring for the SDK's send pipeline (`@ade/client/journals`): one
-// draft entry per window and Conversation, the window's durable owner ID, and the
-// hooks that tie a send to the window's profile. The journal
+// draft entry per window and Conversation, and the hooks that tie a send to the
+// window's profile. The journal, the durable draft owner ID (`ClientJournals.ownerId`)
 // and every delivery rule live in the SDK.
-import { app, BrowserWindow } from 'electron'
-import { randomUUID } from 'node:crypto'
-import { mkdir, open, readFile, rename, stat, writeFile } from 'node:fs/promises'
-import { isAbsolute, join } from 'node:path'
+import { BrowserWindow } from 'electron'
+import { stat, writeFile } from 'node:fs/promises'
+import { isAbsolute } from 'node:path'
 import {
   decodeDailyUseResponse,
   requestDaemon,
@@ -17,7 +16,6 @@ import {
 import { SendPipeline, type SendEntry, type SendIntent, type SendJournal } from '@ade/client/journals'
 import { emit } from '../ipc'
 import { getClientGeneration, getSocket, journalProfileId } from '../profile-connection'
-import { validId } from '../validation'
 import type { PendingSendState, SendResult } from '../../shared/bridge/conversations'
 
 type Fields<O extends DailyUseOperation> = Omit<DailyUseRequest<O>, 'op'>
@@ -93,42 +91,6 @@ export const unsafePending = (entries: DraftEntry[]): Promise<boolean> => pipeli
 export const dispatchSend = (entry: DraftEntry, intent: SendIntent): Promise<SendResult> =>
   pipeline().dispatch(entry, intent)
 export const beginSend = (entry: DraftEntry, intent: SendIntent): Promise<SendResult> => pipeline().begin(entry, intent)
-
-export async function persistentWindowId(): Promise<string> {
-  const directory = app.getPath('userData')
-  const target = join(directory, 'window-owner-v1.json')
-  await mkdir(directory, { recursive: true })
-  let saved: string | undefined
-  try {
-    saved = await readFile(target, 'utf8')
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-  }
-  if (saved !== undefined) {
-    const value: unknown = JSON.parse(saved)
-    if (!value || typeof value !== 'object' || !('id' in value) || !validId(value.id)) {
-      throw new Error('Window owner record is invalid; preserve it for draft recovery')
-    }
-    return value.id
-  }
-  const id = randomUUID()
-  const temporary = `${target}.${id}.tmp`
-  const handle = await open(temporary, 'wx', 0o600)
-  try {
-    await handle.writeFile(JSON.stringify({ id }))
-    await handle.sync()
-  } finally {
-    await handle.close()
-  }
-  await rename(temporary, target)
-  const directoryHandle = await open(directory, 'r')
-  try {
-    await directoryHandle.sync()
-  } finally {
-    await directoryHandle.close()
-  }
-  return id
-}
 
 /** The window's entry for a Conversation, loaded once from the daemon and the journal. */
 export async function loadDraft(senderId: number, endpoint: string, conversationId: string): Promise<DraftEntry> {

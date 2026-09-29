@@ -46,6 +46,17 @@ const gitIntent = {
   revision: '0123456789abcdef',
 }
 
+test('the draft owner ID is made once and kept; an invalid record is refused, not replaced', async (t) => {
+  const directory = await scratch(t)
+  const { ownerId } = await openClientJournals(directory)
+  assert.match(ownerId, /^[a-zA-Z0-9_-]{1,128}$/)
+  assert.equal((await openClientJournals(directory)).ownerId, ownerId)
+  assert.deepEqual(JSON.parse(await readFile(join(directory, 'window-owner-v1.json'), 'utf8')), { id: ownerId })
+  await writeFile(join(directory, 'window-owner-v1.json'), '{"id":"../escape"}')
+  await assert.rejects(openClientJournals(directory), /Window owner record is invalid/)
+  assert.equal(await readFile(join(directory, 'window-owner-v1.json'), 'utf8'), '{"id":"../escape"}')
+})
+
 test('the send journal keeps a record across reopening and drops it only for its own request', async (t) => {
   const directory = await scratch(t)
   const first = await openClientJournals(directory)

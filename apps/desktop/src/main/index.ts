@@ -10,7 +10,6 @@ import { draftQuitGuard, warnPendingSends } from './conversations/quit-guard'
 import {
   drafts,
   flushDraft,
-  persistentWindowId,
   reconcileAcceptedSend,
   setSendJournal,
   unsafePending,
@@ -238,8 +237,8 @@ app
       app.dock?.hide()
     }
     loadAppearance()
-    singleWindowId = await persistentWindowId()
     const journals = await openDesktopJournals()
+    singleWindowId = journals.ownerId
     setSendJournal(journals.send)
     setGitJournal(journals.git)
     if (!managedProfiles && fixedSocket) {

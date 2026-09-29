@@ -5,7 +5,7 @@
 // reported as uncertain, because the new file may or may not survive a crash.
 import { randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
-import { mkdir, open, rename, unlink } from 'node:fs/promises'
+import { mkdir, open, readFile, rename, unlink } from 'node:fs/promises'
 import { dirname, isAbsolute, join } from 'node:path'
 import { GitJournal } from './git-journal.js'
 import { OutboxPersistenceUncertain, type OutboxFile, type OutboxStorage } from './outbox.js'
@@ -74,15 +74,64 @@ export function fileOutboxStorage(file: string, name: string): OutboxStorage {
   }
 }
 
-/** A client's two journals: prompts and Git mutations the profile daemon has not admitted. */
-export type ClientJournals = { send: SendJournal; git: GitJournal }
+/**
+ * A client's two journals, prompts and Git mutations the profile daemon has not admitted, and
+ * `ownerId`: the durable draft owner the client's drafts and sends name as `window_id`.
+ */
+export type ClientJournals = { send: SendJournal; git: GitJournal; ownerId: string }
 
 /** Opens the journals kept as files in `directory`. The desktop and the CLI use the same file names. */
 export async function openClientJournals(directory: string): Promise<ClientJournals> {
   if (!isAbsolute(directory) || directory.includes('\0')) throw new Error('Client journal directory must be absolute')
-  const [send, git] = await Promise.all([
+  const [send, git, ownerId] = await Promise.all([
     SendJournal.open(fileOutboxStorage(join(directory, 'pending-sends-v1.json'), SendJournal.label)),
     GitJournal.open(fileOutboxStorage(join(directory, 'git-intents-v1.json'), GitJournal.label)),
+    draftOwnerId(directory),
   ])
-  return { send, git }
+  return { send, git, ownerId }
+}
+
+/**
+ * The client's durable draft owner ID, kept in `window-owner-v1.json` and made on first use. The
+ * journals' records and the daemon's drafts are keyed by it, so a record that is not valid is
+ * refused and left in place for recovery.
+ */
+async function draftOwnerId(directory: string): Promise<string> {
+  const target = join(directory, 'window-owner-v1.json')
+  let saved: string | undefined
+  try {
+    saved = await readFile(target, 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+  if (saved !== undefined) {
+    let value: unknown = null
+    try {
+      value = JSON.parse(saved)
+    } catch {
+      // Refused below.
+    }
+    const id = value && typeof value === 'object' ? (value as { id?: unknown }).id : undefined
+    if (typeof id !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(id))
+      throw new Error('Window owner record is invalid; preserve it for draft recovery')
+    return id
+  }
+  const id = randomUUID()
+  await mkdir(directory, { recursive: true, mode: 0o700 })
+  const temporary = `${target}.${id}.tmp`
+  const handle = await open(temporary, 'wx', 0o600)
+  try {
+    await handle.writeFile(JSON.stringify({ id }))
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
+  await rename(temporary, target)
+  const parent = await open(directory, 'r')
+  try {
+    await parent.sync()
+  } finally {
+    await parent.close()
+  }
+  return id
 }
