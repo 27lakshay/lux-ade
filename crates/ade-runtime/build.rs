@@ -18,9 +18,10 @@ fn main() {
         )
         .include(root.join(".ade/vendor/libghostty-vt/include"))
         .compile("ade_terminal_state");
-    println!(
-        "cargo:rustc-link-arg-bin=ade-runtime={}",
-        vt.canonicalize().unwrap().display()
-    );
+    // macOS bin/test links can emit -l for the bundled native library. A private
+    // archive name prevents the adjacent libghostty-vt.dylib from winning that lookup.
+    let out = PathBuf::from(env::var_os("OUT_DIR").unwrap());
+    std::fs::copy(&vt, out.join("libade_ghostty_vt.a")).unwrap();
+    println!("cargo:rustc-link-lib=static=ade_ghostty_vt");
     println!("cargo:rustc-link-lib=c++");
 }

@@ -27,3 +27,4 @@ rusqlite = { version = "0.40.2", features = ["bundled", "backup"] }
 tracing = "0.1"
 semver = "1"
 uuid = { version = "1", features = ["v4"] }
+yaml-rust2 = "=0.13.0"

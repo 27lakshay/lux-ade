@@ -2,8 +2,8 @@ import { dialog, type BrowserWindow } from 'electron'
 import log from 'electron-log/main'
 import { appUrl } from './app-protocol'
 
-// When an app window stops responding or its renderer dies, reload it in safe mode (`?safeMode=1`),
-// where the renderer loads no plugins. All work lives in the daemon, so a reload loses only what the
+// When an app window stops responding or its renderer dies, reload it with `?safeMode=1` so the
+// renderer shows core recovery controls. All work lives in the daemon, so a reload loses only what the
 // window was showing. A window that fails again soon after a recovery is left alone, with a message,
 // so a crash on startup cannot loop.
 
@@ -30,7 +30,7 @@ export function recoverRendererFailures(window: BrowserWindow): void {
       void dialog.showMessageBox(window, {
         type: 'error',
         title: 'The window keeps failing',
-        message: 'ADE reloaded this window with plugins off, and it failed again.',
+        message: 'The window failed again after recovery.',
         detail:
           'Your agents, terminals and services keep running in the background. Close and reopen the window to try again.',
       })
@@ -42,8 +42,8 @@ export function recoverRendererFailures(window: BrowserWindow): void {
     void dialog.showMessageBox(window, {
       type: 'warning',
       title: 'Window reloaded',
-      message: `The window ${reason === 'unresponsive' ? 'stopped responding' : 'crashed'} and was reloaded with plugins off.`,
-      detail: 'Your agents, terminals and services kept running. Close and reopen the window to turn plugins back on.',
+      message: `The window ${reason === 'unresponsive' ? 'stopped responding' : 'crashed'} and was reloaded into recovery.`,
+      detail: 'Your agents, terminals and services kept running in the background.',
     })
   }
 

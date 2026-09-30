@@ -31,6 +31,7 @@ const errors = []
 let closed = null
 let snapshots = 0
 let resyncs = 0
+let appearanceRevision = null
 let failed = false
 let connection = null
 const feed = new TerminalFeed(core, {
@@ -53,6 +54,7 @@ connection = openTerminalConnection(
     if (frame.type === 'snapshot' && frame.resync === true) resyncs += 1
     if (frame.type === 'error') errors.push(frame)
     feed.push(frame)
+    if (frame.appearance && feed.ready) appearanceRevision = frame.appearance.revision
   },
   (reason) => {
     closed = reason
@@ -95,6 +97,11 @@ parentPort.on('message', (message) => {
       statuses,
       closed,
       screen: screen(),
+      appearance: {
+        revision: appearanceRevision,
+        foreground: core.snapshot().foreground,
+        background: core.snapshot().background,
+      },
     })
   } else if (message.type === 'close') {
     connection.dispose()

@@ -34,12 +34,22 @@ const CURSOR_BLINK_INTERVAL_MS = 500
 const TERMINAL_FONT_LOAD_TEXT = 'iMW0@# .'
 const TERMINAL_FONT_LOAD_VARIANTS = ['normal 400', 'normal 700', 'italic 400', 'italic 700'] as const
 
+/** Terminal visual preferences; omitted fields retain the current value. */
+export interface GhosttyTerminalPreferences {
+  readonly family?: string
+  readonly size?: number
+  readonly lineHeight?: number
+  readonly kerning?: 'auto' | 'normal' | 'none'
+  readonly cursorShape?: 'block' | 'bar' | 'underline'
+  readonly cursorBlink?: boolean
+  readonly reducedMotion?: boolean
+}
+
 /** Requested terminal font; omitted fields fall back to the defaults. */
 export interface GhosttyTerminalFont {
   readonly family?: string
   readonly size?: number
 }
-
 let symbolsFontLoad: Promise<void> | null = null
 
 /**
@@ -501,7 +511,7 @@ export interface GhosttySelectionPosition {
 export interface GhosttyTerminalSurfaceOptions {
   readonly theme: GhosttyTheme
   readonly font?: GhosttyTerminalFont
-  /** Read after font and WASM loading. Hosts can supply a getter for the latest value. */
+  readonly preferences?: GhosttyTerminalPreferences
   readonly visible?: boolean
   readonly onData: (data: string) => void
   readonly onResize: (cols: number, rows: number) => void
@@ -533,6 +543,11 @@ export class GhosttyTerminalSurface {
   private fontFamily: string
   private requestedFontFamily: string | undefined
   private fontSize: number
+  private lineHeight: number
+  private kerning: 'auto' | 'normal' | 'none'
+  private cursorShape: 'block' | 'bar' | 'underline'
+  private cursorBlink: boolean
+  private reducedMotionOverride: boolean | undefined
   private fontEpoch = 0
   private pendingFontEpoch: number | null = null
   private readonly resizeObserver: ResizeObserver
@@ -624,8 +639,13 @@ export class GhosttyTerminalSurface {
     this.visible = options.visible ?? true
     this.theme = options.theme
     this.fontFamily = fontFamily
-    this.requestedFontFamily = options.font?.family
-    this.fontSize = terminalFontSize(options.font?.size)
+    this.requestedFontFamily = options.preferences?.family ?? options.font?.family
+    this.fontSize = terminalFontSize(options.preferences?.size ?? options.font?.size)
+    this.lineHeight = options.preferences?.lineHeight ?? 1.35
+    this.kerning = options.preferences?.kerning ?? 'auto'
+    this.cursorShape = options.preferences?.cursorShape ?? 'block'
+    this.cursorBlink = options.preferences?.cursorBlink ?? true
+    this.reducedMotionOverride = options.preferences?.reducedMotion
     this.resizeObserver = new ResizeObserver(() => this.fit())
     this.installEvents()
     this.watchDevicePixelRatio()
@@ -669,7 +689,7 @@ export class GhosttyTerminalSurface {
     // the theme background first so the mount never flashes a black box.
     context.fillStyle = `rgb(${options.theme.background.r}, ${options.theme.background.g}, ${options.theme.background.b})`
     context.fillRect(0, 0, canvas.width, canvas.height)
-    const fontSize = terminalFontSize(options.font?.size)
+    const fontSize = terminalFontSize(options.preferences?.size ?? options.font?.size)
     try {
       // Cell metrics must come from the faces that will render; measuring before
       // the bundled webfonts load would size the grid from a fallback font.
@@ -677,10 +697,17 @@ export class GhosttyTerminalSurface {
     } catch {
       // Metrics fall back to whichever faces are already available.
     }
-    const fontFamily = await loadTerminalFontFamily(options.font?.family, fontSize)
-    const metrics = measureGhosttyCell(context, fontSize, fontFamily)
+    const family = options.preferences?.family ?? options.font?.family
+    const fontFamily = await loadTerminalFontFamily(family, fontSize)
+    const lineHeight = options.preferences?.lineHeight ?? 1.35
+    const kerning = options.preferences?.kerning ?? 'auto'
+    const metrics = measureGhosttyCell(context, fontSize, fontFamily, lineHeight, kerning)
     const grid = terminalGridSize(mount.clientWidth, mount.clientHeight, metrics, CONTENT_PADDING)
     const core = await GhosttyTerminalCore.create(grid.cols, grid.rows, metrics.width, metrics.height, options.theme)
+    core.setDefaultCursorPreferences(
+      options.preferences?.cursorShape ?? 'block',
+      options.preferences?.cursorBlink ?? true,
+    )
     const surface = new GhosttyTerminalSurface(
       mount,
       canvas,
@@ -724,8 +751,6 @@ export class GhosttyTerminalSurface {
     this.canvasConfigured = false
   }
 
-  // The terminal feed calls this and restoreSnapshot through its FeedScreen interface.
-  // fallow-ignore-next-line unused-class-member
   write(data: string | Uint8Array): void {
     if (this.disposed) return
     this.core.write(data)
@@ -738,11 +763,11 @@ export class GhosttyTerminalSurface {
   }
 
   /** Replaces the screen with a Ghostty snapshot from the daemon; false if it is rejected. */
-  // fallow-ignore-next-line unused-class-member
   restoreSnapshot(bytes: Uint8Array): boolean {
     if (this.disposed) return false
     this.lastMouseMotionData = ''
     const restored = this.core.restoreSnapshot(bytes)
+    if (restored) this.core.setDefaultCursorPreferences(this.cursorShape, this.cursorBlink)
     // The snapshot carries the runtime's grid. Refit to this view's container, which reflows the
     // restored screen and reports the size, as the first fit does.
     if (restored) this.resizeNotified = false
@@ -766,8 +791,6 @@ export class GhosttyTerminalSurface {
   async setFont(font: GhosttyTerminalFont): Promise<void> {
     if (this.disposed) return
     const fontSize = terminalFontSize(font.size)
-    // The fields only change together with their metrics after the load, and
-    // the epoch lets the newest overlapping call win regardless of load order.
     const epoch = ++this.fontEpoch
     this.pendingFontEpoch = epoch
     const fontFamily = await loadTerminalFontFamily(font.family, fontSize)
@@ -779,14 +802,47 @@ export class GhosttyTerminalSurface {
     this.applyFontMetrics()
   }
 
+  async setPreferences(preferences: GhosttyTerminalPreferences): Promise<void> {
+    if (this.disposed) return
+    const nextFamily = preferences.family ?? this.requestedFontFamily
+    const nextSize = terminalFontSize(preferences.size ?? this.fontSize)
+    const nextLineHeight = preferences.lineHeight ?? this.lineHeight
+    const nextKerning = preferences.kerning ?? this.kerning
+    const fontChanged = nextFamily !== this.requestedFontFamily || nextSize !== this.fontSize
+    const metricsChanged = fontChanged || nextLineHeight !== this.lineHeight || nextKerning !== this.kerning
+    if (fontChanged) {
+      const epoch = ++this.fontEpoch
+      this.pendingFontEpoch = epoch
+      const fontFamily = await loadTerminalFontFamily(nextFamily, nextSize)
+      if (this.disposed || epoch !== this.fontEpoch) return
+      this.pendingFontEpoch = null
+      this.fontFamily = fontFamily
+      this.requestedFontFamily = nextFamily
+      this.fontSize = nextSize
+    }
+    this.lineHeight = nextLineHeight
+    this.kerning = nextKerning
+    if (preferences.cursorShape !== undefined) this.cursorShape = preferences.cursorShape
+    if (preferences.cursorBlink !== undefined) this.cursorBlink = preferences.cursorBlink
+    if ('reducedMotion' in preferences) this.reducedMotionOverride = preferences.reducedMotion
+    this.core.setDefaultCursorPreferences(this.cursorShape, this.cursorBlink)
+    if (metricsChanged) this.applyFontMetrics()
+    else {
+      this.forceFullRender = true
+      this.cursorOn = true
+      this.requestRender()
+    }
+  }
+
   private applyFontMetrics(): void {
-    this.metrics = measureGhosttyCell(this.context, this.fontSize, this.fontFamily)
+    this.metrics = measureGhosttyCell(this.context, this.fontSize, this.fontFamily, this.lineHeight, this.kerning)
     this.core.resize(this.cols, this.rows, this.metrics.width, this.metrics.height)
     // Cached IME textarea coordinates are stale in the new cell geometry.
     this.inputLeft = -1
     this.inputTop = -1
     this.forceFullRender = true
     this.scrollbarDirty = true
+    this.resizeNotified = false
     this.fit()
     this.requestRender()
   }
@@ -814,7 +870,7 @@ export class GhosttyTerminalSurface {
     }
     // A face that finished loading after the initial measurement changes glyph
     // advances; re-measure and refit so the grid matches what actually renders.
-    const metrics = measureGhosttyCell(this.context, this.fontSize, this.fontFamily)
+    const metrics = measureGhosttyCell(this.context, this.fontSize, this.fontFamily, this.lineHeight, this.kerning)
     if (
       metrics.width === this.metrics.width &&
       metrics.height === this.metrics.height &&
@@ -1765,7 +1821,13 @@ export class GhosttyTerminalSurface {
       cursorOn: this.cursorOn,
       previousCursorY: this.renderedCursorY,
       focused: this.focused,
+      kerning: this.kerning,
       hoveredLinkRange: this.hoveredLink?.range ?? null,
+      ...(this.theme.selectionForeground !== undefined ? { selectionForeground: this.theme.selectionForeground } : {}),
+      ...(this.theme.boldColor !== undefined ? { boldColor: this.theme.boldColor } : {}),
+      ...(this.theme.minimumContrast !== undefined ? { minimumContrast: this.theme.minimumContrast } : {}),
+      cursorColor: this.theme.cursor,
+      ...(this.theme.cursorText !== undefined ? { cursorText: this.theme.cursorText } : {}),
       ...(this.theme.selectionBackground !== undefined ? { selectionBackground: this.theme.selectionBackground } : {}),
     })
     this.positionInput()
@@ -1797,7 +1859,7 @@ export class GhosttyTerminalSurface {
       focused: this.focused,
       cursorBlinking: snapshot.cursorBlinking,
       cursorVisible: snapshot.cursorVisible,
-      reducedMotion: this.reducedMotionMedia?.matches ?? false,
+      reducedMotion: this.reducedMotionOverride ?? this.reducedMotionMedia?.matches ?? false,
     })
   }
 

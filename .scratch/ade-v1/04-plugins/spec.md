@@ -41,7 +41,7 @@ Expose supported command, UI and backend extension interfaces with versioned lif
 
 ## Testing Decisions
 
-All new tests are end-to-end. Exercise the running Electron application, CLI or public protocol with actual ADE processes, as approved by the user. Assert observable behavior, not internal classes, reducers, database layouts or implementation call counts. Use isolated host/profile/repository fixtures. External protocol fixtures are permitted; report real-provider evidence separately.
+Feature acceptance uses end-to-end tests; pure-core and renderer browser tests remain allowed under the current project test policy. Exercise the running Electron application, CLI or public protocol with actual ADE processes, as approved by the user. Assert observable behavior, not internal classes, reducers, database layouts or implementation call counts. Use isolated host/profile/repository fixtures. External protocol fixtures are permitted; report real-provider evidence separately.
 
 Modules exercised through these public interfaces: Plugin registry, backend hosts, provider workers, UI composition and managed extension storage.
 
@@ -56,7 +56,7 @@ Prior art: OpenCode activation-scoped cleanup and namespaced state; Paseo plugin
 | F053 | Render custom content and apply declared transformations without corrupting canonical history; missing renderer retains core-readable summary and unresolved actions. |
 | F054 | Install a composer extension, save its draft, disable it, and recover readable input with explicit unsupported-node handling. |
 | F055 | Register and invoke an action through supported surfaces; resolve conflicts and remove only that activation's registrations on cleanup. |
-| F056 | Apply a plugin theme using stable tokens; restore defaults after removal; localization remains excluded under F017. |
+| F056 | Apply a plugin theme using stable tokens; restore defaults after removal; localization remains excluded under F017. Apply TH07 and TH27 in the [theming detail](../01-foundation/theming.md#acceptance-matrix). |
 | F057 | Run an extension in a headless host; crash it; retain core availability and expose affected operations for recovery. |
 | F058 | Deliver committed lifecycle effects with stable effect identities; retry only where safe and expose unknown external outcomes. |
 | F059 | Persist namespaced records/settings and credential references; prevent accidental namespace collisions and document private-data backup exclusions. |
@@ -72,5 +72,7 @@ Marketplace distribution, hostile plugin sandboxing, localization and mandatory 
 
 
 ## Further Notes
+
+The [detailed theming specification](../01-foundation/theming.md) defines shared appearance behavior and TH01–TH32 acceptance under D20. The owning feature IDs remain unchanged; appearance acceptance is unverified until the relevant detailed criteria pass.
 
 This specification records required behavior, not implemented completeness. The shared v1 register contains all 140 original catalogue dispositions, scope corrections, delivery dependencies and remaining decisions. No source file layout or package candidate overrides the agreed product behavior.

@@ -742,7 +742,7 @@ impl Sessions {
     /// Runs from the monitor loop: records attempt identities for the current
     /// incarnation and observes open attempts again.
     pub(super) fn recovery_tick(&self) -> Result<()> {
-        let (snapshot, recheck) = {
+        let (snapshot, recheck, appearance_pending) = {
             let mut d = self.data.lock().unwrap();
             d.recovery.tick = d.recovery.tick.wrapping_add(1);
             if d.draining || self.runtime.draining() {
@@ -751,8 +751,13 @@ impl Sessions {
             (
                 d.recovery.tick.is_multiple_of(SNAPSHOT_TICKS),
                 d.recovery.tick.is_multiple_of(RECHECK_TICKS) && !d.recovery.watch.is_empty(),
+                d.appearance_pending,
             )
         };
+        if appearance_pending {
+            let _lifecycle = self.plugin_lifecycle.lock().unwrap();
+            self.sync_plugin_themes()?;
+        }
         if snapshot {
             self.record_attempts()?;
         }

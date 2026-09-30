@@ -13,6 +13,9 @@ import { fileURLToPath } from 'node:url'
 export const cliExemptions = {
   'session.subscribe':
     'A stream: `ade request` returns its first catalog frame; AdeClient.subscribeFeed follows the feed',
+  'settings.appearance.observe':
+    'Only the registered local desktop owner reports sequenced OS observations; user mode changes use settings set',
+  'themes.draft.preview': 'Transient preview of a local unsaved definition; generic `ade request` remains available',
   'browser.owner.register': 'Only the Electron main process registers itself as the browser owner',
   'browser.owner.unregister': 'Only the Electron main process unregisters itself as the browser owner',
   'notification.delivery.claim': 'Called by a notification-showing client (the desktop) for its own delivery channel',

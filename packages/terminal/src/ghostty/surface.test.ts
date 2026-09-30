@@ -59,7 +59,13 @@ describe('GhosttyTerminalSurface visibility', () => {
       value = ''
       private readonly captures = new Set<number>()
 
-      setAttribute() {}
+      attributes = new Map<string, string>()
+      setAttribute(name: string, value: string) {
+        this.attributes.set(name, value)
+      }
+      getAttribute(name: string) {
+        return this.attributes.get(name) ?? null
+      }
       append(...children: TerminalTestElement[]) {
         for (const child of children) child.parentElement = this
       }
@@ -136,11 +142,13 @@ describe('GhosttyTerminalSurface visibility', () => {
     )
     const snapshot = vi.spyOn(GhosttyTerminalCore.prototype, 'snapshot')
     const onData = vi.fn<(data: string) => void>()
+    const onResize = vi.fn<(cols: number, rows: number) => void>()
 
     return {
       mount,
       frames,
       paint,
+      onResize,
       requestFrame,
       snapshot,
       onData,
@@ -156,6 +164,16 @@ describe('GhosttyTerminalSurface visibility', () => {
       },
       resize() {
         for (const callback of resizeCallbacks) callback()
+      },
+      wheel(deltaY: number) {
+        const event = new Event('wheel', { cancelable: true })
+        Object.defineProperties(event, {
+          deltaY: { value: deltaY },
+          deltaMode: { value: 0 },
+          clientX: { value: 5 },
+          clientY: { value: 5 },
+        })
+        canvas.dispatchEvent(event)
       },
       pointer(type: string, clientX: number, buttons: number, shiftKey = false, button = 0) {
         canvas.dispatchEvent(
@@ -177,7 +195,7 @@ describe('GhosttyTerminalSurface visibility', () => {
             cursor: { r: 255, g: 255, b: 255 },
           },
           onData,
-          onResize() {},
+          onResize,
           onSelectionChange() {},
           beforeKey: () => false,
           onLinkActivate() {},
@@ -238,6 +256,96 @@ describe('GhosttyTerminalSurface visibility', () => {
     expect(harness.frames.size).toBe(0)
   })
 
+  it('resizes after font and line-height changes but not cursor or palette changes', async () => {
+    const harness = createHarness()
+    const surface = await harness.create()
+    vi.advanceTimersByTime(150)
+    harness.onResize.mockClear()
+    surface.write(Array.from({ length: 12 }, (_, index) => `line${String(index).padStart(2, '0')}`).join('\r\n'))
+    harness.flushFrame()
+    expect(surface.scrollbar.hidden).toBe(false)
+    harness.wheel(32)
+    harness.flushFrame()
+    const scrollOffset = Number(surface.scrollbar.getAttribute('aria-valuenow'))
+    expect(scrollOffset).toBeGreaterThan(0)
+    harness.pointer('pointerdown', 5, 1)
+    harness.pointer('pointermove', 45, 1)
+    harness.pointer('pointerup', 45, 0)
+    const selection = surface.getSelection()
+    const caret = harness.renderedSnapshot.cursorX
+    expect(selection).not.toBe('')
+    harness.flushFrame()
+
+    await surface.setPreferences({ size: 14 })
+    vi.advanceTimersByTime(150)
+    harness.flushFrame()
+    expect(harness.onResize).toHaveBeenCalledOnce()
+    expect(surface.rows).toBeLessThan(6)
+    expect(harness.renderedSnapshot.rowData.some((row) => row.text.includes('line'))).toBe(true)
+    expect(surface.getSelection()).toBe(selection)
+    expect(Number(surface.scrollbar.getAttribute('aria-valuenow'))).toBeGreaterThan(0)
+    expect(harness.renderedSnapshot.cursorX).toBeGreaterThanOrEqual(0)
+    expect(harness.renderedSnapshot.cursorX).toBeLessThan(surface.cols)
+    expect(harness.renderedSnapshot.cursorX).toBe(caret)
+
+    harness.onResize.mockClear()
+    await surface.setPreferences({ lineHeight: 1.8 })
+    vi.advanceTimersByTime(150)
+    harness.flushFrame()
+    expect(harness.onResize).toHaveBeenCalledOnce()
+    expect(surface.rows).toBeLessThan(5)
+    expect(harness.renderedSnapshot.rowData.some((row) => row.text.includes('line'))).toBe(true)
+    expect(surface.getSelection()).toBe(selection)
+    expect(Number(surface.scrollbar.getAttribute('aria-valuenow'))).toBeGreaterThan(0)
+    expect(harness.renderedSnapshot.cursorX).toBe(caret)
+
+    harness.onResize.mockClear()
+    await surface.setPreferences({ cursorShape: 'bar', cursorBlink: false })
+    vi.advanceTimersByTime(150)
+    harness.flushFrame()
+    expect(harness.onResize).not.toHaveBeenCalled()
+
+    surface.setTheme({
+      foreground: { r: 255, g: 255, b: 255 },
+      background: { r: 0, g: 0, b: 0 },
+      cursor: { r: 255, g: 255, b: 255 },
+      palette: Array.from({ length: 256 }, (_, index) => ({ r: index, g: 0, b: 0 })),
+    })
+    vi.advanceTimersByTime(150)
+    harness.flushFrame()
+    expect(harness.onResize).not.toHaveBeenCalled()
+    expect(harness.renderedSnapshot.rowData.some((row) => row.text.includes('line'))).toBe(true)
+  })
+
+  it('uses cursor preferences only as the DEC reset baseline', async () => {
+    const harness = createHarness()
+    const surface = await harness.create()
+    await surface.setPreferences({ cursorShape: 'bar' })
+    surface.write('\x1b[1 q')
+    harness.flushFrame()
+    expect(harness.renderedSnapshot.cursorStyle).toBe(1)
+    surface.write('\x1b[0 q')
+    harness.flushFrame()
+    expect(harness.renderedSnapshot.cursorStyle).toBe(0)
+  })
+
+  it('honors a reduced-motion override and restores system motion when cleared', async () => {
+    const harness = createHarness()
+    const surface = await harness.create()
+    vi.advanceTimersByTime(150)
+    surface.focus()
+    surface.write('\x1b[1 q')
+    harness.flushFrame()
+    expect(vi.getTimerCount()).toBe(1)
+
+    await surface.setPreferences({ reducedMotion: true })
+    harness.flushFrame()
+    expect(vi.getTimerCount()).toBe(0)
+
+    await surface.setPreferences({ reducedMotion: undefined })
+    harness.flushFrame()
+    expect(vi.getTimerCount()).toBe(1)
+  })
   it('keeps the selection on reveal and applies a hidden selection clear', async () => {
     const harness = createHarness()
     const surface = await harness.create()

@@ -2,8 +2,8 @@ import { converter, parse, wcagContrast, type Rgb } from 'culori'
 import { afterEach, describe, expect, test } from 'vitest'
 import './app.css'
 
-// Every text and fill pairing the design uses must be readable: 4.5:1 for text, 3:1 for marks and
-// focus rings (WCAG AA and 2.2's focus appearance), in light and dark.
+// These checks cover selected semantic-role pairs and focus styles; they do not certify WCAG
+// conformance or the complete rendered palette/component matrix.
 
 const rgb = converter('rgb')
 const FILLS = ['sidebar', 'base', 'panel', 'background', 'card', 'popover', 'muted', 'accent'] as const

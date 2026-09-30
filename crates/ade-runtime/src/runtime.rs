@@ -30,7 +30,9 @@ use std::{
 // v7 adds explicit, identity-checked terminal process launches.
 pub const PROTOCOL: &str = ade_core::runtime_protocol::VERSION;
 pub const APPLICATION_PROTOCOL: &str = ade_core::protocol::APPLICATION_PROTOCOL;
-pub const MAX_CONTROL: u64 = 128 * 1024;
+// A complete appearance projection carries a 256-color palette per terminal.
+// Use the application's bounded message budget for both control requests and replies.
+pub const MAX_CONTROL: u64 = ade_core::protocol::MAX_MESSAGE_BYTES;
 
 pub fn read_frame(reader: &mut BufReader<UnixStream>) -> Result<Value> {
     let mut line = String::new();

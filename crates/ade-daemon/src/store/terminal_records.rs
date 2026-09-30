@@ -17,6 +17,8 @@ use std::collections::HashMap;
 /// A stored terminal. [`Stored::record`] is what the catalog lists.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub(crate) struct Stored {
+    #[serde(default)]
+    pub appearance_binding: Option<ade_core::appearance::ThemeBinding>,
     pub id: String,
     pub workspace_id: String,
     pub kind: TerminalKind,
@@ -58,6 +60,7 @@ pub(crate) struct Live {
 impl Stored {
     pub fn new(id: &str, workspace_id: &str, kind: TerminalKind) -> Self {
         Self {
+            appearance_binding: None,
             id: id.into(),
             workspace_id: workspace_id.into(),
             kind,
@@ -95,6 +98,7 @@ impl Stored {
                 .into()
             });
         TerminalRecord {
+            appearance_binding: self.appearance_binding.clone(),
             id: self.id.clone(),
             workspace_id: self.workspace_id.clone(),
             kind: self.kind,
@@ -247,7 +251,12 @@ pub(crate) fn visible(db: &Connection) -> Result<Vec<Stored>> {
     )
 }
 
-fn write(tx: &Connection, stored: &Stored) -> Result<()> {
+/// Every retained identity, including service records in removed workspaces.
+pub(crate) fn retained(db: &Connection) -> Result<Vec<Stored>> {
+    all(db, "SELECT data FROM terminals ORDER BY rowid")
+}
+
+pub(super) fn write(tx: &Connection, stored: &Stored) -> Result<()> {
     tx.execute(
         "INSERT INTO terminals VALUES(?1,?2,?3) ON CONFLICT(id) DO UPDATE SET data=excluded.data",
         params![stored.id, stored.workspace_id, encode(stored)?],

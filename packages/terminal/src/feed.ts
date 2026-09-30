@@ -3,6 +3,7 @@
 // `GhosttyTerminalCore` with it in Node, as the window drives a `GhosttyTerminalSurface`.
 
 import type { TerminalSnapshotFrame, TerminalStreamFrame } from '@ade/contracts'
+import type { GhosttyTheme } from './ghostty/core'
 
 /** A frame of a terminal attachment. The SDK has checked it against its contract. */
 export type TerminalFrame = TerminalStreamFrame
@@ -16,6 +17,7 @@ export const GHOSTTY_SNAPSHOT_FORMAT = 'ghostty-snapshot-v1-herdr-9c96f7d'
 
 /** The part of a Ghostty terminal a feed drives: `GhosttyTerminalCore` or the surface. */
 export interface FeedScreen {
+  setTheme(theme: GhosttyTheme): void
   /** Replaces the screen with a snapshot; false, keeping the screen, if it is rejected. */
   restoreSnapshot(bytes: Uint8Array): boolean
   write(bytes: Uint8Array): void
@@ -67,6 +69,7 @@ export class TerminalFeed {
   private restored = false
   private stopped = false
   private expectedOffset = 0
+  private appearanceRevision = -1
   private pendingBytes = 0
   private readonly pending: TerminalFrame[] = []
 
@@ -112,6 +115,20 @@ export class TerminalFeed {
     } catch (error) {
       return this.fail((error as Error).message)
     }
+    if (frame.appearance && frame.appearance.revision < this.appearanceRevision) {
+      return this.fail('Terminal snapshot has an older appearance; reconnect to restore it.')
+    }
+    if (frame.appearance) {
+      this.screen.setTheme({
+        ...frame.appearance,
+        cursorText: frame.appearance.cursor_text,
+        minimumContrast: frame.appearance.minimum_contrast,
+        boldColor: frame.appearance.bold_color,
+        selectionForeground: frame.appearance.selection_foreground,
+        selectionBackground: frame.appearance.selection_background,
+      })
+      this.appearanceRevision = frame.appearance.revision
+    }
     if (!this.screen.restoreSnapshot(snapshot.bytes)) {
       return this.fail('Terminal state could not be restored; reopen this view to try again.')
     }
@@ -124,7 +141,18 @@ export class TerminalFeed {
   }
 
   private applyLive(frame: TerminalFrame): void {
-    if (frame.type === 'terminal') {
+    if (frame.type === 'terminal_appearance') {
+      if (frame.appearance.revision <= this.appearanceRevision) return
+      this.screen.setTheme({
+        ...frame.appearance,
+        cursorText: frame.appearance.cursor_text,
+        minimumContrast: frame.appearance.minimum_contrast,
+        boldColor: frame.appearance.bold_color,
+        selectionForeground: frame.appearance.selection_foreground,
+        selectionBackground: frame.appearance.selection_background,
+      })
+      this.appearanceRevision = frame.appearance.revision
+    } else if (frame.type === 'terminal') {
       if (frame.offset !== this.expectedOffset) {
         this.events.status('Terminal output is incomplete. Reconnect to restore it.')
         return

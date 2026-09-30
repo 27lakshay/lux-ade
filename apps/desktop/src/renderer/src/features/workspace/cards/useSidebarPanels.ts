@@ -14,9 +14,6 @@ import { sidebarsThatFit, useSidebarFit } from './fit'
 // - Collapse and expand animate the panels' real sizes for a moment ([data-layout-animating]).
 
 const IDS = ['navigator', 'inspector'] as const
-/** A sidebar panel's width on screen. The library's getSize() can lag a frame behind it. */
-const drawnWidth = (id: SidebarId): number => document.getElementById(id)?.getBoundingClientRect().width ?? 0
-
 /** The pixels shared by panels after the current gutter widths are excluded. */
 function availablePanelWidth(element: HTMLElement): number {
   const style = getComputedStyle(element)
@@ -125,7 +122,8 @@ export function useSidebarPanels(
   /**
    * Once an open or close has settled, puts every shown sidebar at its exact saved width. The
    * library turns pixels into shares of the row as it is at that moment, while gutters are still
-   * animating in or out, so a width can land a pixel or two off; one panel at a time is exact.
+   * animating in or out. Panel.resize also sums rounded panel widths, which can be a pixel
+   * short. Restore the whole group from its measured space to avoid that rounding feedback.
    */
   const settle = useRef<ReturnType<typeof setTimeout> | null>(null)
   const settleWidths = (): void => {
@@ -133,18 +131,25 @@ export function useSidebarPanels(
     settle.current = setTimeout(
       () => {
         settle.current = null
-        const now = layoutNow()
         const element = group.current
-        if (!element) return
+        const handle = groupHandle.current
+        if (!element || !handle) return
         const space = availablePanelWidth(element)
         if (space <= 0) return
-        for (const id of IDS) {
-          const panel = refs[id].current
-          if (!panel || !shownNow.current[id] || panel.isCollapsed()) continue
-          // Pixel conversion can still use the library's earlier gutter measurement.
-          // Use the drawn row directly, including subpixel differences after a toggle.
-          if (drawnWidth(id) !== now.widths[id]) panel.resize(`${(now.widths[id] / space) * 100}%`)
+        const now = layoutNow()
+        const next = { ...handle.getLayout() }
+        for (const id of IDS) next[id] = shownNow.current[id] ? (now.widths[id] / space) * 100 : 0
+        const shown = IDS.filter((id) => shownNow.current[id])
+        let over =
+          shown.reduce((total, id) => total + next[id]!, 0) + (minSize(now.root, now.tabs).width / space) * 100 - 100
+        for (const id of shown) {
+          if (over <= 0) break
+          const give = Math.min(over, next[id]! - (SIDEBAR_WIDTH.min / space) * 100)
+          next[id] = next[id]! - give
+          over -= give
         }
+        next.centre = 100 - next.navigator! - next.inspector!
+        handle.setLayout(next)
       },
       DURATION.base * 1000 + 100,
     )
@@ -258,6 +263,7 @@ export function useSidebarPanels(
   useEffect(
     () => () => {
       if (pending.current !== null) cancelAnimationFrame(pending.current)
+      if (settle.current !== null) clearTimeout(settle.current)
     },
     [],
   )

@@ -11,7 +11,11 @@ import {
   type ErrorCode,
 } from '../shared.js'
 
-export const terminalUsage = `  terminal list [WORKSPACE_ID]          List terminals: kind, title, status, exit code, busy and its command
+export const terminalUsage = `  terminal appearance WORKSPACE_ID TERMINAL_ID
+                                        Inspect resolved colors, binding and propagation
+  terminal set-appearance WORKSPACE_ID TERMINAL_ID REVISION BINDING_JSON
+                                        Set an override; null returns to the profile binding
+  terminal list [WORKSPACE_ID]          List terminals: kind, title, status, exit code, busy and its command
   terminal create WORKSPACE_ID --operation-id ID [--title TITLE]
                                         Create another shell; reuse ID after a lost reply
   terminal close TERMINAL_ID [--force]  Stop a shell and remove it; refused as terminal_busy while
@@ -296,6 +300,29 @@ export async function runTerminalCommand(
   action: string | undefined,
   rest: string[],
 ): Promise<CommandResult | undefined> {
+  if (area === 'terminal' && action === 'appearance') {
+    if (rest.length !== 2) throw new CliError('usage', 'terminal appearance requires WORKSPACE_ID TERMINAL_ID.')
+    return call(socketPath, 'terminal.appearance.get', { workspace_id: rest[0]!, terminal_id: rest[1]! })
+  }
+  if (area === 'terminal' && action === 'set-appearance') {
+    if (rest.length !== 4)
+      throw new CliError('usage', 'terminal set-appearance requires WORKSPACE_ID TERMINAL_ID REVISION BINDING_JSON.')
+    const revision = Number(rest[2])
+    if (!/^\d+$/.test(rest[2]!) || !Number.isSafeInteger(revision))
+      throw new CliError('usage', 'Appearance revision must be a non-negative safe integer.')
+    let binding: unknown
+    try {
+      binding = JSON.parse(rest[3]!)
+    } catch {
+      throw new CliError('usage', 'BINDING_JSON must be a binding object or null.')
+    }
+    return call(socketPath, 'terminal.appearance.set', {
+      workspace_id: rest[0]!,
+      terminal_id: rest[1]!,
+      expected_appearance_revision: revision,
+      binding,
+    } as never)
+  }
   if (area === 'terminal' && action === 'list') {
     if (rest.length > 1) throw new CliError('usage', 'terminal list takes at most WORKSPACE_ID.')
     const records = (await catalog(socketPath)).terminals

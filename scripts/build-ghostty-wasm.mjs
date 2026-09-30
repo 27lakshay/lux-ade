@@ -1,6 +1,6 @@
 // Builds the window's terminal engine: libghostty-vt as WebAssembly, from the same vendored and
 // pinned Ghostty source the daemon's runtime uses (native/dependencies.json), so the window can
-// restore the daemon's Ghostty snapshots exactly. Also builds the small write-PTY trampoline.
+// restore the daemon's Ghostty snapshots exactly. The native core alone answers terminal queries.
 //
 // Needs the vendored source (`python3 scripts/bootstrap.py --sources-only`). Uses bootstrap's Zig at
 // .ade/toolchains/zig/zig (or ADE_ZIG_BIN), downloading and verifying the pinned Zig if missing.
@@ -57,17 +57,6 @@ try {
   )
   mkdirSync(output, { recursive: true })
   copyFileSync(join(build, 'bin/ghostty-vt.wasm'), join(output, 'ghostty-vt.wasm'))
-  run(zig, [
-    'build-exe',
-    join(root, 'packages/terminal/ghostty/write-pty.zig'),
-    '-target',
-    'wasm32-freestanding',
-    '-O',
-    'ReleaseSmall',
-    '-fno-entry',
-    '-rdynamic',
-    `-femit-bin=${join(output, 'ghostty-write-pty.wasm')}`,
-  ])
   // The same pin as the daemon's snapshot format (ghostty-snapshot-v1-herdr-<pin>).
   writeFileSync(join(output, 'VERSION'), `herdr ${pin}\nzig ${version}\n`)
 } finally {

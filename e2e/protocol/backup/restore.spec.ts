@@ -1,7 +1,7 @@
 // F050, R014, F059 and D15: a live profile is backed up while it keeps
 // working, the bundle is inspected, and a restore into a fresh profile is
 // read back through the public protocol.
-import { access, readdir, realpath, writeFile } from 'node:fs/promises'
+import { access, readdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { expect, test, turnReply } from '../fixtures'
 import { control, spawnControl } from '../fixtures/control'
@@ -156,6 +156,105 @@ test('backs up a live profile during writes and restores conversations, attachme
   expect(source.record).toMatchObject({ value: { text: 'written while the backup ran' } })
 })
 
+test('restores custom appearance definitions and supported preferences into an isolated profile', async ({
+  ade,
+  profile,
+}) => {
+  const source = JSON.stringify({
+    format: 'ade-theme',
+    version: 1,
+    id: 'user:backup-appearance',
+    name: 'Backup appearance',
+    mode: 'dark',
+    provenance: { kind: 'user', author: 'Local theme author', license: 'MIT' },
+    app: { defaults: 'ade:graphite', tokens: { primary: '#123456' } },
+    terminal: {
+      defaults: 'ade:graphite',
+      tokens: { 'terminal-foreground': '#654321', 'terminal-ansi-255': '#abcdef' },
+    },
+    syntax: { defaults: 'ade:graphite', tokens: { 'syntax-keyword': '#345678' } },
+  })
+  const sourceFile = join(profile.root, 'backup-appearance.json')
+  await writeFile(sourceFile, source)
+  const installed = await profile.call('themes.install', { items: [{ source, expected_revision: 0 }] })
+  expect(installed).toMatchObject({ committed: true, changed: true })
+  await profile.call('settings.set', {
+    appearance: 'dark',
+    app_dark_theme: 'user:backup-appearance',
+    terminal_binding: { kind: 'fixed', theme_id: 'user:backup-appearance' },
+    syntax_binding: { kind: 'fixed', theme_id: 'user:backup-appearance' },
+    terminal_color_overrides: {
+      cursor_text: { r: 18, g: 52, b: 86 },
+      selection_foreground: { r: 101, g: 67, b: 33 },
+      selection_background: { r: 171, g: 205, b: 239 },
+    },
+    terminal_minimum_contrast: 4.5,
+    terminal_bold_color: { r: 52, g: 86, b: 120 },
+    ui_font_family: 'Atkinson Hyperlegible',
+    ui_font_size: 14,
+    code_font_family: 'Iosevka',
+    code_font_size: 15,
+    terminal_font_family: 'SF Mono',
+    terminal_font_size: 13,
+    density: 'compact',
+    terminal_line_height: 1.5,
+    terminal_font_kerning: 'none',
+    terminal_cursor_shape: 'underline',
+    terminal_cursor_blink: false,
+    high_contrast: 'on',
+    reduced_transparency: 'off',
+    differentiate_without_color: 'on',
+    reduced_motion: 'on',
+  })
+  const expectedSettings = await profile.call('settings.get', {})
+  const expectedAppearance = await profile.call('settings.appearance', {})
+  const expectedDefinition = await profile.call('themes.inspect', { id: 'user:backup-appearance' })
+  expect(expectedDefinition.theme.definition.provenance).toMatchObject({
+    kind: 'user',
+    author: 'Local theme author',
+    license: 'MIT',
+  })
+  await rm(sourceFile)
+
+  const { path: bundle, result } = await createBackup(ade, profile, 'appearance')
+  expect(result.code, result.stderr).toBe(0)
+  const isolated = await ade.profile()
+  const isolatedSettings = await isolated.call('settings.get', {})
+  const isolatedAppearance = await isolated.call('settings.appearance', {})
+  expect(isolatedSettings.settings.app_dark_theme).not.toBe('user:backup-appearance')
+  expect(isolatedSettings.settings.terminal_binding).toEqual({ kind: 'follow_app' })
+  expect(isolatedSettings.settings.high_contrast).not.toBe('on')
+
+  const restored = await restoreIntoNewProfile(ade, bundle)
+  const actualSettings = await restored.call('settings.get', {})
+  expect(actualSettings.settings).toEqual(expectedSettings.settings)
+  expect(await restored.call('themes.inspect', { id: 'user:backup-appearance' })).toEqual(expectedDefinition)
+  const actualAppearance = await restored.call('settings.appearance', {})
+  expect(actualAppearance.theme_id).toBe('user:backup-appearance')
+  expect(actualAppearance.tokens.primary).toBe('#123456')
+  expect(actualAppearance.syntax.palette).toMatchObject({
+    id: 'user:backup-appearance',
+    tokens: { 'syntax-keyword': '#345678' },
+  })
+  expect(actualAppearance.terminal.palette[255]).toEqual({ r: 171, g: 205, b: 239 })
+  expect(actualAppearance.terminal).toMatchObject({
+    foreground: { r: 101, g: 67, b: 33 },
+    cursor_text: { r: 18, g: 52, b: 86 },
+    selection_foreground: { r: 101, g: 67, b: 33 },
+    selection_background: { r: 171, g: 205, b: 239 },
+    minimum_contrast: 4.5,
+    bold_color: { r: 52, g: 86, b: 120 },
+  })
+
+  await restored.restartDaemon('kill')
+  expect(await restored.call('settings.get', {})).toEqual(actualSettings)
+  expect(await restored.call('themes.inspect', { id: 'user:backup-appearance' })).toEqual(expectedDefinition)
+  expect(await restored.call('settings.appearance', {})).toEqual(actualAppearance)
+  expect(await profile.call('settings.get', {})).toEqual(expectedSettings)
+  expect(await profile.call('settings.appearance', {})).toEqual(expectedAppearance)
+  expect((await isolated.call('settings.get', {})).settings).toEqual(isolatedSettings.settings)
+  expect(await isolated.call('settings.appearance', {})).toEqual(isolatedAppearance)
+})
 test('refuses a bundle of an older schema or format without creating the target', async ({ ade, profile }) => {
   const { path: bundle, result } = await createBackup(ade, profile)
   expect(result.code, result.stderr).toBe(0)

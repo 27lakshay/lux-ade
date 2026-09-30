@@ -109,11 +109,30 @@ const damages: Damage[] = [
     message: /Skill backup-notes blob/,
     damage: (bundle) => rewriteDatabase(bundle, sql("UPDATE skill_blobs SET data=CAST(X'00' || data AS BLOB);")),
   },
+  {
+    name: 'an incomplete theme definition',
+    message: /theme/i,
+    damage: (bundle) =>
+      rewriteDatabase(
+        bundle,
+        sql("UPDATE theme_definitions SET data=json_remove(data, '$.definition.name') WHERE id='user:backup-corrupt';"),
+      ),
+  },
 ]
 
 test('refuses every damaged or unsupported bundle before it creates a restore target', async ({ ade, profile }) => {
   test.setTimeout(120_000)
   await seed(ade, profile)
+  const theme = JSON.stringify({
+    format: 'ade-theme',
+    version: 1,
+    id: 'user:backup-corrupt',
+    name: 'Backup corruption fixture',
+    mode: 'dark',
+    provenance: { kind: 'user' },
+    app: { defaults: 'ade:graphite', tokens: { primary: '#123456' } },
+  })
+  await profile.call('themes.install', { items: [{ source: theme, expected_revision: 0 }] })
   const { path: bundle, result } = await createBackup(ade, profile)
   expect(result.code, result.stderr).toBe(0)
   const intact = await control(ade, ['backup', 'inspect', '--backup', bundle])

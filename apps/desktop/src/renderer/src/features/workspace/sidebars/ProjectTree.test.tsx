@@ -119,11 +119,47 @@ test('with no projects, the navigator says so', async () => {
   await expect.element(screen.getByText('No projects yet')).toBeVisible()
 })
 
-test('a conversation’s mark shows the attention the daemon reports', async () => {
+test('conversation attention stays visible without color and updates with the catalog', async () => {
   const screen = await renderWorkspace()
-  catalog(two, [conversation('c1', 'w2', 'Fix the build', 'needs_you')])
   const projects = screen.getByRole('list', { name: 'Projects' })
-  await expect.element(projects.getByLabelText('Needs you')).toBeVisible()
+  const states = [
+    ['running', 'Running'],
+    ['needs_you', 'Needs you'],
+    ['idle', 'Idle'],
+    ['error', 'Error'],
+  ] as const
+  for (const [attention, label] of states) {
+    catalog(two, [conversation('c1', 'w2', 'Fix the build', attention)])
+    const row = projects.getByRole('button', { name: `${label} Fix the build`, exact: true })
+    await expect.element(row).toBeVisible()
+    await expect.element(row.getByRole('img', { name: label })).toBeVisible()
+    await expect.element(row.getByText(label, { exact: true })).toBeVisible()
+  }
+})
+
+test('conversation status stays visible beside a truncated title and preserves keyboard selection', async () => {
+  hostSpy()
+  const screen = await renderWorkspace()
+  const title = 'Review the workspace changes before finishing the very long conversation'
+  catalog(two, [conversation('c1', 'w2', title, 'needs_you')])
+  const row = screen.getByRole('list', { name: 'Projects' }).getByRole('button', {
+    name: `Needs you ${title}`,
+    exact: true,
+  })
+  await expect.element(row).toBeVisible()
+  const status = row.getByText('Needs you', { exact: true })
+  await expect.element(status).toBeVisible()
+  const titleElement = row.getByText(title, { exact: true }).element()
+  expect(titleElement.scrollWidth).toBeGreaterThan(titleElement.clientWidth)
+  const rowBounds = row.element().getBoundingClientRect()
+  const statusBounds = status.element().getBoundingClientRect()
+  expect(statusBounds.left).toBeGreaterThanOrEqual(rowBounds.left)
+  expect(statusBounds.right).toBeLessThanOrEqual(rowBounds.right)
+  row.element().focus()
+  await expect.element(row).toHaveFocus()
+  await userEvent.keyboard('{Enter}')
+  await expect.poll(shownWorkspace).toBe('w2')
+  await expect.poll(() => daemonLayouts().window().workspace_id).toBe('w2')
 })
 
 /** Opens a workspace's "⋯" menu and chooses an item. */

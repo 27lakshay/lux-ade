@@ -30,6 +30,42 @@ static bool report_scheme(GhosttyTerminal terminal, void *userdata, GhosttyColor
     *scheme = GHOSTTY_COLOR_SCHEME_DARK;
     return true;
 }
+static bool report_light_scheme(GhosttyTerminal terminal, void *userdata, GhosttyColorScheme *scheme) {
+    (void)terminal; (void)userdata;
+    *scheme = GHOSTTY_COLOR_SCHEME_LIGHT;
+    return true;
+}
+
+int ade_vt_appearance(void *terminal, const GhosttyColorRgb *foreground,
+                      const GhosttyColorRgb *background, const GhosttyColorRgb *cursor,
+                      const GhosttyColorRgb *palette, bool dark) {
+    GhosttyResult result = ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_COLOR_FOREGROUND, foreground);
+    if (result != GHOSTTY_SUCCESS) return result;
+    result = ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_COLOR_BACKGROUND, background);
+    if (result != GHOSTTY_SUCCESS) return result;
+    // NULL preserves Ghostty's configured default for cell-relative fills.
+    result = ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_COLOR_CURSOR, cursor);
+    if (result != GHOSTTY_SUCCESS) return result;
+    result = ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_COLOR_PALETTE, palette);
+    if (result != GHOSTTY_SUCCESS) return result;
+    return ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_COLOR_SCHEME,
+        dark ? (const void *)report_scheme : (const void *)report_light_scheme);
+}
+
+// Only the native owner emits unsolicited scheme reports, through its normal
+// reply queue. Rendering views never participate in this protocol.
+int ade_vt_notify_scheme(void *terminal, bool dark, GhosttyTerminalWritePtyFn callback, void *userdata) {
+    GhosttyTerminalModeConfig mode = { .mode = GHOSTTY_MODE_COLOR_SCHEME_REPORT };
+    GhosttyResult result = ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_MODE, &mode);
+    if (result != GHOSTTY_SUCCESS || !mode.value) return result;
+    char bytes[32];
+    size_t len = 0;
+    result = ghostty_color_scheme_report_encode(
+        dark ? GHOSTTY_COLOR_SCHEME_DARK : GHOSTTY_COLOR_SCHEME_LIGHT,
+        bytes, sizeof(bytes), &len);
+    if (result == GHOSTTY_SUCCESS) callback(terminal, userdata, (const uint8_t *)bytes, len);
+    return result;
+}
 
 void *ade_vt_new(uint16_t cols, uint16_t rows) {
     GhosttyTerminal terminal = NULL;

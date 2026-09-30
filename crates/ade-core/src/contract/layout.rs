@@ -6,7 +6,7 @@
 //! A tab names what it shows with a [`TabTarget`]; its title comes from the
 //! target's own record. [`crate::layout::apply`] is the one implementation of
 //! every [`LayoutAction`]; the daemon runs it and stores the result.
-use super::{FrameSpec, OperationSpec, Tier};
+use super::{FrameSpec, Nullable, OperationSpec, Tier};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -68,25 +68,6 @@ pub fn frames() -> Vec<FrameSpec> {
         FrameSpec::new::<LayoutChanged>("layout_changed"),
         FrameSpec::new::<LayoutRemoved>("layout_removed"),
     ]
-}
-
-/// The schema of a field that is a value or null and always present. A
-/// plain `Option` field is optional in the request contract and required in
-/// the reply contract, and [`Layout`] travels both ways.
-struct Nullable<T>(std::marker::PhantomData<T>);
-
-impl<T: JsonSchema> JsonSchema for Nullable<T> {
-    fn inline_schema() -> bool {
-        true
-    }
-
-    fn schema_name() -> std::borrow::Cow<'static, str> {
-        <Option<T>>::schema_name()
-    }
-
-    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
-        <Option<T>>::json_schema(generator)
-    }
 }
 
 /// What a tab shows. Records are named by ID; a file or diff by its path

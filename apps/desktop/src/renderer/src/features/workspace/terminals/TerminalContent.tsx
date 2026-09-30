@@ -1,8 +1,10 @@
-import { mountTerminal, type TerminalView as View } from '@ade/terminal'
-import { useEffect, useRef, useState } from 'react'
+import { mountTerminal, type GhosttyTerminalPreferences, type TerminalView as View } from '@ade/terminal'
+import type { ProfileSettings } from '@ade/contracts'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { useStore } from 'zustand'
 import { toast } from '@/components/ui/toast'
 import { hostErrorMessage } from '@/lib/host-error'
+import { queryClient } from '../../../app/query-client'
 import { TerminalStatus } from '../../../provisional/TerminalStatus'
 import { activeLayout, layoutStore } from '../model/layout-store'
 import { findPane } from '../model/layout-tree'
@@ -17,6 +19,31 @@ import { findPane } from '../model/layout-tree'
 /** Attempts to attach again after the stream closes, before asking the person. */
 const RETRIES = 3
 
+const subscribeProfileSettings = (notify: () => void): (() => void) =>
+  queryClient.getQueryCache().subscribe((event) => {
+    if (event.query.queryKey[0] === 'profile-settings') notify()
+  })
+const getProfileSettings = (): ProfileSettings | undefined => queryClient.getQueryData(['profile-settings'])
+
+function useProfileSettings(): ProfileSettings | undefined {
+  return useSyncExternalStore(subscribeProfileSettings, getProfileSettings, getProfileSettings)
+}
+
+function terminalPreferences(settings: ProfileSettings | undefined): GhosttyTerminalPreferences {
+  return {
+    family: (settings?.terminal_font_family as string | undefined) ?? 'JetBrains Mono Variable',
+    size: (settings?.terminal_font_size as number | undefined) ?? 12,
+    lineHeight: (settings?.terminal_line_height as number | undefined) ?? 1.35,
+    kerning: (settings?.terminal_font_kerning as GhosttyTerminalPreferences['kerning']) ?? 'auto',
+    cursorShape: (settings?.terminal_cursor_shape as GhosttyTerminalPreferences['cursorShape']) ?? 'block',
+    cursorBlink: (settings?.terminal_cursor_blink as boolean | undefined) ?? true,
+    reducedMotion:
+      settings?.reduced_motion === 'system' || settings?.reduced_motion === undefined
+        ? undefined
+        : settings.reduced_motion === 'on',
+  }
+}
+
 /** Whether the tab is the one shown in the focused pane of the workspace on screen. */
 const useFocusedTab = (tabId: string): boolean =>
   useStore(layoutStore, (state) => {
@@ -28,11 +55,13 @@ function TerminalView({
   tabId,
   workspaceId,
   terminalId,
+  preferences,
   onClosed,
 }: {
   tabId: string
   workspaceId: string
   terminalId: string
+  preferences: GhosttyTerminalPreferences
   onClosed: (message: string) => void
 }) {
   const container = useRef<HTMLDivElement>(null)
@@ -48,7 +77,10 @@ function TerminalView({
   useEffect(() => {
     const element = container.current
     if (!element) return
-    const mounted = mountTerminal(element, window.adeHost.terminal, workspaceId, terminalId, { onStatus: onClosed })
+    const mounted = mountTerminal(element, window.adeHost.terminal, workspaceId, terminalId, {
+      onStatus: onClosed,
+      preferences,
+    })
     view.current = mounted
     const observer = new ResizeObserver(([entry]) => {
       mounted.setVisible(Boolean(entry && entry.contentRect.width > 0 && entry.contentRect.height > 0))
@@ -59,9 +91,12 @@ function TerminalView({
       view.current = null
       mounted.dispose()
     }
-    // onClosed is a new function each render; the attachment must not restart for it.
+    // onClosed and preferences are updated without restarting the terminal attachment.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- attach once per terminal and attempt
   }, [workspaceId, terminalId])
+  useEffect(() => {
+    void view.current?.setPreferences(preferences)
+  }, [preferences])
   return <div ref={container} className="h-full" data-terminal={terminalId} />
 }
 
@@ -74,6 +109,8 @@ export function TerminalContent({
   workspaceId: string
   terminalId: string
 }) {
+  const profileSettings = useProfileSettings()
+  const preferences = terminalPreferences(profileSettings)
   // Each attempt mounts a fresh view, which attaches again and restores from the daemon's snapshot.
   const [attempt, setAttempt] = useState(0)
   const [failures, setFailures] = useState(0)
@@ -112,6 +149,7 @@ export function TerminalContent({
         tabId={tabId}
         workspaceId={workspaceId}
         terminalId={terminalId}
+        preferences={preferences}
         onClosed={setStatus}
       />
       {status !== null && failures >= RETRIES && (

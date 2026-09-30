@@ -87,6 +87,12 @@ const EFFECT_OPS: [&str; 2] = ["plugin.install", "plugin.uninstall"];
 /// The effect command whose effect runs in a plugin host.
 const INVOKE_OP: &str = "plugin.command.invoke";
 const MAX_INVOKE_ARGS_BYTES: usize = 256 * 1024;
+type PluginThemeContribution = (
+    String,
+    String,
+    String,
+    Vec<ade_core::appearance::definition::ThemeDefinition>,
+);
 
 /// An error with a wire code the client SDK knows.
 #[derive(Debug)]
@@ -203,6 +209,11 @@ impl Plugins {
     pub fn take_activation_change(&self) -> bool {
         self.0.activation_changed.swap(false, Ordering::SeqCst)
     }
+
+    /// Declarative theme definitions owned by live plugin activations.
+    pub fn themes(&self) -> Result<Vec<PluginThemeContribution>> {
+        self.0.themes()
+    }
 }
 
 /// Delivers lifecycle hooks through each plugin's backend host. The registry
@@ -310,6 +321,24 @@ impl Core {
             }
         }
         Ok(())
+    }
+
+    /// Current declarative themes are exposed only while their provider activation is live.
+    fn themes(&self) -> Result<Vec<PluginThemeContribution>> {
+        let state = self.state.lock().unwrap();
+        let mut ids: Vec<&String> = state.live.keys().collect();
+        ids.sort();
+        ids.into_iter()
+            .map(|id| {
+                let plugin = installed(&state, id)?.detail;
+                Ok((
+                    plugin.summary.id,
+                    plugin.summary.version,
+                    plugin.artifact_digest,
+                    plugin.manifest.contributes.themes,
+                ))
+            })
+            .collect()
     }
 
     fn hook_subscriptions(&self) -> Result<Vec<HookSubscription>> {

@@ -40,7 +40,9 @@ function RailItem({
         }
       >
         <Icon name={icon} size="lg" />
-        {needsYou && <span aria-hidden className="absolute end-2 top-2 size-2 rounded-full bg-attention" />}
+        {needsYou && (
+          <span aria-hidden className="rail-needs-you absolute end-2 top-2 size-2 rounded-full bg-attention" />
+        )}
       </TooltipTrigger>
       <TooltipContent side="right">{label}</TooltipContent>
     </Tooltip>

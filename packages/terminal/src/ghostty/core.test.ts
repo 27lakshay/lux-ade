@@ -76,6 +76,13 @@ describe('GhosttyTerminalCore', () => {
       foreground: { r: 123, g: 45, b: 67 },
       background: { r: 9, g: 8, b: 7 },
       bold: true,
+      boldColor: {
+        foreground: { r: 123, g: 45, b: 67 },
+        background: { r: 9, g: 8, b: 7 },
+        brightForeground: null,
+        inverse: false,
+        faint: false,
+      },
       italic: true,
       invisible: true,
       strikethrough: true,
@@ -84,9 +91,9 @@ describe('GhosttyTerminalCore', () => {
       selected: false,
     })
     expect(cells.slice(1, 5).map(({ text, wide }) => ({ text, wide }))).toEqual([
-      { text: '界', wide: 0 },
+      { text: '界', wide: GHOSTTY_CELL_WIDE.wide },
       { text: '', wide: GHOSTTY_CELL_WIDE.spacerTail },
-      { text: '🙂', wide: 0 },
+      { text: '🙂', wide: GHOSTTY_CELL_WIDE.wide },
       { text: '', wide: GHOSTTY_CELL_WIDE.spacerTail },
     ])
 
@@ -95,6 +102,26 @@ describe('GhosttyTerminalCore', () => {
     expect(core.snapshot().rowData[0]!.cells[0]).toEqual({ ...cells[0], selected: true })
     core.clearSelection()
     expect(core.snapshot().rowData[0]!.cells[0]).toEqual(cells[0])
+  })
+
+  it('retains bold color provenance and active bright palette overrides', async () => {
+    const core = await createCore()
+    const palette = Array.from({ length: 256 }, () => ({ r: 0, g: 0, b: 0 }))
+    palette[1] = { r: 100, g: 0, b: 0 }
+    palette[9] = { r: 0, g: 200, b: 0 }
+    core.setTheme({ ...theme, palette })
+    core.write('\x1b[1;31mA\x1b[38;2;100;0;0mB\x1b[31;7;2mC')
+    const cells = core.snapshot().rowData[0]!.cells
+    expect(cells[0]).toMatchObject({
+      foreground: { r: 100, g: 0, b: 0 },
+      boldColor: { brightForeground: { r: 0, g: 200, b: 0 }, inverse: false, faint: false },
+    })
+    expect(cells[1]).toMatchObject({ foreground: { r: 100, g: 0, b: 0 }, boldColor: { brightForeground: null } })
+    expect(cells[2]).toMatchObject({ boldColor: { inverse: true, faint: true } })
+    core.write('\x1b]4;9;#123456\x07')
+    expect(core.snapshot().rowData[0]!.cells[0]).toMatchObject({
+      boldColor: { brightForeground: { r: 18, g: 52, b: 86 } },
+    })
   })
 
   it('writes bytes as well as strings', async () => {

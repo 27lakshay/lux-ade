@@ -1,4 +1,13 @@
 import { createConnection, type Socket } from 'node:net'
+export {
+  writeThemeExport,
+  writeThemePackExport,
+  writeGhosttyThemeExport,
+  ThemeFileExportError,
+  type ThemeFileExport,
+  type ThemePackFileExport,
+  type GhosttyThemeFileExport,
+} from './theme-export.js'
 import { call, type CallRequest } from './call.js'
 import { helloLine } from './request.js'
 import { applyWindowFrame, parseWindows, type Window } from './windows.js'

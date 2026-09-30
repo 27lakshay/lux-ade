@@ -29,3 +29,25 @@ test('each state is named for screen readers and drawn in its colour', async () 
   expect(getComputedStyle(dot('Done')).backgroundColor).toBe(colour('var(--success)'))
   await expect.element(screen.getByRole('img', { name: 'Nothing running' })).toBeInTheDocument()
 })
+
+test('non-color preference reveals state labels without changing colour or accessible names', async () => {
+  const screen = await render(<Status state="needsYou" />)
+  const status = screen.getByRole('img', { name: 'Needs you' })
+  const marker = status.element().firstElementChild!
+  const visibleName = status.element().lastElementChild!
+  const attention = colour('var(--attention)')
+
+  expect(getComputedStyle(visibleName).display).toBe('none')
+  expect(getComputedStyle(marker).backgroundColor).toBe(attention)
+  document.documentElement.dataset.differentiateWithoutColor = 'true'
+  try {
+    expect(getComputedStyle(visibleName).display).not.toBe('none')
+    expect(visibleName.getBoundingClientRect().width).toBeGreaterThan(0)
+    expect(status.element().getAttribute('aria-label')).toBe('Needs you')
+    expect(visibleName.getAttribute('aria-hidden')).toBe('true')
+    expect(getComputedStyle(marker).backgroundColor).toBe(attention)
+  } finally {
+    delete document.documentElement.dataset.differentiateWithoutColor
+  }
+  expect(getComputedStyle(visibleName).display).toBe('none')
+})

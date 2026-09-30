@@ -30,6 +30,66 @@ test('each component draws its step of the type scale', async () => {
   expect(getComputedStyle(screen.getByText('Code').element()).fontFamily).toMatch(/mono/i)
 })
 
+test('selected UI and code font families apply independently with fallback stacks', async () => {
+  const root = document.documentElement
+  root.style.setProperty('--ade-ui-font-family', '"Atkinson Hyperlegible"')
+  root.style.setProperty('--ade-code-font-family', '"Iosevka"')
+  try {
+    const screen = await render(
+      <>
+        <Text>Selected UI font</Text>
+        <Code>Selected code font</Code>
+      </>,
+    )
+    const uiFamily = getComputedStyle(screen.getByText('Selected UI font').element()).fontFamily
+    const codeFamily = getComputedStyle(screen.getByText('Selected code font').element()).fontFamily
+    expect(uiFamily).toMatch(/^"Atkinson Hyperlegible"/)
+    expect(uiFamily).toContain('ui-sans-serif')
+    expect(codeFamily).toMatch(/^Iosevka/)
+    expect(codeFamily).toContain('ui-monospace')
+  } finally {
+    root.style.removeProperty('--ade-ui-font-family')
+    root.style.removeProperty('--ade-code-font-family')
+  }
+})
+
+test('UI and code size tokens follow their independent root preferences', async () => {
+  const root = document.documentElement
+  root.style.setProperty('--ade-ui-font-scale', '2')
+  root.style.setProperty('--ade-code-font-size', '20px')
+  try {
+    const screen = await render(
+      <>
+        <Text>Scaled UI</Text>
+        <Code>Scaled code</Code>
+        <Button size="sm">Still reachable</Button>
+      </>,
+    )
+    expect(style(screen.getByText('Scaled UI').element()).size).toBe('26px')
+    expect(style(screen.getByText('Scaled code').element()).size).toBe('20px')
+    expect(getComputedStyle(screen.getByText('Scaled UI').element()).lineHeight).toBe('28.6px')
+    expect(getComputedStyle(screen.getByText('Scaled code').element()).lineHeight).toBe('26.6667px')
+    expect(
+      screen.getByRole('button', { name: 'Still reachable' }).element().getBoundingClientRect().height,
+    ).toBeGreaterThanOrEqual(28)
+  } finally {
+    root.style.removeProperty('--ade-ui-font-scale')
+    root.style.removeProperty('--ade-code-font-size')
+  }
+})
+
+test('compact density tightens content spacing only', async () => {
+  const screen = await render(
+    <>
+      <section className="ade-fullscreen-content flex flex-col" data-testid="default-spacing" />
+      <section className="ade-fullscreen-content flex flex-col" data-density="compact" data-testid="compact-spacing" />
+    </>,
+  )
+  const gap = (id: string) => getComputedStyle(screen.getByTestId(id).element()).gap
+  expect(gap('default-spacing')).toBe('24px')
+  expect(gap('compact-spacing')).toBe('16px')
+})
+
 test('components render sensible elements, and `as` changes them', async () => {
   const screen = await render(
     <>

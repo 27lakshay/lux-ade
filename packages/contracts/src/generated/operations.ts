@@ -62,6 +62,8 @@ export const operations = {
   "account.switch.preview": { tier: "query", domain: "accounts", request: "AccountSwitchPreviewRequest", response: "AccountSwitchPreview" },
   "account.switch": { tier: "effect_command", domain: "accounts", request: "AccountSwitchRequest", response: "AccountSwitched" },
   "account.switch.list": { tier: "query", domain: "accounts", request: "AccountSwitchListRequest", response: "AccountSwitches" },
+  "terminal.appearance.get": { tier: "query", domain: "terminals", request: "TerminalAppearanceRequest", response: "ResolvedTerminalAppearance" },
+  "terminal.appearance.set": { tier: "idempotent_command", domain: "terminals", request: "TerminalAppearanceSetRequest", response: "ResolvedTerminalAppearance" },
   "terminal.create": { tier: "effect_command", domain: "terminals", request: "TerminalCreateRequest", response: "TerminalCreated" },
   "terminal.operation": { tier: "query", domain: "terminals", request: "TerminalOperationRequest", response: "TerminalOperation" },
   "terminal.restart": { tier: "effect_command", domain: "terminals", request: "TerminalRestartRequest", response: "Ack" },
@@ -294,8 +296,27 @@ export const operations = {
   "layout.apply": { tier: "idempotent_command", domain: "layout", request: "LayoutApplyRequest", response: "LayoutApplied" },
   "tab.close": { tier: "effect_command", domain: "layout", request: "TabCloseRequest", response: "LayoutApplied" },
   "pane.close": { tier: "effect_command", domain: "layout", request: "PaneCloseRequest", response: "LayoutApplied" },
+  "settings.appearance.observe": { tier: "idempotent_command", domain: "settings", request: "SystemAppearanceObservation", response: "Settings" },
+  "settings.palettes": { tier: "query", domain: "settings", request: "SettingsPalettesRequest", response: "PaletteCatalog" },
+  "settings.appearance.reset": { tier: "idempotent_command", domain: "settings", request: "SettingsResetAppearanceRequest", response: "Settings" },
+  "settings.appearance": { tier: "query", domain: "settings", request: "SettingsAppearanceRequest", response: "ResolvedAppearance" },
   "settings.get": { tier: "query", domain: "settings", request: "SettingsGetRequest", response: "Settings" },
   "settings.set": { tier: "idempotent_command", domain: "settings", request: "SettingsSetRequest", response: "Settings" },
+  "themes.ghostty.export": { tier: "query", domain: "themes", request: "GhosttyThemeExportRequest", response: "GhosttyThemeExport" },
+  "themes.ghostty.validate": { tier: "query", domain: "themes", request: "GhosttyThemeValidateRequest", response: "GhosttyThemeValidation" },
+  "themes.warp.validate": { tier: "query", domain: "themes", request: "WarpThemeValidateRequest", response: "WarpThemeValidation" },
+  "themes.file.validate": { tier: "query", domain: "themes", request: "ThemeFileValidateRequest", response: "ThemeFileValidation" },
+  "themes.pack.export": { tier: "query", domain: "themes", request: "ThemePackExportRequest", response: "ThemePackExport" },
+  "themes.validate": { tier: "query", domain: "themes", request: "ThemeValidateRequest", response: "ThemeValidationResponse" },
+  "themes.list": { tier: "query", domain: "themes", request: "ThemeListRequest", response: "ThemeLibrary" },
+  "themes.inspect": { tier: "query", domain: "themes", request: "ThemeInspectRequest", response: "ThemeInspectResponse" },
+  "themes.install": { tier: "idempotent_command", domain: "themes", request: "ThemeInstallRequest", response: "ThemeInstallation" },
+  "themes.rename": { tier: "idempotent_command", domain: "themes", request: "ThemeRenameRequest", response: "ThemeInstallation" },
+  "themes.export": { tier: "query", domain: "themes", request: "ThemeExportRequest", response: "ThemeExport" },
+  "themes.preview": { tier: "query", domain: "themes", request: "ThemePreviewRequest", response: "ThemePreview" },
+  "themes.draft.preview": { tier: "query", domain: "themes", request: "ThemeDraftPreviewRequest", response: "ThemeDraftPreview" },
+  "themes.removal": { tier: "query", domain: "themes", request: "ThemeRemovalPlanRequest", response: "ThemeRemovalPlan" },
+  "themes.remove": { tier: "idempotent_command", domain: "themes", request: "ThemeRemoveRequest", response: "ThemeRemoval" },
 } as const
 
 /**
@@ -402,12 +423,14 @@ export const frames = {
   "layout_changed": { domain: "layout", frame: "LayoutChanged" },
   "layout_removed": { domain: "layout", frame: "LayoutRemoved" },
   "settings_changed": { domain: "settings", frame: "SettingsChanged" },
+  "theme_library_changed": { domain: "themes", frame: "ThemeLibraryChanged" },
 } as const
 
 /** Each terminal attachment frame's `type` tag and the validator name for it. */
 export const terminalFrames = {
   "snapshot": { frame: "TerminalSnapshotFrame" },
   "terminal": { frame: "TerminalOutputFrame" },
+  "terminal_appearance": { frame: "TerminalAppearanceFrame" },
   "terminal_resize": { frame: "TerminalResizeFrame" },
   "viewport": { frame: "TerminalViewportFrame" },
   "metrics": { frame: "TerminalMetricsFrame" },

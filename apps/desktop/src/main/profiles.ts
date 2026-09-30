@@ -1,6 +1,7 @@
 // Profile switching: starts a profile daemon through the launcher, attaches the
 // connection in profile-connection.ts and serves the profile IPC channels.
 import { broadcast, handle } from './ipc'
+import { loadAppearance, watchAppearance } from './appearance'
 import { stat } from 'node:fs/promises'
 import { isAbsolute } from 'node:path'
 import { AdeClient } from '@ade/client'
@@ -54,6 +55,7 @@ async function attachClient(endpoint: string, profileId: string): Promise<void> 
   const generation = nextClientGeneration()
   setClient(next)
   setSocket(endpoint)
+  loadAppearance(profileId)
   // The bridge closes the previous profile's terminal attachments and streams from the new one.
   setStreamProfile(endpoint)
   publishProfile({ activeId: profileId, error: '' })
@@ -74,7 +76,12 @@ async function attachClient(endpoint: string, profileId: string): Promise<void> 
     }),
   )
   // The feed reaches windows through the stream bridge; main watches it only for notifications.
-  setUnsubscribeFeed(watchActivity(next))
+  const stopActivity = watchActivity(next)
+  const stopAppearance = watchAppearance(next, endpoint)
+  setUnsubscribeFeed(() => {
+    stopActivity()
+    stopAppearance()
+  })
   next.start()
 }
 

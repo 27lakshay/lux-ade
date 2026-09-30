@@ -61,6 +61,7 @@ mod services;
 mod settings;
 mod skills;
 mod terminals;
+mod themes;
 mod workspaces;
 
 use agents::Agent;
@@ -121,6 +122,8 @@ struct Data {
     active_health_samples: usize,
     subscribers: HashMap<String, mpsc::SyncSender<Value>>,
     revision: u64,
+    /// Runtime appearance projection must be retried after an unconfirmed commit.
+    appearance_pending: bool,
     /// The last activity sequence published as a feed frame.
     activity_published: Option<u64>,
     recovery: restart::State,
@@ -140,8 +143,10 @@ pub struct Sessions {
     hooks: crate::hooks::Dispatcher,
     files: crate::files::Files,
     data: Mutex<Data>,
-    pub subscribers: Arc<AtomicUsize>,
+    /// Serializes plugin mutations with contribution snapshots and application.
+    plugin_lifecycle: Mutex<()>,
     pub boot_id: String,
+    pub subscribers: Arc<AtomicUsize>,
     runtime: Arc<Supervisor>,
     queue_wake: mpsc::SyncSender<()>,
     counters: inspection::Counters,
@@ -172,6 +177,13 @@ impl Sessions {
             &path.with_extension("plugins"),
         )
         .map_err(|error| format!("{error:#}"));
+        let plugin_themes = plugins.as_ref().map_or_else(
+            |_| Vec::new(),
+            |plugins| plugins.themes().unwrap_or_default(),
+        );
+        if let Err(error) = store.sync_plugin_themes(&plugin_themes) {
+            tracing::warn!(target: "ade", event = "plugin_themes_unavailable", error = %error);
+        }
         let history = crate::history::History::open(path)?;
         let usage = crate::usage::Usage::open(path)?;
         let presets = crate::capabilities::Presets::open(path)?;
@@ -206,13 +218,25 @@ impl Sessions {
                 active_health_samples: 0,
                 subscribers: HashMap::new(),
                 revision: 0,
+                appearance_pending: false,
                 activity_published: None,
                 recovery: Default::default(),
                 terminal_feed: Default::default(),
             }),
             subscribers: Arc::new(AtomicUsize::new(0)),
+            plugin_lifecycle: Mutex::new(()),
             boot_id: new_id("boot"),
         });
+        sessions.runtime.command(
+            ade_core::contract::terminals::runtime::Command::Appearance {
+                appearance: sessions
+                    .data
+                    .lock()
+                    .unwrap()
+                    .store
+                    .terminal_appearance_projection()?,
+            },
+        )?;
         sessions.share_project_ids();
         sessions.restore()?;
         sessions.start_activity_feed()?;
@@ -599,13 +623,34 @@ impl Sessions {
         let string = required_str(request);
         let op = request["op"].as_str().unwrap_or("");
         if op.starts_with("plugin.") {
+            let _lifecycle = self.plugin_lifecycle.lock().unwrap();
             let reply = match &self.plugins {
                 Ok(plugins) if op == "plugin.uninstall" => self.uninstall_plugin(plugins, request),
                 Ok(plugins) => plugins.command(request),
                 Err(error) => Err(anyhow!("Plugin registry is unavailable: {error}")),
             };
-            // Activations may have changed; hook subscriptions follow them.
+            // Activations may have changed; registrations and theme definitions follow them.
             self.refresh_hook_subscriptions();
+            if matches!(
+                op,
+                "plugin.install"
+                    | "plugin.uninstall"
+                    | "plugin.enable"
+                    | "plugin.disable"
+                    | "plugin.host.restart"
+                    | "plugin.dev.enter"
+                    | "plugin.dev.leave"
+            ) {
+                let sync = self.sync_plugin_themes();
+                return match reply {
+                    Err(error) => Err(error),
+                    Ok(value) if value["type"] == "error" => Ok(value),
+                    Ok(value) => {
+                        sync?;
+                        Ok(value)
+                    }
+                };
+            }
             return reply;
         }
         if op.starts_with("hook.") {
@@ -810,7 +855,10 @@ impl Sessions {
             "runtime.recovery" | "runtime.recovery.release" => self.recovery_command(request),
             "catalog.get" | "rebind.list" | "workspace.open" | "workspace.rename"
             | "repository.rebind" | "workspace.rebind" => self.workspace_command(request),
-            "terminal.create" | "terminal.operation" => self.terminal_command(request),
+            "terminal.create"
+            | "terminal.operation"
+            | "terminal.appearance.get"
+            | "terminal.appearance.set" => self.terminal_command(request),
             op if op.starts_with("resources.") => self.worktrees.resources_command(request),
             "activity.list"
             | "activity.mark"
@@ -861,6 +909,7 @@ impl Sessions {
             }
             op if op.starts_with("device.") => self.device_command(request),
             op if op.starts_with("context.") => self.context_command(request),
+            op if op.starts_with("themes.") => self.themes_command(request),
             op if op.starts_with("settings.") => self.settings_command(request),
             _ => bail!("Unknown session operation"),
         }

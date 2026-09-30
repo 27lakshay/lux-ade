@@ -52,13 +52,16 @@ impl Sessions {
     }
 
     fn dispatch_hooks(&self) -> Result<()> {
-        if self.hooks.take_stale()
-            | self
-                .plugins
-                .as_ref()
-                .is_ok_and(|p| p.take_activation_change())
-        {
+        let activation_changed = self
+            .plugins
+            .as_ref()
+            .is_ok_and(|plugins| plugins.take_activation_change());
+        if self.hooks.take_stale() | activation_changed {
             self.refresh_hook_subscriptions();
+        }
+        if activation_changed {
+            let _lifecycle = self.plugin_lifecycle.lock().unwrap();
+            self.sync_plugin_themes()?;
         }
         let staged = self.worktrees.staged_hook_deliveries()?;
         if !staged.is_empty() {

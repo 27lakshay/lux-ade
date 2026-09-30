@@ -258,6 +258,33 @@ pub struct InvalidKeybinding {
     pub reason: String,
 }
 
+/// An appearance edit was based on a superseded committed selection.
+#[derive(Debug, thiserror::Error)]
+#[error(
+    "Appearance changed from revision {expected} to {current}; reload settings before applying your choice"
+)]
+pub struct AppearanceConflict {
+    pub expected: u64,
+    pub current: u64,
+}
+
+/// A theme replacement was based on a superseded definition.
+#[derive(Debug, thiserror::Error)]
+#[error("Theme {id} changed from revision {expected} to {current}; inspect it before replacing it")]
+pub struct ThemeConflict {
+    pub id: String,
+    pub expected: u64,
+    pub current: u64,
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("Theme {0} is protected; save a custom copy with a distinct ID")]
+pub struct ThemeProtected(pub String);
+
+#[derive(Debug, thiserror::Error)]
+#[error("Theme {0} does not exist; reload the theme library")]
+pub struct ThemeNotFound(pub String);
+
 /// `settings.set` would leave two or more commands on one key.
 #[derive(Debug, thiserror::Error)]
 #[error("{} would share the key {key}; unbind one or choose another key", commands.join(" and "))]
@@ -704,6 +731,24 @@ pub fn error_envelope(error: anyhow::Error) -> serde_json::Value {
         return serde_json::json!({"type":"error","message":invalid.to_string(),
             "code":"invalid_keybinding","recovery":"choose_another_key",
             "command":invalid.command});
+    }
+    if let Some(conflict) = error.downcast_ref::<ThemeConflict>() {
+        return serde_json::json!({"type":"error","message":conflict.to_string(),
+            "code":"theme_conflict","recovery":"inspect_theme", "id":conflict.id,
+            "expected":conflict.expected,"current":conflict.current});
+    }
+    if let Some(protected) = error.downcast_ref::<ThemeProtected>() {
+        return serde_json::json!({"type":"error","message":protected.to_string(),
+            "code":"theme_protected","recovery":"save_custom_copy", "id":protected.0});
+    }
+    if let Some(missing) = error.downcast_ref::<ThemeNotFound>() {
+        return serde_json::json!({"type":"error","message":missing.to_string(),
+            "code":"theme_not_found","recovery":"reload_theme_library", "id":missing.0});
+    }
+    if let Some(conflict) = error.downcast_ref::<AppearanceConflict>() {
+        return serde_json::json!({"type":"error","message":conflict.to_string(),
+            "code":"appearance_conflict","recovery":"reload_settings",
+            "expected":conflict.expected,"current":conflict.current});
     }
     if let Some(conflict) = error.downcast_ref::<KeybindingConflict>() {
         return serde_json::json!({"type":"error","message":conflict.to_string(),

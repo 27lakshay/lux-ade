@@ -1,7 +1,22 @@
+use ade_core::appearance::{CursorColor, Rgb, TerminalAppearance};
 use std::ffi::c_void;
 use std::ptr::NonNull;
 
 unsafe extern "C" {
+    fn ade_vt_appearance(
+        terminal: *mut c_void,
+        foreground: *const Rgb,
+        background: *const Rgb,
+        cursor: *const Rgb,
+        palette: *const Rgb,
+        dark: bool,
+    ) -> i32;
+    fn ade_vt_notify_scheme(
+        terminal: *mut c_void,
+        dark: bool,
+        callback: unsafe extern "C" fn(*mut c_void, *mut c_void, *const u8, usize),
+        userdata: *mut c_void,
+    ) -> i32;
     fn ade_vt_new(cols: u16, rows: u16) -> *mut c_void;
     fn ade_vt_free(terminal: *mut c_void);
     fn ade_vt_reply_callback(
@@ -50,6 +65,43 @@ unsafe extern "C" fn collect_reply(
 unsafe impl Send for TerminalState {}
 
 impl TerminalState {
+    pub fn set_appearance(&mut self, appearance: &TerminalAppearance) -> Result<(), String> {
+        let cursor = match &appearance.cursor {
+            CursorColor::Literal(color) => color as *const Rgb,
+            CursorColor::Cell(_) => std::ptr::null(),
+        };
+        if appearance.palette.len() != 256 {
+            return Err("A terminal palette must contain 256 colors".into());
+        }
+        let result = unsafe {
+            ade_vt_appearance(
+                self.0.as_ptr(),
+                &appearance.foreground,
+                &appearance.background,
+                cursor,
+                appearance.palette.as_ptr(),
+                appearance.dark,
+            )
+        };
+        if result != 0 {
+            return Err(format!("libghostty-vt appearance: {result}"));
+        }
+        Ok(())
+    }
+    pub fn notify_scheme(&mut self, dark: bool) -> Result<(), String> {
+        let result = unsafe {
+            ade_vt_notify_scheme(
+                self.0.as_ptr(),
+                dark,
+                collect_reply,
+                (&mut *self.1 as *mut Vec<u8>).cast(),
+            )
+        };
+        if result != 0 {
+            return Err(format!("libghostty-vt scheme notification: {result}"));
+        }
+        Ok(())
+    }
     pub fn new(cols: u16, rows: u16) -> Result<Self, String> {
         let terminal = NonNull::new(unsafe { ade_vt_new(cols, rows) })
             .ok_or_else(|| "libghostty-vt initialization failed".to_string())?;
@@ -184,6 +236,33 @@ mod tests {
             b"\x1b[10;20R\x1b[4;480;800t\x1b[6;20;10t"
         );
         assert!(terminal.take_replies().is_empty());
+    }
+    #[test]
+    fn symbolic_cursor_fill_keeps_ghostty_osc12_default_and_override() {
+        let mut appearance = TerminalAppearance::default();
+        appearance.cursor = CursorColor::Cell(ade_core::appearance::CellColor::CellForeground);
+        let mut terminal = TerminalState::new(80, 24).unwrap();
+        terminal.set_appearance(&appearance).unwrap();
+
+        let query_cursor = |terminal: &mut TerminalState| {
+            terminal.take_replies();
+            terminal.write(b"\x1b]12;?\x07");
+            terminal.take_replies()
+        };
+        let rgb = appearance.foreground;
+        let default_reply = format!(
+            "\x1b]12;rgb:{:02x}{:02x}/{:02x}{:02x}/{:02x}{:02x}\x07",
+            rgb.r, rgb.r, rgb.g, rgb.g, rgb.b, rgb.b
+        );
+        assert_eq!(query_cursor(&mut terminal), default_reply.as_bytes());
+
+        terminal.write(b"\x1b]12;#123456\x07");
+        assert_eq!(
+            query_cursor(&mut terminal),
+            b"\x1b]12;rgb:1212/3434/5656\x07"
+        );
+        terminal.write(b"\x1b]112\x07");
+        assert_eq!(query_cursor(&mut terminal), default_reply.as_bytes());
     }
     #[test]
     fn binary_restores_both_screens_history_and_unfinished_input() {

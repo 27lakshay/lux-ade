@@ -42,6 +42,7 @@ import { attachTerminal, runTerminalCommand, terminalUsage } from './commands/te
 import { layoutUsage, runLayoutCommand } from './commands/layouts.js'
 import { reviewUsage, runReviewCommand } from './commands/review.js'
 import { runSettingsCommand, settingsUsage } from './commands/settings.js'
+import { runThemesCommand, themesUsage } from './commands/themes.js'
 import { runWorkspaceCommand, workspaceUsage } from './commands/workspaces.js'
 import { runWorktreeLifecycleCommand, worktreeLifecycleUsage } from './commands/worktrees.js'
 import { listOperations, requestUsage, runRequestCommand } from './commands/request.js'
@@ -159,6 +160,7 @@ const usage = [
   gitUsage,
   reviewUsage,
   settingsUsage,
+  themesUsage,
   checkpointUsage,
   repositoryUsage,
   listenerUsage,
@@ -370,6 +372,7 @@ const commandAreas = [
   runGitCommand,
   runReviewCommand,
   runSettingsCommand,
+  runThemesCommand,
   runCheckpointCommand,
   runRepositoryCommand,
   runListenerCommand,
@@ -431,7 +434,25 @@ async function main(): Promise<void> {
       await attachTerminal(endpoint, words)
       return
     }
-    process.stdout.write(`${JSON.stringify(await run(endpoint, words))}\n`)
+    const result = await run(endpoint, words)
+    const invalidTheme =
+      (result.type === 'warp_theme_validation' &&
+        typeof result.validation === 'object' &&
+        result.validation !== null &&
+        'valid' in result.validation &&
+        result.validation.valid === false) ||
+      (result.type === 'ghostty_theme_validation' &&
+        typeof result.validation === 'object' &&
+        result.validation !== null &&
+        'valid' in result.validation &&
+        result.validation.valid === false) ||
+      (result.type === 'theme_file_validation' &&
+        (result.container_valid === false ||
+          (Array.isArray(result.candidates) &&
+            result.candidates.some((candidate) => candidate.validation.valid === false)))) ||
+      (result.type === 'theme_installation' && result.committed === false)
+    ;(invalidTheme ? process.stderr : process.stdout).write(`${JSON.stringify(result)}\n`)
+    if (invalidTheme) process.exitCode = 2
   } catch (error) {
     const code: string = error instanceof DaemonRequestError || error instanceof CliError ? error.code : 'protocol'
     const message = error instanceof Error ? error.message : String(error)
@@ -444,6 +465,10 @@ async function main(): Promise<void> {
         ...(daemon?.recovery ? { recovery: daemon.recovery } : {}),
         ...(Array.isArray(daemon?.details.blockers) ? { blockers: daemon.details.blockers } : {}),
         ...(daemon && 'foreground' in daemon.details ? { foreground: daemon.details.foreground } : {}),
+        ...(daemon?.code === 'theme_conflict'
+          ? { id: daemon.details.id, expected: daemon.details.expected, current: daemon.details.current }
+          : {}),
+        ...(daemon && ['theme_protected', 'theme_not_found'].includes(daemon.code) ? { id: daemon.details.id } : {}),
         ...(daemon?.code === 'keybinding_conflict'
           ? { key: daemon.details.key, commands: daemon.details.commands }
           : {}),

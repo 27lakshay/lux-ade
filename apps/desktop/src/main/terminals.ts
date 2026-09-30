@@ -1,6 +1,7 @@
+import type { ThemeBinding } from '@ade/contracts'
 import { randomUUID } from 'node:crypto'
-import { dailyUseCommand } from '@ade/client'
-import { handle } from './ipc'
+import { dailyUseCommand, DaemonRequestError } from '@ade/client'
+import { handle, handleResult } from './ipc'
 import { getClient, getSocket, isSwitching } from './profile-connection'
 import { validId } from './validation'
 import { recordOf } from './windows'
@@ -11,11 +12,37 @@ import { recordOf } from './windows'
 function endpoint(): string {
   const socket = getSocket()
   if (!socket || isSwitching() || getClient().getState().status !== 'connected')
-    throw new Error('Profile daemon is unavailable')
+    throw new DaemonRequestError('unavailable', 'Profile daemon is unavailable')
   return socket
 }
 
 export function registerTerminalIpc(): void {
+  handleResult('ade:terminal-appearance', async (_event, workspaceId: unknown, terminalId: unknown) => {
+    if (!validId(workspaceId) || !validId(terminalId))
+      throw new DaemonRequestError('invalid_request', 'Invalid terminal')
+    return dailyUseCommand(endpoint(), {
+      op: 'terminal.appearance.get',
+      workspace_id: workspaceId,
+      terminal_id: terminalId,
+    })
+  })
+  handleResult(
+    'ade:terminal-set-appearance',
+    async (_event, workspaceId: unknown, terminalId: unknown, binding: unknown, revision: unknown) => {
+      if (!validId(workspaceId) || !validId(terminalId))
+        throw new DaemonRequestError('invalid_request', 'Invalid terminal')
+      if (typeof revision !== 'number' || !Number.isSafeInteger(revision) || revision < 0)
+        throw new DaemonRequestError('invalid_request', 'Invalid appearance revision')
+      return dailyUseCommand(endpoint(), {
+        op: 'terminal.appearance.set',
+        workspace_id: workspaceId,
+        terminal_id: terminalId,
+        binding: binding as ThemeBinding | null,
+        expected_appearance_revision: revision,
+      })
+    },
+  )
+
   handle('ade:terminal-create', async (event, workspaceId: unknown, paneId: unknown) => {
     if (!validId(workspaceId) || (paneId !== undefined && !validId(paneId)))
       throw new Error('Invalid workspace or pane')
@@ -30,7 +57,8 @@ export function registerTerminalIpc(): void {
   })
 
   handle('ade:terminal-restart', async (_event, workspaceId: unknown, terminalId: unknown) => {
-    if (!validId(workspaceId) || !validId(terminalId)) throw new Error('Invalid terminal')
+    if (!validId(workspaceId) || !validId(terminalId))
+      throw new DaemonRequestError('invalid_request', 'Invalid terminal')
     // The daemon refuses a terminal that is not the workspace's own.
     await dailyUseCommand(endpoint(), {
       op: 'terminal.restart',

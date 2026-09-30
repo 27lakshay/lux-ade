@@ -44,6 +44,7 @@ pub(crate) mod terminal_records;
 mod terminals;
 #[cfg(test)]
 mod tests;
+mod themes;
 mod worktree_operations;
 
 pub use account_switches::SwitchCommit;

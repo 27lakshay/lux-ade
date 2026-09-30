@@ -200,6 +200,9 @@ importers:
       '@base-ui/react':
         specifier: ^1.8.0
         version: 1.8.0(@date-fns/tz@1.5.0)(@types/react@19.2.14)(date-fns@4.4.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@codemirror/language':
+        specifier: 6.12.4
+        version: 6.12.4
       '@codemirror/language-data':
         specifier: 6.5.2
         version: 6.5.2
@@ -215,6 +218,9 @@ importers:
       '@fontsource-variable/jetbrains-mono':
         specifier: 5.3.0
         version: 5.3.0
+      '@lezer/highlight':
+        specifier: 1.2.4
+        version: 1.2.4
       '@pierre/diffs':
         specifier: 1.5.1
         version: 1.5.1(@shikijs/themes@4.4.3)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -408,6 +414,15 @@ importers:
       '@babel/core':
         specifier: 8.0.6
         version: 8.0.6
+      '@codemirror/commands':
+        specifier: 6.11.1
+        version: 6.11.1
+      '@codemirror/lint':
+        specifier: 6.9.7
+        version: 6.9.7
+      '@codemirror/search':
+        specifier: 6.7.2
+        version: 6.7.2
       '@faker-js/faker':
         specifier: 10.6.0
         version: 10.6.0
@@ -520,7 +535,16 @@ importers:
       '@ade/contracts':
         specifier: workspace:*
         version: link:../contracts
+      culori:
+        specifier: 4.0.2
+        version: 4.0.2
     devDependencies:
+      '@fontsource-variable/jetbrains-mono':
+        specifier: 5.3.0
+        version: 5.3.0
+      '@types/culori':
+        specifier: 4.0.1
+        version: 4.0.1
       vite:
         specifier: 8.3.1
         version: 8.3.1(@types/node@24.6.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1)

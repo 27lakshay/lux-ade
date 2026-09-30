@@ -9,6 +9,7 @@ pub mod claude;
 pub mod codex;
 pub mod descendants;
 pub mod foreground;
+pub mod ghostty_colors;
 pub mod omp;
 pub mod opencode;
 pub mod provider;

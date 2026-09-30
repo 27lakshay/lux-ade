@@ -38,6 +38,7 @@ import { registerReviewIpc, setGitJournal } from './review'
 import { registerServiceIpc } from './services'
 import { disconnectWindow, setStreamProfile, startStreamBridge, stopStreamBridge } from './stream-bridge'
 import { registerSettingsIpc } from './settings'
+import { registerThemesIpc } from './themes'
 import { registerTerminalIpc } from './terminals'
 import { registerWorkspaceActionIpc } from './workspace-actions'
 import { registerWorkspaceIpc } from './workspaces'
@@ -50,9 +51,9 @@ import { enableRemoteDebugging, startDevStateServer } from './dev'
 import { initializeLogging, logWindowConsole } from './logging'
 import { startCrashReporter } from './diagnostics'
 import { recoverRendererFailures } from './renderer-recovery'
-import { loadAppearance, setAppearance, windowBackground } from './appearance'
+import { loadAppearance, setAppearance, watchAppearance, windowBackground } from './appearance'
 import { isThemePreference, TRAFFIC_LIGHTS } from '../shared/window-chrome'
-
+import { registerNativeAccessibility } from './native-accessibility'
 let singleWindowId = ''
 enableRemoteDebugging()
 registerAppScheme()
@@ -64,6 +65,7 @@ initializeLogging()
 startCrashReporter()
 startDevStateServer()
 registerBrowserIpc(selectProfile)
+const stopNativeAccessibility = registerNativeAccessibility()
 
 handle('ade:app-version', () => app.getVersion())
 // The renderer follows the profile's appearance setting and sends each change; main applies it to
@@ -95,6 +97,7 @@ registerLayoutIpc()
 registerWorkspaceActionIpc()
 registerTerminalIpc()
 registerSettingsIpc()
+registerThemesIpc()
 registerServiceIpc()
 registerReviewIpc()
 registerFileIpc()
@@ -108,6 +111,7 @@ registerQuitTeardown(async () => {
   setBrowserOwner(null)
   await owner?.close()
 })
+registerQuitTeardown(stopNativeAccessibility)
 registerQuitTeardown(() => {
   stopStreamBridge()
   stopClient()
@@ -259,7 +263,12 @@ app
       }),
     )
     // The feed reaches windows through the stream bridge; main watches it only for notifications.
-    setUnsubscribeFeed(watchActivity(getClient()))
+    const stopActivity = watchActivity(getClient())
+    const stopAppearance = fixedSocket ? watchAppearance(getClient(), fixedSocket) : () => {}
+    setUnsubscribeFeed(() => {
+      stopActivity()
+      stopAppearance()
+    })
     getClient().start()
     startStreamBridge()
     setStreamProfile(getSocket() ?? null)

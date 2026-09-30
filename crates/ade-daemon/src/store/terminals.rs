@@ -216,6 +216,43 @@ impl Store {
         Ok(records::load(&self.connection, terminal_id)?
             .is_some_and(|terminal| terminal.workspace_id == workspace_id))
     }
+    pub(crate) fn set_terminal_binding(
+        &self,
+        workspace: &str,
+        id: &str,
+        binding: Option<ade_core::appearance::ThemeBinding>,
+        expected: u64,
+    ) -> Result<bool> {
+        if let Some(binding) = &binding {
+            self.validate_theme_binding(binding, ade_core::appearance::ThemeSectionKind::Terminal)?;
+        }
+        let mut stored = records::load(&self.connection, id)?.context("Unknown terminal")?;
+        ensure!(
+            stored.workspace_id == workspace,
+            "Terminal belongs to another workspace"
+        );
+        let revision = self.settings()?.appearance_revision;
+        if revision != expected {
+            return Err(ade_core::error::AppearanceConflict {
+                expected,
+                current: revision,
+            }
+            .into());
+        }
+        if stored.appearance_binding == binding {
+            return Ok(false);
+        }
+        stored.appearance_binding = binding;
+        let next = revision
+            .checked_add(1)
+            .context("Appearance revision exhausted")?;
+        let tx = self.transaction()?;
+        records::write(&tx, &stored)?;
+        tx.execute("INSERT INTO profile_settings(key,value,updated_at) VALUES('appearance_revision',?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at", params![serde_json::to_string(&next)?, now_ms()])?;
+        tx.commit()?;
+        Ok(true)
+    }
+
     /// One terminal's record, or `None` when no terminal has this ID.
     pub fn terminal(&self, id: &str) -> Result<Option<TerminalRecord>> {
         Ok(records::load(&self.connection, id)?.map(|stored| self.terminal_record(&stored)))

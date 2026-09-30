@@ -97,8 +97,30 @@ fn schema(path: &Path, name: &str) -> Result<i64> {
     if name == "sessions.sqlite" {
         attachments(&db)?;
         skills(&db)?;
+        themes(&db)?;
     }
     Ok(version)
+}
+
+/// A current-schema profile may still contain malformed JSON theme records.
+/// Validate them before inspect or restore can report a complete backup.
+fn themes(db: &Connection) -> Result<()> {
+    if !tables(db)?.iter().any(|name| name == "theme_definitions") {
+        return Ok(());
+    }
+    let mut query = db.prepare("SELECT id,data FROM theme_definitions")?;
+    for row in query.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })? {
+        let (id, data) = row?;
+        let record: ade_core::contract::themes::ThemeRecord = serde_json::from_str(&data)
+            .with_context(|| format!("Theme definition record is invalid: {id}"))?;
+        ensure!(
+            record.definition.id == id,
+            "Theme definition record ID is invalid: {id}"
+        );
+    }
+    Ok(())
 }
 fn tables(db: &Connection) -> Result<Vec<String>> {
     let mut query = db.prepare("SELECT name FROM sqlite_master WHERE type='table'")?;

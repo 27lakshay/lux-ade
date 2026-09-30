@@ -7,10 +7,12 @@ import { profiles } from './profiles'
 import { review } from './review'
 import { services } from './services'
 import { settings } from './settings'
+import { themes } from './themes'
 import { terminal } from './stream'
 import { terminals } from './terminals'
 import { workspaces } from './workspaces'
 import { invoke, send, subscribe } from './ipc'
+import { nativeAccessibility } from './native-accessibility'
 import { isAppCommand } from '../shared/app-commands'
 import type { AdeHost } from '../shared/bridge'
 
@@ -55,7 +57,9 @@ const adeHost: AdeHost = {
   browser,
   terminal,
   terminals,
+  themes,
   settings,
+  nativeAccessibility,
 }
 
 contextBridge.exposeInMainWorld('adeHost', { ...adeHost, ...e2eAliases })

@@ -1,6 +1,7 @@
 import { app, net, protocol, type Session } from 'electron'
 import { join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { startupAppearance } from './appearance'
 import { contentSecurityPolicy } from '../shared/content-security-policy'
 
 // The packaged renderer is served from ade://app/ instead of file://, so it has a real origin, a
@@ -30,6 +31,18 @@ export function serveAppScheme(session: Session): void {
     const inside = relative(root, path)
     if (url.host !== 'app' || inside.startsWith('..') || inside.split(sep).includes('..')) {
       return new Response('Not found', { status: 404 })
+    }
+    if (url.pathname === '/theme-boot.js') {
+      const snapshot = JSON.stringify(startupAppearance())
+      const source = await net.fetch(pathToFileURL(path).toString())
+      return new Response(`globalThis.adeStartupAppearance = ${snapshot};\n${await source.text()}`, {
+        headers: {
+          'Content-Type': 'text/javascript',
+          'Cache-Control': 'no-store',
+          'Content-Security-Policy': CONTENT_SECURITY_POLICY,
+          'X-Content-Type-Options': 'nosniff',
+        },
+      })
     }
     const response = await net.fetch(pathToFileURL(path).toString())
     const headers = new Headers(response.headers)

@@ -28,10 +28,12 @@ import type { ProfileStore } from '../state/profile-store'
 export function createAppRouter({
   Workspace,
   profile,
+  Recovery,
   history = createHashHistory(),
 }: {
   Workspace: ComponentType
   profile?: ProfileStore
+  Recovery?: ComponentType
   history?: RouterHistory
 }) {
   function Root() {
@@ -42,7 +44,7 @@ export function createAppRouter({
         <div hidden={!onWorkspace} data-testid="workspace" className="h-full">
           <Workspace />
         </div>
-        <Outlet />
+        {Recovery ? <Recovery /> : <Outlet />}
       </>
     )
     return profile ? <ProfileRecovery store={profile}>{screens}</ProfileRecovery> : screens

@@ -43,6 +43,19 @@ user stories and acceptance table identify its selected work. Splitting specs by
 domain does not imply twelve independent implementation projects or a dependency
 cycle: build the smallest working vertical contracts, then deepen their modules.
 
+## Detailed specifications
+
+| Specification | Owning requirements | Status | Acceptance |
+|---|---|---|---|
+| [App, terminal and code theming](01-foundation/theming.md) | F013, F014, F056; appearance portion of F082 | ready-for-agent | TH01–TH32 unverified |
+
+The theming detail also governs appearance integration with file previews and diffs.
+It preserves the owning domains and does not reopen excluded editor scope.
+
+## Theming implementation tickets
+
+[The 24 approved theming tickets](01-foundation/issues/theming/README.md) declare direct blocking edges and coverage of TH01–TH32. Start with ticket 01, then prioritize terminal recovery in 02. All tickets are `ready-for-agent`; implementation acceptance remains unverified.
+
 ## Delivery checkpoints
 
 | Checkpoint | Completion evidence |

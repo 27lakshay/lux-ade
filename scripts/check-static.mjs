@@ -43,6 +43,12 @@ const steps = [
     },
   ],
   ['nx graph', ['pnpm', 'nx:check']],
+  // TypeScript and JavaScript formatting (.oxfmtrc.json).
+  ['oxfmt', ['pnpm', 'format:check']],
+  // The committed packages/contracts must match the Rust contract types.
+  ['contract check', ['pnpm', 'contract:check']],
+  ['theme defaults', ['node', 'scripts/generate-theme-css.mjs', '--check']],
+  ['architecture', ['python3', 'scripts/check_architecture.py']],
   // Unique checks retained from the older shell gate, shared with discovery.
   ...pythonChecks.map((file) => [
     file,

@@ -11,7 +11,22 @@ export default defineConfig({
   resolve: { alias: { '@': resolve(import.meta.dirname, 'src/renderer/src') } },
   // Pre-bundle every dependency the renderer imports before tests start. Discovering one mid-run
   // (say a Base UI subpath) reloads the page and loads a second React, failing that run.
-  optimizeDeps: { entries: ['src/renderer/**/*.{ts,tsx}'] },
+  optimizeDeps: {
+    entries: ['src/renderer/**/*.{ts,tsx}'],
+    include: [
+      'zod',
+      'shiki',
+      '@pierre/diffs',
+      '@codemirror/state',
+      '@codemirror/view',
+      '@codemirror/language',
+      '@codemirror/commands',
+      '@codemirror/lint',
+      '@codemirror/search',
+      '@codemirror/language-data',
+      '@lezer/highlight',
+    ],
+  },
   test: {
     ...(process.env.ADE_BROWSER_HTML_DIR
       ? { reporters: ['default', 'json', ['html', { outputDir: process.env.ADE_BROWSER_HTML_DIR }]] as const }

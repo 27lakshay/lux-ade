@@ -1,6 +1,7 @@
 import { TerminalFeed, type TerminalFrame } from './feed'
 import type { GhosttyTheme } from './ghostty/core'
 import { GhosttyTerminalSurface, type GhosttyTerminalFont } from './ghostty/surface'
+import type { GhosttyTerminalPreferences } from './ghostty/surface'
 import { terminalThemeFrom } from './theme'
 
 export type { TerminalFrame } from './feed'
@@ -8,6 +9,7 @@ export type { TerminalFrame } from './feed'
 export { isTerminalLinkActivation, resolvePathLinkTarget } from './ghostty/links'
 export type { GhosttyTheme } from './ghostty/core'
 export type { GhosttyTerminalFont } from './ghostty/surface'
+export type { GhosttyTerminalPreferences } from './ghostty/surface'
 
 export interface TerminalChannel {
   input(data: string): void
@@ -38,17 +40,17 @@ export interface MountTerminalOptions {
   /** A right-click the running program did not take. The host shows its menu. */
   onContextMenu?(event: MouseEvent): void
   font?: GhosttyTerminalFont
-  /** Colours; by default read from the container's CSS `color` and background. */
+  preferences?: GhosttyTerminalPreferences
+  /** Initial colors before attachment; the runtime snapshot supplies authoritative defaults. */
   theme?: GhosttyTheme
 }
 
 export interface TerminalView {
   /** Pauses drawing while the view is hidden; output is still parsed. */
   setVisible(visible: boolean): void
-  /** Re-reads the colours after the app theme changed, or applies the given ones. */
-  setTheme(theme?: GhosttyTheme): void
   /** Loads and applies a font; the grid refits to the new cell size. */
   setFont(font: GhosttyTerminalFont): Promise<void>
+  setPreferences(preferences: GhosttyTerminalPreferences): Promise<void>
   focus(): void
   dispose(): void
 }
@@ -73,6 +75,7 @@ export function mountTerminal(
   // Focus asked for before the surface exists (a terminal just opened) or while it is hidden (its tab
   // is being shown) is applied once it can take it.
   let focusPending = false
+  let pendingPreferences: GhosttyTerminalPreferences | null = null
   const applyFocus = (): void => {
     if (!surface || !visible) return
     focusPending = false
@@ -86,9 +89,10 @@ export function mountTerminal(
   }
 
   const start = async (): Promise<void> => {
-    const created = await GhosttyTerminalSurface.create(container, {
+    const created: GhosttyTerminalSurface = await GhosttyTerminalSurface.create(container, {
       theme: options.theme ?? terminalThemeFrom(container),
       font: options.font,
+      preferences: options.preferences,
       get visible() {
         return visible
       },
@@ -108,15 +112,27 @@ export function mountTerminal(
       return
     }
     surface = created
+    if (pendingPreferences !== null) {
+      const preferences = pendingPreferences
+      pendingPreferences = null
+      await created.setPreferences(preferences)
+    }
     if (focusPending) applyFocus()
-    feed = new TerminalFeed(created, {
-      status: (message) => options.onStatus(message),
-      ready: reportSize,
-      failed: () => {
-        failed = true
-        channel?.dispose()
+    feed = new TerminalFeed(
+      {
+        setTheme: (theme) => created.setTheme(theme),
+        restoreSnapshot: (bytes) => created.restoreSnapshot(bytes),
+        write: (bytes) => created.write(bytes),
       },
-    })
+      {
+        status: (message) => options.onStatus(message),
+        ready: reportSize,
+        failed: () => {
+          failed = true
+          channel?.dispose()
+        },
+      },
+    )
     const attached = await bridge.attach(
       workspaceId,
       terminalId,
@@ -146,9 +162,13 @@ export function mountTerminal(
       if (!next) focusPending = false
       else if (focusPending) applyFocus()
     },
-    setTheme: (theme) => surface?.setTheme(theme ?? terminalThemeFrom(container)),
     setFont: async (font) => {
       await surface?.setFont(font)
+    },
+    setPreferences: async (preferences) => {
+      if (disposed) return
+      if (surface) await surface.setPreferences(preferences)
+      else pendingPreferences = { ...pendingPreferences, ...preferences }
     },
     focus: () => {
       focusPending = true

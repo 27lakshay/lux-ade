@@ -7,7 +7,10 @@ import type {
   PortChannel,
   SendChannel,
   SendChannels,
+  ResultChannel,
+  ResultValue,
 } from '../shared/ipc'
+import type { IpcResult } from '../shared/bridge/result'
 
 // Typed wrappers over ipcRenderer, checked against the contract in src/shared/ipc.ts.
 
@@ -16,6 +19,16 @@ export function invoke<C extends InvokeChannel>(
   ...args: Parameters<InvokeChannels[C]>
 ): ReturnType<InvokeChannels[C]> {
   return ipcRenderer.invoke(channel, ...args) as ReturnType<InvokeChannels[C]>
+}
+
+/** Reject with plain data so contextBridge preserves the machine-readable failure fields. */
+export async function invokeResult<C extends ResultChannel>(
+  channel: C,
+  ...args: Parameters<InvokeChannels[C]>
+): Promise<ResultValue<C>> {
+  const result = (await invoke(channel, ...args)) as IpcResult<ResultValue<C>>
+  if (!result.ok) throw result.error
+  return result.value
 }
 
 /**

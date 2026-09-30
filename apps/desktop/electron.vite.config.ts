@@ -31,7 +31,13 @@ function contentSecurityPolicyMeta(): Plugin {
     name: 'ade-content-security-policy',
     transformIndexHtml(_html, context) {
       const devtools = context.server && process.env.ADE_REACT_DEVTOOLS === '1'
-      const policy = contentSecurityPolicy(devtools ? { 'connect-src': ['ws://localhost:8097'] } : {}, true)
+      const policy = contentSecurityPolicy(
+        {
+          ...(context.server ? { 'script-src': ['ade://app'] } : {}),
+          ...(devtools ? { 'connect-src': ['ws://localhost:8097'] } : {}),
+        },
+        true,
+      )
       return [{ tag: 'meta', attrs: { 'http-equiv': 'Content-Security-Policy', content: policy }, injectTo: 'head' }]
     },
   }

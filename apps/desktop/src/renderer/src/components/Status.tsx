@@ -13,15 +13,24 @@ const STATES = {
 
 export type StatusState = keyof typeof STATES
 
-/** `label` replaces the spoken name when the row does not already say it, such as "3 need you". */
-export function Status({ state, label }: { state: StatusState; label?: string }) {
+/** label replaces the spoken name when the row does not already say it, such as "3 need you". */
+export function Status({
+  state,
+  label,
+  showVisualLabel = true,
+}: {
+  state: StatusState
+  label?: string
+  showVisualLabel?: boolean
+}) {
   return (
-    <span
-      role="img"
-      aria-label={label ?? STATES[state].name}
-      className="flex size-4 shrink-0 items-center justify-center"
-    >
-      <span className={cn('size-2 rounded-full', STATES[state].dot)} />
+    <span role="img" aria-label={label ?? STATES[state].name} className="flex shrink-0 items-center gap-1.5">
+      <span className={cn('size-2 shrink-0 rounded-full', STATES[state].dot)} />
+      {showVisualLabel && (
+        <span aria-hidden className="status-visible-name">
+          {STATES[state].name}
+        </span>
+      )}
     </span>
   )
 }

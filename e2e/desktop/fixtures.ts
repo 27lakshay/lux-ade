@@ -59,7 +59,10 @@ export class DesktopLauncher {
     await this.evidence.start(app)
     const window = await app.firstWindow()
     // The URL, and with it the window's record, is known once the app page has loaded.
-    await window.waitForURL(/^ade:\/\/app\//, { waitUntil: 'domcontentloaded' })
+    await window.waitForURL(
+      env.ELECTRON_RENDERER_URL ? (url) => url.origin === new URL(env.ELECTRON_RENDERER_URL!).origin : /^ade:\/\/app\//,
+      { waitUntil: 'domcontentloaded' },
+    )
     return { app, window }
   }
 

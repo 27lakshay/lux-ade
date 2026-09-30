@@ -9,9 +9,10 @@ import type { ProfilesBridge } from './profiles'
 import type { ReviewBridge } from './review'
 import type { ServicesBridge } from './services'
 import type { SettingsBridge } from './settings'
+import type { ThemesBridge } from './themes'
 import type { TerminalsBridge } from './terminals'
 import type { WorkspacesBridge } from './workspaces'
-
+import type { NativeAccessibilityBridge } from './native-accessibility'
 /**
  * `window.adeHost`: the only way the renderer reaches the rest of the app. The preload implements it
  * (src/preload/index.ts); each domain owns its interface in this folder. The IPC channels behind
@@ -19,7 +20,7 @@ import type { WorkspacesBridge } from './workspaces'
  */
 export interface AdeHost {
   getAppVersion(): Promise<string>
-  /** Mirrors the appearance preference to the native window, which remembers it for next launch. */
+  /** Mirrors the appearance preference to the native window. */
   setTheme(theme: ThemePreference): void
   /** The profile's keybindings, so the native menu binds them; the renderer follows the daemon's setting. */
   setKeybindings(keybindings: Keybindings): void
@@ -42,5 +43,7 @@ export interface AdeHost {
   /** A terminal's output and input, over the stream bridge. */
   terminal: TerminalBridge
   terminals: TerminalsBridge
+  themes: ThemesBridge
   settings: SettingsBridge
+  nativeAccessibility: NativeAccessibilityBridge
 }

@@ -15,6 +15,11 @@ export interface ViewerReport {
   statuses: string[]
   closed: string | null
   screen: ScreenState
+  appearance: {
+    revision: number | null
+    foreground: { r: number; g: number; b: number }
+    background: { r: number; g: number; b: number }
+  }
 }
 
 /**

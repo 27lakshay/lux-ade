@@ -1,6 +1,7 @@
 import { benchTerminalBridge } from '@ade/terminal/bench'
 import type { TerminalBridge } from '@ade/terminal'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import { queryClient } from '../../../app/query-client'
 import { dispatch, layoutNow, layoutStore, openTab } from '../model/layout-store'
 import { handleLayoutCommand } from '../model/layout-commands'
 import { panes } from '../model/layout-tree'
@@ -15,6 +16,16 @@ import {
   WORKSPACE,
 } from '../testing'
 import { closePane, closeTab, newTerminal } from './terminal-tabs'
+const { mountTerminalMock } = vi.hoisted(() => ({ mountTerminalMock: vi.fn() }))
+vi.mock('@ade/terminal', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@ade/terminal')>()
+  return {
+    ...actual,
+    mountTerminal: (...args: Parameters<typeof actual.mountTerminal>) => {
+      return mountTerminalMock.getMockImplementation() ? mountTerminalMock(...args) : actual.mountTerminal(...args)
+    },
+  }
+})
 
 beforeEach(resetLayout)
 afterEach(() => {
@@ -188,4 +199,73 @@ test('a hidden terminal frees its canvas, and draws again when shown', async () 
   await expect.poll(() => canvas.width).toBe(0)
   await dispatch({ type: 'activate_tab', tab_id: 'tab-t1' })
   await expect.poll(() => canvas.width).toBeGreaterThan(0)
+})
+
+test('a terminal receives profile preferences at mount and updates them without remounting', async () => {
+  const terminalSettings = {
+    appearance: 'system',
+    reduced_motion: 'system',
+    appearance_revision: 0,
+    terminal_font_family: 'JetBrains Mono Variable',
+    terminal_font_size: 12,
+    terminal_line_height: 1.35,
+    terminal_font_kerning: 'auto',
+    terminal_cursor_shape: 'block',
+    terminal_cursor_blink: true,
+  } as unknown as import('@ade/contracts').ProfileSettings
+  queryClient.setQueryData(['profile-settings'], terminalSettings)
+  const setPreferences = vi.fn(async () => {})
+  const mount = mountTerminalMock.mockImplementation(
+    () =>
+      ({
+        setVisible: vi.fn(),
+        setFont: vi.fn(async () => {}),
+        setPreferences,
+        focus: vi.fn(),
+        dispose: vi.fn(),
+      }) as unknown as import('@ade/terminal').TerminalView,
+  )
+  hostSpy()
+  try {
+    await renderWorkspace()
+    await shellTab('preferences-terminal')
+    await expect.poll(() => mount.mock.calls.length).toBeGreaterThan(0)
+    const mountCount = mount.mock.calls.length
+    expect(mount.mock.calls[0]![4].preferences).toEqual({
+      family: 'JetBrains Mono Variable',
+      size: 12,
+      lineHeight: 1.35,
+      kerning: 'auto',
+      cursorShape: 'block',
+      cursorBlink: true,
+      reducedMotion: undefined,
+    })
+    queryClient.setQueryData(['profile-settings'], {
+      ...terminalSettings,
+      terminal_font_family: 'A Different Font',
+      terminal_font_size: 14,
+      terminal_line_height: 1.5,
+      terminal_font_kerning: 'none',
+      terminal_cursor_shape: 'underline',
+      terminal_cursor_blink: false,
+      reduced_motion: 'off',
+    })
+    await expect.poll(() => setPreferences.mock.calls.length).toBeGreaterThan(0)
+    expect(setPreferences).toHaveBeenLastCalledWith({
+      family: 'A Different Font',
+      size: 14,
+      lineHeight: 1.5,
+      kerning: 'none',
+      cursorShape: 'underline',
+      cursorBlink: false,
+      reducedMotion: false,
+    })
+    queryClient.setQueryData(['profile-settings'], { ...terminalSettings, reduced_motion: 'on' })
+    await expect.poll(() => setPreferences.mock.calls.length).toBeGreaterThan(1)
+    expect(setPreferences).toHaveBeenLastCalledWith(expect.objectContaining({ reducedMotion: true }))
+    expect(mount).toHaveBeenCalledTimes(mountCount)
+  } finally {
+    mount.mockReset()
+    queryClient.removeQueries({ queryKey: ['profile-settings'] })
+  }
 })

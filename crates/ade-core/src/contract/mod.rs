@@ -9,6 +9,25 @@ use schemars::{JsonSchema, Schema, SchemaGenerator, generate::SchemaSettings};
 use serde::Serialize;
 use serde_json::{Map, Value, json};
 
+/// The schema of a field that is a value or null and always present. A
+/// plain `Option` field is optional in requests; this helper keeps explicit null
+/// distinct from an omitted field.
+pub(super) struct Nullable<T>(std::marker::PhantomData<T>);
+
+impl<T: JsonSchema> JsonSchema for Nullable<T> {
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        <Option<T>>::schema_name()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        <Option<T>>::json_schema(generator)
+    }
+}
+
 /// A one-value string type for a reply's `type` tag. Schemars ignores
 /// `#[serde(tag)]` on structs, so tagged replies carry the tag as a field.
 macro_rules! wire_tag {
@@ -63,6 +82,7 @@ pub mod services;
 pub mod settings;
 pub mod skills;
 pub mod terminals;
+pub mod themes;
 pub mod usage;
 pub mod workspaces;
 pub mod worktrees;
@@ -228,6 +248,11 @@ pub const DOMAINS: &[Domain] = &[
         name: "settings",
         operations: settings::operations,
         frames: settings::frames,
+    },
+    Domain {
+        name: "themes",
+        operations: themes::operations,
+        frames: themes::frames,
     },
 ];
 

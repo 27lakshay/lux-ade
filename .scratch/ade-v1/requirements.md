@@ -32,8 +32,8 @@ This is the complete 140-item catalogue reconstructed from the agreed conversati
 | F010 | Background continuity | V1 | [01-foundation](01-foundation/spec.md) | Accepted: headless E2E `42928c9` ([evidence](evidence/e2e-profiles.md)) |
 | F011 | Tabs and split panes | V1 | [01-foundation](01-foundation/spec.md) | Unverified |
 | F012 | Floating and detached views | V1 | [01-foundation](01-foundation/spec.md) | Unverified |
-| F013 | Themes and theme import/export | V1 | [01-foundation](01-foundation/spec.md) | Unverified |
-| F014 | Typography, density and motion preferences | V1 | [01-foundation](01-foundation/spec.md) | Unverified |
+| F013 | Themes and theme import/export | V1 | [01-foundation](01-foundation/spec.md); [theming detail](01-foundation/theming.md) | Unverified |
+| F014 | Typography, density and motion preferences | V1 | [01-foundation](01-foundation/spec.md); [theming detail](01-foundation/theming.md) | Unverified |
 | F015 | Configurable keybindings | V1 | [01-foundation](01-foundation/spec.md) | Unverified |
 | F016 | Command palette and navigation | V1 | [01-foundation](01-foundation/spec.md) | Unverified |
 | F017 | Localization | Not now | [01-foundation](01-foundation/spec.md) | Not scheduled |
@@ -75,7 +75,7 @@ This is the complete 140-item catalogue reconstructed from the agreed conversati
 | F053 | Timeline renderers and transforms | V1 | [04-plugins](04-plugins/spec.md) | Unverified |
 | F054 | Composer extensions | V1 | [04-plugins](04-plugins/spec.md) | Unverified |
 | F055 | Plugin commands and keybindings | V1 | [04-plugins](04-plugins/spec.md) | Unverified |
-| F056 | Theme extension support | V1 | [04-plugins](04-plugins/spec.md) | Unverified |
+| F056 | Theme extension support | V1 | [04-plugins](04-plugins/spec.md); [theming detail](01-foundation/theming.md) | Unverified |
 | F057 | Backend extensions | V1 | [04-plugins](04-plugins/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-plugins.md)) |
 | F058 | Lifecycle hooks | V1 | [04-plugins](04-plugins/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-plugins.md)) |
 | F059 | Plugin state, credentials and settings | V1 | [04-plugins](04-plugins/spec.md) | Accepted: headless E2E `cda8b98` ([evidence](evidence/e2e-secrets.md)) |
@@ -101,7 +101,7 @@ This is the complete 140-item catalogue reconstructed from the agreed conversati
 | F079 | Issue tracker integrations | Not now | [06-files-git](06-files-git/spec.md) | Not scheduled |
 | F080 | Change attribution | Not now | [06-files-git](06-files-git/spec.md) | Not scheduled |
 | F081 | Persistent terminals | V1 | [07-terminals-services](07-terminals-services/spec.md) | Accepted: headless E2E `078ce48` ([evidence](evidence/e2e-terminals2.md)) |
-| F082 | Terminal ergonomics | V1 | [07-terminals-services](07-terminals-services/spec.md) | Unverified |
+| F082 | Terminal ergonomics | V1 | [07-terminals-services](07-terminals-services/spec.md); [theming detail](01-foundation/theming.md) | Unverified |
 | F083 | Programmatic terminal access | V1 | [07-terminals-services](07-terminals-services/spec.md) | Accepted: headless E2E `3401554` ([evidence](evidence/e2e-hooks-auth.md)) |
 | F084 | Saved commands | Not now | [07-terminals-services](07-terminals-services/spec.md) | Not scheduled |
 | F085 | Dev port discovery | V1 | [07-terminals-services](07-terminals-services/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-services.md)) |
@@ -191,3 +191,7 @@ These apply in addition to the 107 selected features.
 | R018 | Understand failures without exposing secrets | [Shared reliability](13-reliability/spec.md) | Accepted: headless E2E `cda8b98` ([evidence](evidence/e2e-reliability-c.md)) |
 | R019 | Use many active resources responsively | [Shared reliability](13-reliability/spec.md) | Unverified |
 | R020 | Run the packaged application independently of development tooling | [Shared reliability](13-reliability/spec.md) | Unverified |
+
+### Detailed appearance acceptance
+
+[App, terminal and code theming](01-foundation/theming.md) supplies TH01–TH32 for F013, F014, F056 and the appearance portion of F082. All begin unverified. TH25 adds appearance acceptance for F073/F074; F074’s existing Verified status does not establish TH25, and its broader status is preserved.

@@ -14,6 +14,14 @@ use serde_json::Value;
 
 pub fn operations() -> Vec<OperationSpec> {
     vec![
+        OperationSpec::new::<TerminalAppearanceRequest, ResolvedTerminalAppearance>(
+            "terminal.appearance.get",
+            Tier::Query,
+        ),
+        OperationSpec::new::<TerminalAppearanceSetRequest, ResolvedTerminalAppearance>(
+            "terminal.appearance.set",
+            Tier::IdempotentCommand,
+        ),
         OperationSpec::new::<TerminalCreateRequest, TerminalCreated>(
             "terminal.create",
             Tier::EffectCommand,
@@ -30,6 +38,43 @@ pub fn operations() -> Vec<OperationSpec> {
         // daemon's envelope (`crates/ade-daemon/src/envelope.rs`).
         OperationSpec::new::<TerminalCloseRequest, Ack>("terminal.close", Tier::EffectCommand),
     ]
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct TerminalAppearanceRequest {
+    pub workspace_id: String,
+    pub terminal_id: String,
+}
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct TerminalAppearanceSetRequest {
+    pub workspace_id: String,
+    pub terminal_id: String,
+    /// Null removes this terminal's override and follows the profile binding.
+    #[schemars(with = "super::Nullable<crate::appearance::ThemeBinding>")]
+    pub binding: Option<crate::appearance::ThemeBinding>,
+    pub expected_appearance_revision: u64,
+}
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalAppearanceProvenance {
+    Profile,
+    Terminal,
+}
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ResolvedTerminalAppearance {
+    #[serde(rename = "type")]
+    pub tag: TerminalAppearanceTag,
+    pub terminal_id: String,
+    pub revision: u64,
+    pub binding: crate::appearance::ThemeBinding,
+    pub provenance: TerminalAppearanceProvenance,
+    pub selected_id: String,
+    pub resolved_id: String,
+    pub mode: crate::appearance::PaletteMode,
+    pub fallback: bool,
+    pub diagnostics: Vec<super::settings::AppearanceDiagnostic>,
+    pub appearance: crate::appearance::TerminalAppearance,
+    pub propagation: super::settings::AppearancePropagation,
 }
 
 /// Feed frames. Terminal stream frames bypass `session.subscribe`; they have
@@ -69,6 +114,8 @@ pub enum TerminalStatus {
 /// program set follow the runtime and reach the feed as `terminal_changed`.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
 pub struct TerminalRecord {
+    #[serde(default)]
+    pub appearance_binding: Option<crate::appearance::ThemeBinding>,
     pub id: String,
     pub workspace_id: String,
     /// A `TerminalKind`. The contract keeps it an open string so a client
@@ -124,6 +171,7 @@ pub fn stream_frames() -> Vec<FrameSpec> {
     vec![
         FrameSpec::new::<TerminalSnapshotFrame>("snapshot"),
         FrameSpec::new::<TerminalOutputFrame>("terminal"),
+        FrameSpec::new::<TerminalAppearanceFrame>("terminal_appearance"),
         FrameSpec::new::<TerminalResizeFrame>("terminal_resize"),
         FrameSpec::new::<TerminalViewportFrame>("viewport"),
         FrameSpec::new::<TerminalMetricsFrame>("metrics"),
@@ -137,6 +185,7 @@ pub fn stream_frames() -> Vec<FrameSpec> {
 
 wire_tag!(TerminalSnapshotTag, "snapshot");
 wire_tag!(TerminalOutputTag, "terminal");
+wire_tag!(TerminalAppearanceTag, "terminal_appearance");
 wire_tag!(TerminalResizeTag, "terminal_resize");
 wire_tag!(TerminalViewportTag, "viewport");
 wire_tag!(TerminalMetricsTag, "metrics");
@@ -150,6 +199,9 @@ wire_tag!(TerminalConversationTag, "conversation");
 /// fields it carries depends on the `snapshot_format` the attachment asked for.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct TerminalSnapshotFrame {
+    /// Present for terminal snapshots; absent for conversation-only streams.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub appearance: Option<crate::appearance::TerminalAppearance>,
     #[serde(rename = "type")]
     pub tag: TerminalSnapshotTag,
     /// The terminal incarnation this attachment is bound to.
@@ -231,6 +283,15 @@ pub struct PlainScreenRecovery {
     pub alternate_screen: bool,
     pub cursor_visible: bool,
     pub parser_ground: bool,
+}
+
+/// A default appearance update, ordered with PTY output under the terminal lock.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct TerminalAppearanceFrame {
+    #[serde(rename = "type")]
+    pub tag: TerminalAppearanceTag,
+    pub run_id: String,
+    pub appearance: crate::appearance::TerminalAppearance,
 }
 
 /// PTY output. `offset` is where these bytes start in the terminal's output.
@@ -484,6 +545,12 @@ pub mod runtime {
     #[derive(Serialize, Deserialize, Clone, Debug)]
     #[serde(tag = "op")]
     pub enum Command {
+        #[serde(rename = "terminal.appearance.get")]
+        AppearanceGet,
+        #[serde(rename = "terminal.appearance")]
+        Appearance {
+            appearance: crate::appearance::TerminalAppearanceProjection,
+        },
         #[serde(rename = "terminal.list")]
         List,
         #[serde(rename = "terminal.tail")]
@@ -665,6 +732,16 @@ mod tests {
     }
 
     #[test]
+    fn terminal_appearance_reset_requires_explicit_null() {
+        let mut reset = json!({"op":"terminal.appearance.set", "workspace_id":"w", "terminal_id":"t", "expected_appearance_revision":3, "binding":null});
+        assert!(valid("TerminalAppearanceSetRequest", &reset));
+        let decoded: TerminalAppearanceSetRequest = serde_json::from_value(reset.clone()).unwrap();
+        assert!(decoded.binding.is_none());
+        reset.as_object_mut().unwrap().remove("binding");
+        assert!(!valid("TerminalAppearanceSetRequest", &reset));
+    }
+
+    #[test]
     fn terminal_create_round_trips() {
         let wire = request(
             "terminal.create",
@@ -815,6 +892,7 @@ mod tests {
             json!({"type": "ack"})
         );
         let record = TerminalRecord {
+            appearance_binding: None,
             id: "terminal_1".into(),
             workspace_id: "workspace_1".into(),
             kind: TerminalKind::Shell,

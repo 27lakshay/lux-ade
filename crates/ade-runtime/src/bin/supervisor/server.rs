@@ -38,6 +38,7 @@ struct Handoff {
     expires: i64,
 }
 struct State {
+    appearance: ade_core::appearance::TerminalAppearanceProjection,
     owner: Option<Owner>,
     handoff: Option<Handoff>,
     terminals: HashMap<String, Terminal>,
@@ -172,6 +173,32 @@ impl Host {
     }
     fn terminal(&self, data: &mut State, command: TerminalCommand) -> Result<Value> {
         match command {
+            TerminalCommand::AppearanceGet => Ok(serde_json::to_value(&data.appearance)?),
+            TerminalCommand::Appearance { appearance } => {
+                ensure!(
+                    appearance.profile.revision >= data.appearance.profile.revision,
+                    "Stale profile appearance"
+                );
+                for value in
+                    std::iter::once(&appearance.profile).chain(appearance.overrides.values())
+                {
+                    ensure!(
+                        value.palette.len() == 256,
+                        "A terminal palette must contain 256 colors"
+                    );
+                    ensure!(
+                        value.revision == appearance.profile.revision,
+                        "Inconsistent appearance revision"
+                    );
+                }
+                for terminal in data.terminals.values() {
+                    terminal
+                        .runtime
+                        .set_appearance(appearance.for_terminal(&terminal.workspace.terminal_id))?;
+                }
+                data.appearance = appearance;
+                Ok(json!({"type":"ack"}))
+            }
             TerminalCommand::List => Ok(
                 json!({"type":"terminals","terminals":data.terminals.values().map(|t|json!({"workspace":t.workspace,"metrics":t.runtime.metrics(),"activity":t.runtime.activity()})).collect::<Vec<_>>()}),
             ),
@@ -264,6 +291,7 @@ impl Host {
         }
         if retire {
             ade_runtime::service_logs::remove(&self.directory, workspace_id, terminal_id)?;
+            data.appearance.overrides.remove(terminal_id);
         }
         Ok(json!({"type":"ack"}))
     }
@@ -337,6 +365,7 @@ impl Host {
                 &workspace,
                 launch.as_ref(),
                 &self.directory,
+                data.appearance.for_terminal(&workspace.terminal_id),
             )?),
             launch,
             workspace,
@@ -715,6 +744,7 @@ pub(super) fn serve(directory: PathBuf) -> Result<()> {
     let (listener, _socket) = runtime::SocketGuard::bind(&socket)?;
     let host = Arc::new(Host {
         data: Mutex::new(State {
+            appearance: Default::default(),
             owner: None,
             handoff: None,
             terminals: HashMap::new(),

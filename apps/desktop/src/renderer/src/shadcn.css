@@ -9,8 +9,9 @@
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/inter";
 @import "@fontsource-variable/jetbrains-mono";
+@import "./appearance-defaults.css";
 
-@custom-variant dark (&:is(.dark *));
+@custom-variant dark (&:is(.dark *):not([data-appearance-preview="light"] *));
 
 @theme inline {
   --color-background: var(--background);
@@ -56,75 +57,14 @@
 
 :root {
   --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.179 0.004 286);
-  --card: oklch(0.973 0.001 286.4);
-  --card-foreground: oklch(0.179 0.004 286);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.179 0.004 286);
-  --primary: oklch(0.179 0.004 286);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.953 0.003 286.3);
-  --secondary-foreground: oklch(0.179 0.004 286);
-  --muted: oklch(0.953 0.003 286.3);
-  --muted-foreground: oklch(0.489 0.014 285.9);
-  --accent: oklch(0.926 0.004 286.3);
-  --accent-foreground: oklch(0.179 0.004 286);
-  --destructive: oklch(0.53 0.191 24.8);
-  --border: oklch(0 0 0 / 6%);
-  --input: oklch(0 0 0 / 10%);
-  --ring: oklch(0.241 0.008 285.8);
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.92 0.004 286.3);
-  --sidebar-foreground: oklch(0.179 0.004 286);
-  --sidebar-primary: oklch(0.179 0.004 286);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.926 0.004 286.3);
-  --sidebar-accent-foreground: oklch(0.179 0.004 286);
-  --sidebar-border: oklch(0 0 0 / 6%);
-  --sidebar-ring: oklch(0.241 0.008 285.8);
 }
 
-.dark {
-  --background: oklch(0.219 0.006 285.9);
-  --foreground: oklch(0.947 0.003 286.3);
-  --card: oklch(0.278 0.007 285.9);
-  --card-foreground: oklch(0.947 0.003 286.3);
-  --popover: oklch(0.294 0.005 286.1);
-  --popover-foreground: oklch(0.947 0.003 286.3);
-  --primary: oklch(0.947 0.003 286.3);
-  --primary-foreground: oklch(0.219 0.006 285.9);
-  --secondary: oklch(0.323 0.007 286);
-  --secondary-foreground: oklch(0.947 0.003 286.3);
-  --muted: oklch(0.323 0.007 286);
-  --muted-foreground: oklch(0.75 0.011 286.1);
-  --accent: oklch(0.369 0.007 286.1);
-  --accent-foreground: oklch(0.947 0.003 286.3);
-  --destructive: oklch(0.803 0.112 21.8);
-  --border: oklch(1 0 0 / 7%);
-  --input: oklch(1 0 0 / 10%);
-  --ring: oklch(0.887 0.010 279.7);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.135 0.005 285.8);
-  --sidebar-foreground: oklch(0.947 0.003 286.3);
-  --sidebar-primary: oklch(0.947 0.003 286.3);
-  --sidebar-primary-foreground: oklch(0.135 0.005 285.8);
-  --sidebar-accent: oklch(0.219 0.006 285.9);
-  --sidebar-accent-foreground: oklch(0.947 0.003 286.3);
-  --sidebar-border: oklch(1 0 0 / 7%);
-  --sidebar-ring: oklch(0.887 0.010 279.7);
-}
 
 /* ADE's own colours, beside the kit's. Status colours belong to the Status component: amber
    (attention) means "needs you" and nothing else. */
+.status-visible-name { display: none; }
+[data-differentiate-without-color] .status-visible-name { display: inline; }
+[data-differentiate-without-color] .rail-needs-you { border-radius: 0; outline: 1px solid currentColor; outline-offset: 1px; }
 @theme inline {
   --color-panel: var(--panel);
   --color-attention: var(--attention);
@@ -139,41 +79,7 @@
   --color-terminal: var(--terminal);
 }
 
-/* Keep the base surface background-only. A color named base also makes
-   Tailwind's stock text-base font-size utility set this surface as text color. */
-@utility bg-base {
-  background-color: var(--base);
-}
 
-:root {
-  --attention: oklch(0.606 0.136 65.3);
-  --attention-muted: oklch(0.963 0.028 79.5);
-  --running: oklch(0.561 0.178 260.3);
-  --success: oklch(0.575 0.135 153.8);
-  --destructive-muted: oklch(0.947 0.022 17.5);
-  --diff-add: oklch(0.47 0.11 154.2);
-  --diff-add-muted: oklch(0.954 0.024 159.1);
-  --diff-remove: oklch(0.53 0.191 24.8);
-  --diff-remove-muted: oklch(0.947 0.022 17.5);
-  --terminal: oklch(0.985 0 0);
-  --base: oklch(0.95 0.003 286.3);
-  --panel: oklch(0.976 0.001 286.4);
-}
-
-.dark {
-  --attention: oklch(0.776 0.146 70.8);
-  --attention-muted: oklch(0.776 0.146 70.8 / 12%);
-  --running: oklch(0.717 0.137 257.1);
-  --success: oklch(0.756 0.135 156.5);
-  --destructive-muted: oklch(0.803 0.112 21.8 / 20%);
-  --diff-add: oklch(0.756 0.135 156.5);
-  --diff-add-muted: oklch(0.756 0.135 156.5 / 10%);
-  --diff-remove: oklch(0.803 0.112 21.8);
-  --diff-remove-muted: oklch(0.803 0.112 21.8 / 15%);
-  --terminal: oklch(0.165 0.004 285.9);
-  --base: oklch(0.165 0.004 285.9);
-  --panel: oklch(0.193 0.006 285.8);
-}
 
 /* Type. Fonts are Inter and JetBrains Mono, as in the Pen designs, bundled with the app.
    The scale is the Pen components' sizes, in rem so one root size scales all text. Only
@@ -189,25 +95,42 @@
    The kit's own text-sm is moved from 14 to 13px, so kit menus, buttons and inputs sit on the same
    scale as ADE's rows; text-xs is already 12px. */
 @theme {
-  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono Variable', ui-monospace, 'SF Mono', monospace;
-  --text-meta: 0.6875rem;
-  --text-meta--line-height: 1rem;
-  --text-caption: 0.75rem;
-  --text-caption--line-height: 1rem;
-  --text-ui: 0.8125rem;
-  --text-ui--line-height: 1.25rem;
-  --text-body: 0.875rem;
-  --text-body--line-height: 1.375rem;
-  --text-title: 0.9375rem;
-  --text-title--line-height: 1.375rem;
-  --text-page: 1.25rem;
-  --text-page--line-height: 1.75rem;
-  --text-display: 1.75rem;
-  --text-display--line-height: 2.25rem;
-  --text-sm: 0.8125rem;
-  --text-sm--line-height: 1.25rem;
+  --font-sans: var(--ade-ui-font-family, 'Inter Variable'), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--ade-code-font-family, 'JetBrains Mono Variable'), ui-monospace, 'SF Mono', monospace;
+  --text-meta: calc(0.6875rem * var(--ade-ui-font-scale, 1));
+  --text-meta--line-height: max(1rem, calc(0.75625rem * var(--ade-ui-font-scale, 1)));
+  --text-caption: calc(0.75rem * var(--ade-ui-font-scale, 1));
+  --text-caption--line-height: max(1rem, calc(0.825rem * var(--ade-ui-font-scale, 1)));
+  --text-code: var(--ade-code-font-size, 12px);
+  --text-code--line-height: calc(var(--ade-code-font-size, 12px) * 1.333333);
+  --text-ui: calc(0.8125rem * var(--ade-ui-font-scale, 1));
+  --text-ui--line-height: max(1.25rem, calc(0.89375rem * var(--ade-ui-font-scale, 1)));
+  --text-body: calc(0.875rem * var(--ade-ui-font-scale, 1));
+  --text-body--line-height: max(1.375rem, calc(0.9625rem * var(--ade-ui-font-scale, 1)));
+  --text-title: calc(0.9375rem * var(--ade-ui-font-scale, 1));
+  --text-title--line-height: max(1.375rem, calc(1.03125rem * var(--ade-ui-font-scale, 1)));
+  --text-page: calc(1.25rem * var(--ade-ui-font-scale, 1));
+  --text-page--line-height: max(1.75rem, calc(1.375rem * var(--ade-ui-font-scale, 1)));
+  --text-display: calc(1.75rem * var(--ade-ui-font-scale, 1));
+  --text-display--line-height: max(2.25rem, calc(1.925rem * var(--ade-ui-font-scale, 1)));
+  --text-sm: calc(0.8125rem * var(--ade-ui-font-scale, 1));
+  --text-sm--line-height: max(1.25rem, calc(0.89375rem * var(--ade-ui-font-scale, 1)));
 }
+
+:root {
+  --ade-content-gap: 1.25rem;
+  --ade-section-gap: 1.5rem;
+  --ade-content-block-padding: 1.5rem;
+}
+
+[data-density='compact'] {
+  --ade-content-gap: 0.75rem;
+  --ade-section-gap: 1rem;
+  --ade-content-block-padding: 1rem;
+}
+
+.ade-content-group { gap: var(--ade-content-gap); }
+.ade-fullscreen-content { gap: var(--ade-section-gap); padding-block: var(--ade-content-block-padding); }
 
 /* Motion timing, the CSS side of app/motion.ts (a test keeps them equal). CSS transitions use
    duration-100 / -200 / -300 and ease-standard; nothing else (lint: ade/motion-classes). */
@@ -240,4 +163,50 @@
   body {
     @apply bg-background text-foreground;
   }
+}
+
+/* Keep the semantic base fill without colliding with Tailwind text-base typography. */
+@utility bg-base {
+  background-color: var(--base);
+}
+
+/* Accessibility preferences adjust semantic component roles, not an image-wide filter or theme source colors. */
+:root[data-high-contrast] {
+  --border: var(--foreground) !important;
+  --ring: var(--foreground) !important;
+  --sidebar-border: var(--sidebar-foreground) !important;
+  --sidebar-ring: var(--sidebar-foreground) !important;
+}
+
+:root[data-high-contrast] [class*="border-input"] {
+  border-color: var(--foreground) !important;
+}
+
+:root[data-high-contrast] :focus-visible {
+  outline: 2px solid var(--ring) !important;
+  outline-offset: 2px !important;
+}
+
+/* Replace translucent component fills with their corresponding opaque semantic roles. */
+:root[data-reduced-transparency] [class*="bg-destructive/"] {
+  background-color: var(--destructive-muted) !important;
+}
+:root[data-reduced-transparency] [class*="bg-muted/"] {
+  background-color: var(--muted) !important;
+}
+:root[data-reduced-transparency] [class*="bg-accent/"] {
+  background-color: var(--accent) !important;
+}
+:root[data-reduced-transparency] [class*="bg-primary/"] {
+  background-color: var(--primary) !important;
+}
+:root[data-reduced-transparency] [class*="bg-secondary/"] {
+  background-color: var(--secondary) !important;
+}
+:root[data-reduced-transparency] [class*="bg-black/"] {
+  background-color: var(--background) !important;
+}
+:root[data-reduced-transparency] [class*="backdrop-blur"] {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }

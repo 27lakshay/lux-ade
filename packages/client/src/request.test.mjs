@@ -2,7 +2,36 @@
 // Run after `pnpm build:sdk`: node --test packages/client/src/request.test.mjs
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { categoryErrorCodes, DaemonRequestError, daemonRefusalCodes, isDaemonRefusal } from '../dist/request.js'
+import {
+  categoryErrorCodes,
+  DaemonRequestError,
+  daemonRefusalCodes,
+  isDaemonRefusal,
+  requestDaemon,
+} from '../dist/request.js'
+
+test('theme source allowance stays bounded and does not widen ordinary request admission', async () => {
+  for (const op of [
+    'themes.validate',
+    'themes.file.validate',
+    'themes.ghostty.validate',
+    'themes.warp.validate',
+    'themes.install',
+  ]) {
+    await assert.rejects(
+      requestDaemon('/unused-ade-fixture.sock', op, { source: 'x'.repeat(4 * 1024 * 1024) }),
+      (error) =>
+        error instanceof DaemonRequestError && error.code === 'invalid_request' && error.message.includes('4 MiB'),
+    )
+  }
+  for (const op of ['settings.get', 'themes.unknown']) {
+    await assert.rejects(
+      requestDaemon('/unused-ade-fixture.sock', op, { source: 'x'.repeat(256 * 1024) }),
+      (error) =>
+        error instanceof DaemonRequestError && error.code === 'invalid_request' && error.message.includes('128 KiB'),
+    )
+  }
+})
 
 const replied = (code) => new DaemonRequestError(code, 'refused', 'unknown', true)
 

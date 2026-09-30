@@ -33,7 +33,7 @@ Provide read-only file previews, revision-aware diff feedback and explicit Git c
 
 ## Testing Decisions
 
-All new tests are end-to-end. Exercise the running Electron application, CLI or public protocol with actual ADE processes, as approved by the user. Assert observable behavior, not internal classes, reducers, database layouts or implementation call counts. Use isolated host/profile/repository fixtures. External protocol fixtures are permitted; report real-provider evidence separately.
+Feature acceptance uses end-to-end tests; pure-core and renderer browser tests remain allowed under the current project test policy. Exercise the running Electron application, CLI or public protocol with actual ADE processes, as approved by the user. Assert observable behavior, not internal classes, reducers, database layouts or implementation call counts. Use isolated host/profile/repository fixtures. External protocol fixtures are permitted; report real-provider evidence separately.
 
 Modules exercised through these public interfaces: File queries, preview presentation, diff review, Git commands and feedback context.
 
@@ -65,5 +65,7 @@ Built-in editor, PR management/advanced review, issue integrations and per-agent
 | F080 — Change attribution | Not now |
 
 ## Further Notes
+
+The [detailed theming specification](../01-foundation/theming.md) defines shared appearance behavior and TH01–TH32 acceptance under D20. Its code/diff integration applies to existing surfaces and does not reopen the excluded F072 editor. Existing feature evidence does not establish TH25.
 
 This specification records required behavior, not implemented completeness. The shared v1 register contains all 140 original catalogue dispositions, scope corrections, delivery dependencies and remaining decisions. No source file layout or package candidate overrides the agreed product behavior.

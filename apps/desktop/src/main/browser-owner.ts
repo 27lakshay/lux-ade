@@ -1,3 +1,4 @@
+import { nativeTheme } from 'electron'
 import { createHash, randomUUID } from 'node:crypto'
 import { chmod, lstat, mkdir, unlink } from 'node:fs/promises'
 import { createServer, type Server, type Socket } from 'node:net'
@@ -44,6 +45,29 @@ export class BrowserOwner {
   private endpoint: string | null = null
   private registeredBootId: string | null = null
   private readonly peers = new Set<Socket>()
+  private appearanceSequence = 0
+  private appearanceQueue: Promise<void> = Promise.resolve()
+
+  /** Only system mode exposes an OS observation; explicit native overrides are not observations. */
+  readonly observeSystemAppearance = (): void => {
+    const endpoint = this.endpoint
+    if (!endpoint || nativeTheme.themeSource !== 'system') return
+    const dark = nativeTheme.shouldUseDarkColors
+    const sequence = ++this.appearanceSequence
+    const bootId = this.registeredBootId
+    this.appearanceQueue = this.appearanceQueue
+      .then(async () => {
+        if (endpoint !== this.endpoint || bootId !== this.registeredBootId) return
+        await dailyUseCommand(endpoint, {
+          op: 'settings.appearance.observe',
+          profile_id: this.profileId,
+          owner_id: this.ownerId,
+          sequence,
+          mode: dark ? 'dark' : 'light',
+        })
+      })
+      .catch((error) => console.error('System appearance observation failed', error))
+  }
 
   static async open(profileId: string, browserProfileId = profileId): Promise<BrowserOwner> {
     // macOS Unix socket paths are short; profile homes can exceed that limit.
@@ -213,12 +237,16 @@ export class BrowserOwner {
     })
     this.endpoint = endpoint
     this.registeredBootId = bootId
+    nativeTheme.removeListener('updated', this.observeSystemAppearance)
+    nativeTheme.on('updated', this.observeSystemAppearance)
+    this.observeSystemAppearance()
   }
 
   async close(): Promise<void> {
     const endpoint = this.endpoint
     this.endpoint = null
     this.registeredBootId = null
+    nativeTheme.removeListener('updated', this.observeSystemAppearance)
     await stopAllRecordings().catch((error) => console.error('Browser recordings did not stop cleanly', error))
     for (const peer of this.peers) peer.destroy()
     await new Promise<void>((done) => this.server.close(() => done()))

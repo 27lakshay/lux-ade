@@ -3,7 +3,7 @@ use super::*;
 /// The profile database schema this build creates and reads. Nothing upgrades
 /// an older database until ADE launches (decision D19): a database at any
 /// other version is refused, and the person deletes it to start again.
-pub const SCHEMA_VERSION: i64 = 22;
+pub const SCHEMA_VERSION: i64 = 23;
 
 /// The whole profile schema, created in one transaction for a new database.
 /// Stores that create their own tables on first use (drafts, activity,
@@ -33,6 +33,9 @@ const SCHEMA: &str = "
     CREATE INDEX layouts_by_workspace ON layouts(workspace_id);
     CREATE TABLE conversation_seen(conversation_id TEXT PRIMARY KEY, seen_sequence INTEGER NOT NULL);
     CREATE TABLE conversation_news(conversation_id TEXT PRIMARY KEY, news_sequence INTEGER NOT NULL);
+    CREATE TABLE theme_library_state(id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL CHECK(revision>=0));
+    INSERT INTO theme_library_state VALUES(1,0);
+    CREATE TABLE theme_definitions(id TEXT PRIMARY KEY, revision INTEGER NOT NULL CHECK(revision>0), data TEXT NOT NULL, summary TEXT NOT NULL);
     CREATE TABLE profile_settings(key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL);
     CREATE TABLE workspace_worktree_operations(operation_id TEXT PRIMARY KEY, status TEXT NOT NULL CHECK(status IN ('running','succeeded','failed')), data TEXT NOT NULL, updated_at INTEGER NOT NULL);
     CREATE INDEX workspace_worktree_operations_running ON workspace_worktree_operations(status);

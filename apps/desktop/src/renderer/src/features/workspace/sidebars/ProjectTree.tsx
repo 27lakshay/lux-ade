@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { IconButton } from '@/components/IconButton'
 import { INDENT, Row } from '@/components/Row'
-import { Status } from '@/components/Status'
+import { Status, type StatusState } from '@/components/Status'
 import { Caption, Meta } from '@/components/Typography'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/ui/empty'
 import { Button } from '@/components/ui/button'
@@ -38,6 +38,15 @@ import { selectWorkspace, useCollapsedProjects, useShownWorkspace } from './work
 /** A row's actions: shown on hover or keyboard focus, beside the row rather than inside its button. */
 const HOVER_ACTIONS =
   'absolute inset-y-0 end-1 flex items-center opacity-0 group-hover/row:opacity-100 has-focus-visible:opacity-100 has-data-popup-open:opacity-100'
+
+// Visible attention labels supplement the dot; the dot already supplies their accessible name.
+const CONVERSATION_STATUS_LABELS = {
+  idle: 'Idle',
+  running: 'Running',
+  needsYou: 'Needs you',
+  error: 'Error',
+  done: 'Done',
+} satisfies Record<StatusState, string>
 
 interface MenuAction {
   label: string
@@ -171,17 +180,25 @@ function WorkspaceRows({ workspace, active }: { workspace: NavigatorWorkspace; a
       )}
       {workspace.conversations.length > 0 && (
         <ul>
-          {workspace.conversations.map((conversation) => (
-            <li key={conversation.id}>
-              <Row
-                depth={2}
-                leading={<Status state={conversationState(conversation)} />}
-                onClick={() => selectWorkspace(workspace.id)}
-              >
-                {conversation.title}
-              </Row>
-            </li>
-          ))}
+          {workspace.conversations.map((conversation) => {
+            const state = conversationState(conversation)
+            return (
+              <li key={conversation.id}>
+                <Row
+                  depth={2}
+                  leading={<Status state={state} showVisualLabel={false} />}
+                  trailing={
+                    <Caption aria-hidden="true" tone="inherit" className="shrink-0 whitespace-nowrap">
+                      {CONVERSATION_STATUS_LABELS[state]}
+                    </Caption>
+                  }
+                  onClick={() => selectWorkspace(workspace.id)}
+                >
+                  {conversation.title}
+                </Row>
+              </li>
+            )
+          })}
         </ul>
       )}
     </li>

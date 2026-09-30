@@ -1,6 +1,7 @@
 // Generated from the Rust contracts in crates/ade-core/src/contract by scripts/generate-contracts.mjs. Do not edit.
 
 export type ContractDefinition =
+  | AccessibilityPreference
   | Account
   | AccountAck
   | AccountChoice
@@ -60,6 +61,9 @@ export type ContractDefinition =
   | AgentSendRequest
   | AppCommand
   | Appearance
+  | AppearanceDiagnostic
+  | AppearanceDiagnosticCode
+  | AppearancePropagation
   | Attachment
   | AttachmentImportRequest
   | AttachmentInspectRequest
@@ -73,6 +77,8 @@ export type ContractDefinition =
   | AttachmentReply
   | Attention
   | BackendCompatibility
+  | BoldColor
+  | BoldColorMode
   | BranchPolicy
   | BrowserAttachment
   | BrowserAttachmentState
@@ -135,6 +141,7 @@ export type ContractDefinition =
   | BrowserWait
   | BrowserWaitRequest
   | BrowserWaitState
+  | BuiltinPalette
   | Caller
   | Capability1
   | CapabilityChange
@@ -145,6 +152,7 @@ export type ContractDefinition =
   | CatalogGetRequest
   | CatalogProject
   | Catalogue
+  | CellColor
   | CheckState
   | CheckedPreset
   | CheckpointArea
@@ -248,11 +256,13 @@ export type ContractDefinition =
   | ConversationUnsnoozeRequest
   | CostBasis
   | CredentialReference
+  | CursorColor
   | DaemonHello
   | DelegateRequest
   | DeliveryChannel
   | DeliveryOutcome
   | DeliveryStatus
+  | Density
   | Descriptor
   | DeviceAccess
   | DeviceAppInstallRequest
@@ -299,6 +309,7 @@ export type ContractDefinition =
   | DiagnosticRetention
   | DiagnosticRun
   | DiagnosticService
+  | DiagnosticSeverity
   | DiagnosticTerminal
   | DiagnosticUnit
   | DiagnosticUnknown
@@ -354,7 +365,13 @@ export type ContractDefinition =
   | FilePreviewRequest
   | FileSearch
   | FileSearchRequest
+  | GhosttyAppearancePolicies
+  | GhosttyExportOmission
   | GhosttyRecovery
+  | GhosttyThemeExport
+  | GhosttyThemeExportRequest
+  | GhosttyThemeValidateRequest
+  | GhosttyThemeValidation
   | GitOperation
   | GitOperationStatus
   | GrantCapabilities
@@ -464,6 +481,8 @@ export type ContractDefinition =
   | OutputCoverageStatus
   | PackageRegistry
   | PairingState
+  | PaletteCatalog
+  | PaletteMode
   | PaneCloseRequest
   | PaneNode
   | ParentMessageQueued
@@ -648,6 +667,9 @@ export type ContractDefinition =
   | RepositoryRecord
   | RepositoryTransport
   | RequestKind
+  | ResolvedAppearance
+  | ResolvedSyntaxAppearance
+  | ResolvedTerminalAppearance
   | ResourceClaim
   | ResourceKind
   | ResourceKind2
@@ -714,6 +736,8 @@ export type ContractDefinition =
   | ReviewStatusRequest
   | ReviewUnstageRequest
   | RewindScope
+  | Rgb
+  | Rgba
   | RunChanges
   | RunComparison
   | RunRecord
@@ -778,8 +802,11 @@ export type ContractDefinition =
   | SessionSubscribeRequest
   | SettingValue
   | Settings
+  | SettingsAppearanceRequest
   | SettingsChanged
   | SettingsGetRequest
+  | SettingsPalettesRequest
+  | SettingsResetAppearanceRequest
   | SettingsSetRequest
   | SetupState
   | Side
@@ -818,17 +845,27 @@ export type ContractDefinition =
   | StartOutcome
   | Support
   | SwitchContinuity
+  | SystemAppearanceObservation
   | Tab
   | TabCloseRequest
   | TabTarget
+  | TerminalAppearance
+  | TerminalAppearanceFrame
+  | TerminalAppearanceProvenance
+  | TerminalAppearanceRequest
+  | TerminalAppearanceSetRequest
   | TerminalChanged
   | TerminalCloseRequest
+  | TerminalColor
+  | TerminalColorOverrides
   | TerminalConversationFrame
   | TerminalCreateRequest
   | TerminalCreated
+  | TerminalCursorShape
   | TerminalDescendant
   | TerminalDetachedFrame
   | TerminalErrorFrame
+  | TerminalFontKerning
   | TerminalMetrics
   | TerminalMetricsFrame
   | TerminalOperation
@@ -845,6 +882,48 @@ export type ContractDefinition =
   | TerminalStopRequest
   | TerminalViewportFrame
   | TerminalWarningFrame
+  | ThemeBinding
+  | ThemeConsumer
+  | ThemeDefinition
+  | ThemeDiagnostic
+  | ThemeDraftPreview
+  | ThemeDraftPreviewRequest
+  | ThemeExport
+  | ThemeExportRequest
+  | ThemeFileCandidate
+  | ThemeFileValidateRequest
+  | ThemeFileValidation
+  | ThemeInspectRequest
+  | ThemeInspectResponse
+  | ThemeInstallItem
+  | ThemeInstallReport
+  | ThemeInstallRequest
+  | ThemeInstallation
+  | ThemeLibrary
+  | ThemeLibraryChanged
+  | ThemeListRequest
+  | ThemeOrigin
+  | ThemePackExport
+  | ThemePackExportItem
+  | ThemePackExportRequest
+  | ThemePackIdentity
+  | ThemePreview
+  | ThemePreviewRequest
+  | ThemePreviewSample
+  | ThemeProvenance
+  | ThemeRecord
+  | ThemeRemoval
+  | ThemeRemovalImpact
+  | ThemeRemovalPlan
+  | ThemeRemovalPlanRequest
+  | ThemeRemoveRequest
+  | ThemeRenameRequest
+  | ThemeSection
+  | ThemeSections
+  | ThemeSelectionSlot
+  | ThemeSummary
+  | ThemeValidateRequest
+  | ThemeValidationResponse
   | TokenReference
   | TrackedDescendant
   | TransportCoverage
@@ -864,6 +943,8 @@ export type ContractDefinition =
   | UsageTurns
   | UsageTurnsRequest
   | WaitState
+  | WarpThemeValidateRequest
+  | WarpThemeValidation
   | Window
   | WindowAck
   | WindowBounds
@@ -934,6 +1015,10 @@ export type ContractDefinition =
   | WorktreeSwitchRequest
   | XtermReplayEvent
   | XtermReplayRecovery
+/**
+ * Accessibility preferences: follow the system, enable, or disable.
+ */
+export type AccessibilityPreference = 'system' | 'on' | 'off'
 /**
  * The child's provider account, stated explicitly.
  */
@@ -1042,10 +1127,39 @@ export type AppCommand =
  * Light, dark, or follow the system.
  */
 export type Appearance = 'light' | 'dark' | 'system'
+export type AppearanceDiagnosticCode =
+  'missing_theme' | 'missing_section' | 'invalid_definition' | 'wrong_mode' | 'invalid_selection'
+/**
+ * A palette variant has a fixed mode; system following belongs to the selection.
+ */
+export type PaletteMode = 'light' | 'dark'
+export type AppearancePropagation =
+  | {
+      revision: number
+      state: 'applied'
+      [k: string]: unknown
+    }
+  | {
+      applied_revision: number
+      desired_revision: number
+      state: 'pending'
+      [k: string]: unknown
+    }
+  | {
+      desired_revision: number
+      message: string
+      state: 'unavailable'
+      [k: string]: unknown
+    }
 /**
  * Whether a Conversation needs the person, as the navigator shows it.
  */
 export type Attention = 'idle' | 'running' | 'needs_you' | 'error'
+/**
+ * Bold color is a rendering policy; it never changes native palette/query values.
+ */
+export type BoldColor = Rgb | BoldColorMode
+export type BoldColorMode = 'inherit' | 'bright'
 /**
  * What `worktree.remove` does with the removed tree's branch.
  */
@@ -1130,10 +1244,27 @@ export type CarryChange = ('added' | 'modified' | 'deleted' | 'type_changed' | '
  */
 export type ProjectKind = 'repository' | 'folder'
 /**
+ * How a color consumer selects a variant independently of app chrome.
+ */
+export type ThemeBinding =
+  | {
+      kind: 'follow_app'
+    }
+  | {
+      dark: string
+      kind: 'paired'
+      light: string
+    }
+  | {
+      kind: 'fixed'
+      theme_id: string
+    }
+/**
  * Whether a window is on screen. A closed window keeps its record, its
  * bounds and its layouts, and comes back as it was on `window.reopen`.
  */
 export type WindowState = 'open' | 'closed'
+export type CellColor = 'cell-foreground' | 'cell-background'
 export type CheckState = 'passed' | 'failed' | 'skipped'
 /**
  * The preset field a conflict concerns.
@@ -1393,6 +1524,10 @@ export type CredentialReference =
       }
     }
 /**
+ * Cursor fill is literal RGB or the resolved cursor cell color.
+ */
+export type CursorColor = Rgb | CellColor
+/**
  * Where the child works, stated explicitly. Parallel children in the same
  * workspace share its files; ADE never merges their edits.
  */
@@ -1420,6 +1555,10 @@ export type DeliveryOutcome = 'shown' | 'failed' | 'suppressed'
  * Where one activity's delivery on one channel stands.
  */
 export type DeliveryStatus = 'claimed' | 'shown' | 'failed' | 'suppressed'
+/**
+ * Every profile setting, each at its default until set.
+ */
+export type Density = 'default' | 'compact'
 /**
  * Whether device and computer control is available on a host.
  */
@@ -1525,6 +1664,7 @@ export type DiagnosticProcessKind = ('daemon' | 'runtime') | 'agent' | 'terminal
  * The unit a queue gauge counts.
  */
 export type DiagnosticUnit = 'items' | 'bytes'
+export type DiagnosticSeverity = 'error' | 'warning' | 'info'
 /**
  * Where an unknown execution was found.
  */
@@ -1589,6 +1729,11 @@ export type FileKind = 'directory' | 'file' | 'symlink' | 'other'
  * How a preview presents the file.
  */
 export type PreviewKind = 'text' | 'image' | 'unsupported'
+export type ThemeOrigin = 'bundled' | 'imported' | 'user' | 'plugin'
+/**
+ * Literal sRGB or the underlying cell color after reverse-video resolution.
+ */
+export type TerminalColor = Rgb | Rgba | CellColor
 /**
  * Where a Git mutation stands.
  */
@@ -2052,6 +2197,8 @@ export type PluginSource =
  * Reduce motion: follow the system, always, or never.
  */
 export type ReducedMotion = 'system' | 'on' | 'off'
+export type TerminalCursorShape = 'block' | 'bar' | 'underline'
+export type TerminalFontKerning = 'auto' | 'normal' | 'none'
 /**
  * Who registered a provider. Every origin goes through the same registry
  * and the same provider interface; none has a privileged path.
@@ -2148,6 +2295,7 @@ export type RepositoryPublishStep = 'initialize' | 'commit' | 'add_remote' | 'pu
  * Whether publish may run.
  */
 export type RepositoryPublishVerdict = ('ready' | 'blocked') | 'needs_initial_commit'
+export type TerminalAppearanceProvenance = 'profile' | 'terminal'
 /**
  * What a claim is on.
  */
@@ -2253,6 +2401,8 @@ export type XtermReplayEvent =
       type: 'resize'
       [k: string]: unknown
     }
+export type ThemeConsumer = 'app' | 'terminal' | 'syntax'
+export type ThemeSelectionSlot = 'light' | 'dark' | 'fixed'
 /**
  * Which agents a turn's figures cover.
  */
@@ -3154,6 +3304,14 @@ export interface Attachment {
   size: number
   [k: string]: unknown
 }
+export interface AppearanceDiagnostic {
+  code: AppearanceDiagnosticCode
+  fallback_id: string
+  message: string
+  selected_id: string | null
+  slot: PaletteMode
+  [k: string]: unknown
+}
 /**
  * `attachment.import`: attach a regular file that the daemon reads from disk.
  * `request_id` becomes the attachment ID.
@@ -3313,6 +3471,11 @@ export interface BackendCompatibility {
   missing: string[]
   runtime_protocol: string | null
   [k: string]: unknown
+}
+export interface Rgb {
+  b: number
+  g: number
+  r: number
 }
 /**
  * The debugger capture of one tab.
@@ -4279,6 +4442,15 @@ export interface BrowserWaitRequest {
    */
   timeout_ms?: number
 }
+export interface BuiltinPalette {
+  id: string
+  mode: PaletteMode
+  name: string
+  tokens: {
+    [k: string]: string
+  }
+  [k: string]: unknown
+}
 /**
  * One capability and why it has that support.
  */
@@ -4641,6 +4813,7 @@ export interface CatalogProject {
  * program set follow the runtime and reach the feed as `terminal_changed`.
  */
 export interface TerminalRecord {
+  appearance_binding: ThemeBinding | null
   /**
    * A process other than the terminal's own program holds its foreground,
    * such as a command started from the shell. Closing asks first.
@@ -7553,6 +7726,19 @@ export interface FileSearchRequest {
   workspace_id: string
 }
 /**
+ * Independently accepted profile settings, never part of an installed color definition.
+ */
+export interface GhosttyAppearancePolicies {
+  bold_color: BoldColor | null
+  minimum_contrast: number | null
+  [k: string]: unknown
+}
+export interface GhosttyExportOmission {
+  path: string
+  reason: string
+  [k: string]: unknown
+}
+/**
  * A Ghostty snapshot: both screens, history up to the limit, and any
  * unfinished escape sequence.
  */
@@ -7560,6 +7746,416 @@ export interface GhosttyRecovery {
   continuation_limit_bytes: number
   history_limit_bytes: number
   scope: string
+  [k: string]: unknown
+}
+export interface GhosttyThemeExport {
+  omissions: GhosttyExportOmission[]
+  source: string
+  theme: ThemeSummary
+  /**
+   * The `ghostty_theme_export` type tag.
+   */
+  type: 'ghostty_theme_export'
+  [k: string]: unknown
+}
+export interface ThemeSummary {
+  bundled: boolean
+  id: string
+  mode: PaletteMode
+  name: string
+  provenance: ThemeProvenance
+  /**
+   * A record revision is the library revision at which its definition last changed.
+   * Bundled definitions use revision 0 and are immutable.
+   */
+  revision: number
+  sections: ThemeSections
+  [k: string]: unknown
+}
+export interface ThemeProvenance {
+  author: string | null
+  kind: ThemeOrigin
+  license: string | null
+  source: string | null
+  source_digest: string | null
+  source_version: string | null
+}
+export interface ThemeSections {
+  app: boolean
+  syntax: boolean
+  terminal: boolean
+  [k: string]: unknown
+}
+export interface GhosttyThemeExportRequest {
+  expected_revision: number
+  id: string
+  op: 'themes.ghostty.export'
+}
+/**
+ * Theme text with inert optional setting proposals. Source names never cause filesystem access.
+ */
+export interface GhosttyThemeValidateRequest {
+  id: string
+  mode: PaletteMode
+  name: string
+  op: 'themes.ghostty.validate'
+  source: string
+  source_name?: string | null
+}
+export interface GhosttyThemeValidation {
+  policies: GhosttyAppearancePolicies
+  /**
+   * Resolved candidate colors for an isolated local renderer; never applied to real terminals.
+   */
+  preview: TerminalAppearance | null
+  /**
+   * Canonical ADE source for explicit review and the ordinary revision-checked installation.
+   */
+  source: string | null
+  /**
+   * The `ghostty_theme_validation` type tag.
+   */
+  type: 'ghostty_theme_validation'
+  validation: ThemeValidationResponse
+  [k: string]: unknown
+}
+export interface TerminalAppearance {
+  background: Rgb
+  bold_color: BoldColor
+  cursor: CursorColor
+  cursor_text: TerminalColor
+  dark: boolean
+  foreground: Rgb
+  minimum_contrast: number
+  /**
+   * @minItems 256
+   * @maxItems 256
+   */
+  palette: [
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb,
+    Rgb
+  ]
+  revision: number
+  selection_background: TerminalColor
+  selection_foreground: TerminalColor
+  [k: string]: unknown
+}
+/**
+ * Eight-bit alpha is retained exactly; only view rendering composites it.
+ */
+export interface Rgba {
+  a: number
+  b: number
+  g: number
+  r: number
+}
+export interface ThemeValidationResponse {
+  definition: ThemeDefinition | null
+  diagnostics: ThemeDiagnostic[]
+  /**
+   * Existing stable ID at validation time, for explicit revision-checked replacement.
+   */
+  target: ThemeSummary | null
+  /**
+   * The `theme_validation` type tag.
+   */
+  type: 'theme_validation'
+  valid: boolean
+  [k: string]: unknown
+}
+export interface ThemeDefinition {
+  app: ThemeSection | null
+  format: string
+  id: string
+  mode: PaletteMode
+  name: string
+  pack?: ThemePackIdentity | null
+  provenance: ThemeProvenance
+  syntax: ThemeSection | null
+  terminal: ThemeSection | null
+  version: number
+  [k: string]: unknown
+}
+/**
+ * A declared default is resolved independently of current profile appearance.
+ */
+export interface ThemeSection {
+  defaults: string | null
+  tokens: {
+    [k: string]: string
+  }
+  [k: string]: unknown
+}
+export interface ThemePackIdentity {
+  id: string
+  name: string
+}
+/**
+ * Offsets and lengths count UTF-8 bytes; line and column are one-based (column counts characters).
+ */
+export interface ThemeDiagnostic {
+  code: string
+  column: number
+  length: number
+  line: number
+  message: string
+  offset: number
+  path: string
+  severity: DiagnosticSeverity
   [k: string]: unknown
 }
 /**
@@ -9242,6 +9838,14 @@ export interface OutputCoverage {
   status: OutputCoverageStatus
   [k: string]: unknown
 }
+export interface PaletteCatalog {
+  palettes: BuiltinPalette[]
+  /**
+   * The `palettes` type tag.
+   */
+  type: 'palettes'
+  [k: string]: unknown
+}
 /**
  * `pane.close`: close a pane and its tabs, closing each shell terminal whose
  * last tab it holds, as `tab.close` does.
@@ -9563,6 +10167,10 @@ export interface PluginContributions {
   hooks?: HookEvent[]
   panels: PluginPanelContribution[]
   settings: PluginSettingContribution[]
+  /**
+   * Static, validated declarative theme definitions contributed by this plugin.
+   */
+  themes?: ThemeDefinition[]
 }
 /**
  * A panel for the UI host. Its ID starts with the plugin ID and a dot.
@@ -9690,6 +10298,10 @@ export interface PluginContributions1 {
   hooks?: HookEvent[]
   panels: PluginPanelContribution[]
   settings: PluginSettingContribution[]
+  /**
+   * Static, validated declarative theme definitions contributed by this plugin.
+   */
+  themes?: ThemeDefinition[]
 }
 /**
  * At least one entry point, each a relative path inside the artifact.
@@ -10291,15 +10903,41 @@ export interface PresetView {
   type: 'preset'
   [k: string]: unknown
 }
-/**
- * Every profile setting, each at its default until set. Typography (F014)
- * joins as a key here.
- */
 export interface ProfileSettings {
+  app_dark_theme: string
+  app_light_theme: string
   appearance: Appearance
+  appearance_revision: number
+  code_font_family: string
+  code_font_size: number
+  density: Density
+  differentiate_without_color: AccessibilityPreference
+  high_contrast: AccessibilityPreference
   keybindings: Keybindings
   reduced_motion: ReducedMotion
+  reduced_transparency: AccessibilityPreference
+  syntax_binding: ThemeBinding
+  terminal_binding: ThemeBinding
+  terminal_bold_color: BoldColor
+  terminal_color_overrides: TerminalColorOverrides
+  terminal_cursor_blink: boolean
+  terminal_cursor_shape: TerminalCursorShape
+  terminal_font_family: string
+  terminal_font_kerning: TerminalFontKerning
+  terminal_font_size: number
+  terminal_line_height: number
+  terminal_minimum_contrast: number
+  ui_font_family: string
+  ui_font_size: number
   [k: string]: unknown
+}
+/**
+ * Explicit profile overrides; omitted roles retain the selected theme's colors.
+ */
+export interface TerminalColorOverrides {
+  cursor_text?: TerminalColor | null
+  selection_background?: TerminalColor | null
+  selection_foreground?: TerminalColor | null
 }
 /**
  * The `provider.capabilities` reply.
@@ -11206,6 +11844,69 @@ export interface RepositoryRebindRequest {
   op: 'repository.rebind'
   path: string
   project_id: string
+}
+export interface ResolvedAppearance {
+  dark_palette: BuiltinPalette
+  diagnostics: AppearanceDiagnostic[]
+  light_palette: BuiltinPalette
+  mode: PaletteMode
+  preference: Appearance
+  propagation: AppearancePropagation
+  revision: number
+  syntax: ResolvedSyntaxAppearance
+  terminal: TerminalAppearance
+  terminal_diagnostics: AppearanceDiagnostic[]
+  theme_id: string
+  tokens: {
+    [k: string]: string
+  }
+  /**
+   * The `appearance` type tag.
+   */
+  type: 'appearance'
+  [k: string]: unknown
+}
+/**
+ * Independently selected code colors and surface tokens. App chrome is separate.
+ */
+export interface ResolvedSyntaxAppearance {
+  binding: ThemeBinding
+  dark_palette: BuiltinPalette
+  diagnostics: AppearanceDiagnostic[]
+  light_palette: BuiltinPalette1
+  palette: BuiltinPalette
+  selected_id: string
+  [k: string]: unknown
+}
+/**
+ * Both startup variants; a valid fixed binding repeats its palette in both slots.
+ */
+export interface BuiltinPalette1 {
+  id: string
+  mode: PaletteMode
+  name: string
+  tokens: {
+    [k: string]: string
+  }
+  [k: string]: unknown
+}
+export interface ResolvedTerminalAppearance {
+  appearance: TerminalAppearance
+  binding: ThemeBinding
+  diagnostics: AppearanceDiagnostic[]
+  fallback: boolean
+  mode: PaletteMode
+  propagation: AppearancePropagation
+  provenance: TerminalAppearanceProvenance
+  resolved_id: string
+  revision: number
+  selected_id: string
+  terminal_id: string
+  /**
+   * The `terminal_appearance` type tag.
+   */
+  type: 'terminal_appearance'
+  [k: string]: unknown
 }
 /**
  * `resources.claim.resolve`: release one quarantined claim after the caller
@@ -13072,6 +13773,12 @@ export interface Settings {
   [k: string]: unknown
 }
 /**
+ * Inspect the saved projection and independently acknowledged runtime state.
+ */
+export interface SettingsAppearanceRequest {
+  op: 'settings.appearance'
+}
+/**
  * The `settings_changed` feed frame: every setting after a change.
  */
 export interface SettingsChanged {
@@ -13091,6 +13798,19 @@ export interface SettingsGetRequest {
   op: 'settings.get'
 }
 /**
+ * Built-in app palette variants, including their explicit mode and complete semantic tokens.
+ */
+export interface SettingsPalettesRequest {
+  op: 'settings.palettes'
+}
+/**
+ * Restore the core appearance defaults without changing other preferences.
+ */
+export interface SettingsResetAppearanceRequest {
+  expected_appearance_revision: number
+  op: 'settings.appearance.reset'
+}
+/**
  * `settings.set`: change the named settings and leave the others. A key the
  * profile does not keep, or a command in `keybindings` or
  * `reset_keybindings` that does not exist, is refused with
@@ -13104,7 +13824,24 @@ export interface SettingsGetRequest {
  * `keybinding_conflict`. Either refusal changes nothing.
  */
 export interface SettingsSetRequest {
+  app_dark_theme?: string | null
+  app_light_theme?: string | null
   appearance?: Appearance | null
+  code_font_family?: string | null
+  code_font_size?: number | null
+  density?: Density | null
+  differentiate_without_color?: AccessibilityPreference | null
+  /**
+   * Reject the entire change if another appearance edit has committed since this revision.
+   */
+  expected_appearance_revision?: number | null
+  /**
+   * Fence custom definitions captured by a selection or preview, including inactive variants.
+   */
+  expected_theme_revisions?: {
+    [k: string]: number
+  } | null
+  high_contrast?: AccessibilityPreference | null
   keybindings?: {
     'close-tab'?: string | null
     'command-palette'?: string | null
@@ -13119,7 +13856,21 @@ export interface SettingsSetRequest {
   } | null
   op: 'settings.set'
   reduced_motion?: ReducedMotion | null
+  reduced_transparency?: AccessibilityPreference | null
   reset_keybindings?: KeybindingReset | null
+  syntax_binding?: ThemeBinding | null
+  terminal_binding?: ThemeBinding | null
+  terminal_bold_color?: BoldColor | null
+  terminal_color_overrides?: TerminalColorOverrides | null
+  terminal_cursor_blink?: boolean | null
+  terminal_cursor_shape?: TerminalCursorShape | null
+  terminal_font_family?: string | null
+  terminal_font_kerning?: TerminalFontKerning | null
+  terminal_font_size?: number | null
+  terminal_line_height?: number
+  terminal_minimum_contrast?: number
+  ui_font_family?: string | null
+  ui_font_size?: number | null
 }
 /**
  * `skill.adopt`: take ownership of a skill directory a provider already reads.
@@ -13445,6 +14196,16 @@ export interface SkillRemoved {
   [k: string]: unknown
 }
 /**
+ * A sequenced OS observation from the registered local desktop owner.
+ */
+export interface SystemAppearanceObservation {
+  mode: PaletteMode
+  op: 'settings.appearance.observe'
+  owner_id: string
+  profile_id: string
+  sequence: number
+}
+/**
  * `tab.close`: close a tab, following its target (daemon-authority decision
  * 5). When the tab is the last one, across every window's layouts, of a
  * shell terminal, the terminal closes as `terminal.close` would: every busy
@@ -13465,6 +14226,33 @@ export interface TabCloseRequest {
   tab_id: string
   window_id: string
   workspace_id?: string | null
+}
+/**
+ * A default appearance update, ordered with PTY output under the terminal lock.
+ */
+export interface TerminalAppearanceFrame {
+  appearance: TerminalAppearance
+  run_id: string
+  /**
+   * The `terminal_appearance` type tag.
+   */
+  type: 'terminal_appearance'
+  [k: string]: unknown
+}
+export interface TerminalAppearanceRequest {
+  op: 'terminal.appearance.get'
+  terminal_id: string
+  workspace_id: string
+}
+export interface TerminalAppearanceSetRequest {
+  /**
+   * Null removes this terminal's override and follows the profile binding.
+   */
+  binding: ThemeBinding | null
+  expected_appearance_revision: number
+  op: 'terminal.appearance.set'
+  terminal_id: string
+  workspace_id: string
 }
 /**
  * The `terminal_changed` feed frame: a terminal's status, busy state or
@@ -13763,6 +14551,10 @@ export interface TerminalRetireRequest {
  * fields it carries depends on the `snapshot_format` the attachment asked for.
  */
 export interface TerminalSnapshotFrame {
+  /**
+   * Present for terminal snapshots; absent for conversation-only streams.
+   */
+  appearance?: TerminalAppearance | null
   attachment: number
   /**
    * The runtime's simulated conversation text (a prototype leftover).
@@ -13838,6 +14630,276 @@ export interface TerminalWarningFrame {
    */
   type: 'warning'
   [k: string]: unknown
+}
+export interface ThemeDraftPreview {
+  /**
+   * Declared app projection for role inspection, absent for terminal-only themes.
+   */
+  app: BuiltinPalette | null
+  dark: ThemePreviewSample
+  definition: ThemeDefinition
+  diagnostics: ThemeDiagnostic[]
+  light: ThemePreviewSample
+  /**
+   * Declared syntax projection for role inspection, absent for other themes.
+   */
+  syntax: BuiltinPalette | null
+  /**
+   * Declared terminal projection for role inspection, absent for other themes.
+   */
+  terminal: TerminalAppearance | null
+  /**
+   * The `theme_draft_preview` type tag.
+   */
+  type: 'theme_draft_preview'
+  valid: boolean
+  [k: string]: unknown
+}
+export interface ThemePreviewSample {
+  app: BuiltinPalette
+  diagnostics: AppearanceDiagnostic[]
+  syntax: BuiltinPalette
+  terminal: TerminalAppearance
+  terminal_name: string
+  [k: string]: unknown
+}
+/**
+ * Resolves an unsaved definition for editor rendering without installing or applying it.
+ */
+export interface ThemeDraftPreviewRequest {
+  op: 'themes.draft.preview'
+  source: string
+}
+export interface ThemeExport {
+  source: string
+  theme: ThemeSummary
+  /**
+   * The `theme_export` type tag.
+   */
+  type: 'theme_export'
+  [k: string]: unknown
+}
+export interface ThemeExportRequest {
+  expected_revision?: number | null
+  id: string
+  op: 'themes.export'
+}
+export interface ThemeFileCandidate {
+  /**
+   * Accepted definition data; pack identity is materialized without selecting the member.
+   */
+  source: string
+  validation: ThemeValidationResponse
+  [k: string]: unknown
+}
+export interface ThemeFileValidateRequest {
+  op: 'themes.file.validate'
+  source: string
+}
+export interface ThemeFileValidation {
+  /**
+   * Valid members may be explicitly accepted even when another member has a required color error.
+   */
+  candidates: ThemeFileCandidate[]
+  /**
+   * False for invalid/unsupported pack headers, ambiguous structure or bounded-source failures.
+   */
+  container_valid: boolean
+  diagnostics: ThemeDiagnostic[]
+  pack: ThemePackIdentity | null
+  /**
+   * The `theme_file_validation` type tag.
+   */
+  type: 'theme_file_validation'
+  [k: string]: unknown
+}
+export interface ThemeInspectRequest {
+  id: string
+  op: 'themes.inspect'
+}
+export interface ThemeInspectResponse {
+  theme: ThemeRecord
+  /**
+   * The `theme_record` type tag.
+   */
+  type: 'theme_record'
+  [k: string]: unknown
+}
+export interface ThemeRecord {
+  definition: ThemeDefinition
+  diagnostics: ThemeDiagnostic[]
+  revision: number
+  /**
+   * Accepted source is retained independently of the original file.
+   */
+  source: string
+  [k: string]: unknown
+}
+export interface ThemeInstallItem {
+  /**
+   * Zero creates an absent ID. A replacement names the currently inspected revision.
+   * Repeating already-committed identical normalized content returns its current record unchanged.
+   */
+  expected_revision: number
+  source: string
+  [k: string]: unknown
+}
+export interface ThemeInstallReport {
+  diagnostics: ThemeDiagnostic[]
+  index: number
+  theme: ThemeSummary | null
+  valid: boolean
+  [k: string]: unknown
+}
+export interface ThemeInstallRequest {
+  /**
+   * Only the explicitly accepted definitions belong here. The entire set validates before mutation.
+   */
+  items: ThemeInstallItem[]
+  op: 'themes.install'
+}
+export interface ThemeInstallation {
+  changed: boolean
+  committed: boolean
+  items: ThemeInstallReport[]
+  revision: number
+  /**
+   * The `theme_installation` type tag.
+   */
+  type: 'theme_installation'
+  [k: string]: unknown
+}
+export interface ThemeLibrary {
+  next_id: string | null
+  revision: number
+  themes: ThemeSummary[]
+  /**
+   * The `theme_library` type tag.
+   */
+  type: 'theme_library'
+  [k: string]: unknown
+}
+export interface ThemeLibraryChanged {
+  boot_id: string
+  changed_ids: string[]
+  library_revision: number
+  /**
+   * Feed ordering is independent of durable theme library revisions.
+   */
+  revision: number
+  /**
+   * The `theme_library_changed` type tag.
+   */
+  type: 'theme_library_changed'
+  [k: string]: unknown
+}
+export interface ThemeListRequest {
+  /**
+   * Exclusive stable ID cursor. Pages contain at most 16 summaries.
+   */
+  after_id?: string | null
+  op: 'themes.list'
+}
+export interface ThemePackExport {
+  pack: ThemePackIdentity
+  source: string
+  themes: ThemeSummary[]
+  /**
+   * The `theme_pack_export` type tag.
+   */
+  type: 'theme_pack_export'
+  [k: string]: unknown
+}
+export interface ThemePackExportItem {
+  expected_revision: number
+  id: string
+  [k: string]: unknown
+}
+export interface ThemePackExportRequest {
+  id: string
+  items: ThemePackExportItem[]
+  name: string
+  op: 'themes.pack.export'
+}
+export interface ThemePreview {
+  appearance_revision: number
+  expected_theme_revisions: {
+    [k: string]: number
+  }
+  samples: ThemePreviewSample[]
+  /**
+   * The `theme_preview` type tag.
+   */
+  type: 'theme_preview'
+  [k: string]: unknown
+}
+export interface ThemePreviewRequest {
+  app_dark_theme: string
+  app_light_theme: string
+  op: 'themes.preview'
+  syntax_binding: ThemeBinding
+  terminal_binding: ThemeBinding
+}
+export interface ThemeRemoval {
+  appearance_revision: number
+  changed: boolean
+  id: string
+  revision: number
+  /**
+   * The `theme_removal` type tag.
+   */
+  type: 'theme_removal'
+  [k: string]: unknown
+}
+export interface ThemeRemovalImpact {
+  consumer: ThemeConsumer
+  fallback_id: string
+  /**
+   * Follow-app references change through their app slot; their binding remains follow-app.
+   */
+  indirect: boolean
+  key: string
+  slot: ThemeSelectionSlot
+  terminal_id: string | null
+  workspace_id: string | null
+  [k: string]: unknown
+}
+export interface ThemeRemovalPlan {
+  appearance_revision: number
+  impacts: ThemeRemovalImpact[]
+  next_key: string | null
+  removable: boolean
+  theme: ThemeSummary
+  total: number
+  /**
+   * The `theme_removal_plan` type tag.
+   */
+  type: 'theme_removal_plan'
+  [k: string]: unknown
+}
+export interface ThemeRemovalPlanRequest {
+  /**
+   * Exclusive impact key. Pages contain at most 16 affected selections.
+   */
+  after_key?: string | null
+  id: string
+  op: 'themes.removal'
+}
+export interface ThemeRemoveRequest {
+  expected_appearance_revision: number
+  expected_revision: number
+  id: string
+  op: 'themes.remove'
+}
+export interface ThemeRenameRequest {
+  expected_revision: number
+  id: string
+  name: string
+  op: 'themes.rename'
+}
+export interface ThemeValidateRequest {
+  op: 'themes.validate'
+  source: string
 }
 /**
  * A cost total over a group of turns.
@@ -14048,6 +15110,25 @@ export interface UsageTurnsRequest {
    */
   until?: number | null
   workspace_id?: string | null
+}
+/**
+ * Warp YAML becomes a standard ADE terminal definition after preview.
+ */
+export interface WarpThemeValidateRequest {
+  id: string
+  op: 'themes.warp.validate'
+  source: string
+  source_name?: string | null
+}
+export interface WarpThemeValidation {
+  preview: TerminalAppearance | null
+  source: string | null
+  /**
+   * The `warp_theme_validation` type tag.
+   */
+  type: 'warp_theme_validation'
+  validation: ThemeValidationResponse
+  [k: string]: unknown
 }
 /**
  * The reply of every window command: the window as it now stands.
@@ -14971,7 +16052,7 @@ export interface WorktreeSwitchRequest {
   target: string
 }
 
-export type Operation = "catalog.get" | "workspace.open" | "workspace.rename" | "workspace.remove" | "workspace.create_worktree" | "workspace.delete_worktree" | "rebind.list" | "workspace.rebind" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "conversation.mark_seen" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "conversation.controls" | "conversation.steer" | "conversation.compact" | "conversation.rewind.preview" | "conversation.rewind" | "conversation.snooze" | "conversation.unsnooze" | "conversation.snooze.list" | "conversation.delete" | "draft.history.list" | "draft.history.restore" | "draft.stash.save" | "draft.stash.list" | "draft.stash.restore" | "draft.stash.drop" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "account.switch.preview" | "account.switch" | "account.switch.list" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "terminal.close" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.branch" | "review.stash" | "review.merge" | "review.fetch" | "review.pull" | "review.push" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "review.feedback.send" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "worktree.carry.preview" | "worktree.carry" | "worktree.resources.apply" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "runtime.recovery" | "runtime.recovery.release" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "notification.preferences.get" | "notification.preferences.set" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.place" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "plugin.command.invoke" | "plugin.host.status" | "plugin.host.restart" | "plugin.dev.enter" | "plugin.dev.leave" | "plugin.generation.list" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.child.answer" | "orchestration.parent.send" | "orchestration.child.messages" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "resources.device.hold" | "resources.device.release" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "remote.host.install" | "retention.preview" | "retention.apply" | "retention.policy.get" | "retention.policy.set" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get" | "browser.partition.list" | "browser.partition.create" | "browser.import.preview" | "browser.import.run" | "browser.import.get" | "browser.context.capture" | "browser.click" | "browser.type" | "browser.evaluate" | "browser.wait" | "browser.screenshot" | "repository.coverage" | "repository.clone" | "repository.publish.preview" | "repository.publish" | "hook.subscription.list" | "hook.delivery.list" | "hook.delivery.inspect" | "hook.delivery.retry" | "hook.delivery.abandon" | "provider.capabilities" | "provider.readiness" | "provider.quota" | "provider.registrations" | "preset.list" | "preset.get" | "preset.save" | "preset.delete" | "adapter.list" | "adapter.put" | "adapter.remove" | "adapter.probe" | "device.list" | "device.screenshot" | "device.boot" | "device.app.install" | "device.app.launch" | "device.input" | "placement.hosts" | "placement.check" | "placement.record" | "placement.resolve" | "placement.list" | "placement.release" | "command.list" | "command.invoke" | "context.capture" | "context.get" | "context.plan" | "window.list" | "window.create" | "window.close" | "window.reopen" | "window.claim" | "window.set_bounds" | "window.show_workspace" | "window.set_view_state" | "layout.get" | "layout.apply" | "tab.close" | "pane.close" | "settings.get" | "settings.set"
+export type Operation = "catalog.get" | "workspace.open" | "workspace.rename" | "workspace.remove" | "workspace.create_worktree" | "workspace.delete_worktree" | "rebind.list" | "workspace.rebind" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "conversation.mark_seen" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "conversation.controls" | "conversation.steer" | "conversation.compact" | "conversation.rewind.preview" | "conversation.rewind" | "conversation.snooze" | "conversation.unsnooze" | "conversation.snooze.list" | "conversation.delete" | "draft.history.list" | "draft.history.restore" | "draft.stash.save" | "draft.stash.list" | "draft.stash.restore" | "draft.stash.drop" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "account.switch.preview" | "account.switch" | "account.switch.list" | "terminal.appearance.get" | "terminal.appearance.set" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "terminal.close" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.branch" | "review.stash" | "review.merge" | "review.fetch" | "review.pull" | "review.push" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "review.feedback.send" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "worktree.carry.preview" | "worktree.carry" | "worktree.resources.apply" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "runtime.recovery" | "runtime.recovery.release" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "notification.preferences.get" | "notification.preferences.set" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.place" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "plugin.command.invoke" | "plugin.host.status" | "plugin.host.restart" | "plugin.dev.enter" | "plugin.dev.leave" | "plugin.generation.list" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.child.answer" | "orchestration.parent.send" | "orchestration.child.messages" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "resources.device.hold" | "resources.device.release" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "remote.host.install" | "retention.preview" | "retention.apply" | "retention.policy.get" | "retention.policy.set" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get" | "browser.partition.list" | "browser.partition.create" | "browser.import.preview" | "browser.import.run" | "browser.import.get" | "browser.context.capture" | "browser.click" | "browser.type" | "browser.evaluate" | "browser.wait" | "browser.screenshot" | "repository.coverage" | "repository.clone" | "repository.publish.preview" | "repository.publish" | "hook.subscription.list" | "hook.delivery.list" | "hook.delivery.inspect" | "hook.delivery.retry" | "hook.delivery.abandon" | "provider.capabilities" | "provider.readiness" | "provider.quota" | "provider.registrations" | "preset.list" | "preset.get" | "preset.save" | "preset.delete" | "adapter.list" | "adapter.put" | "adapter.remove" | "adapter.probe" | "device.list" | "device.screenshot" | "device.boot" | "device.app.install" | "device.app.launch" | "device.input" | "placement.hosts" | "placement.check" | "placement.record" | "placement.resolve" | "placement.list" | "placement.release" | "command.list" | "command.invoke" | "context.capture" | "context.get" | "context.plan" | "window.list" | "window.create" | "window.close" | "window.reopen" | "window.claim" | "window.set_bounds" | "window.show_workspace" | "window.set_view_state" | "layout.get" | "layout.apply" | "tab.close" | "pane.close" | "settings.appearance.observe" | "settings.palettes" | "settings.appearance.reset" | "settings.appearance" | "settings.get" | "settings.set" | "themes.ghostty.export" | "themes.ghostty.validate" | "themes.warp.validate" | "themes.file.validate" | "themes.pack.export" | "themes.validate" | "themes.list" | "themes.inspect" | "themes.install" | "themes.rename" | "themes.export" | "themes.preview" | "themes.draft.preview" | "themes.removal" | "themes.remove"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
@@ -15034,6 +16115,8 @@ export interface RequestByOperation {
   "account.switch.preview": AccountSwitchPreviewRequest
   "account.switch": AccountSwitchRequest
   "account.switch.list": AccountSwitchListRequest
+  "terminal.appearance.get": TerminalAppearanceRequest
+  "terminal.appearance.set": TerminalAppearanceSetRequest
   "terminal.create": TerminalCreateRequest
   "terminal.operation": TerminalOperationRequest
   "terminal.restart": TerminalRestartRequest
@@ -15266,8 +16349,27 @@ export interface RequestByOperation {
   "layout.apply": LayoutApplyRequest
   "tab.close": TabCloseRequest
   "pane.close": PaneCloseRequest
+  "settings.appearance.observe": SystemAppearanceObservation
+  "settings.palettes": SettingsPalettesRequest
+  "settings.appearance.reset": SettingsResetAppearanceRequest
+  "settings.appearance": SettingsAppearanceRequest
   "settings.get": SettingsGetRequest
   "settings.set": SettingsSetRequest
+  "themes.ghostty.export": GhosttyThemeExportRequest
+  "themes.ghostty.validate": GhosttyThemeValidateRequest
+  "themes.warp.validate": WarpThemeValidateRequest
+  "themes.file.validate": ThemeFileValidateRequest
+  "themes.pack.export": ThemePackExportRequest
+  "themes.validate": ThemeValidateRequest
+  "themes.list": ThemeListRequest
+  "themes.inspect": ThemeInspectRequest
+  "themes.install": ThemeInstallRequest
+  "themes.rename": ThemeRenameRequest
+  "themes.export": ThemeExportRequest
+  "themes.preview": ThemePreviewRequest
+  "themes.draft.preview": ThemeDraftPreviewRequest
+  "themes.removal": ThemeRemovalPlanRequest
+  "themes.remove": ThemeRemoveRequest
 }
 
 export interface ResponseByOperation {
@@ -15331,6 +16433,8 @@ export interface ResponseByOperation {
   "account.switch.preview": AccountSwitchPreview
   "account.switch": AccountSwitched
   "account.switch.list": AccountSwitches
+  "terminal.appearance.get": ResolvedTerminalAppearance
+  "terminal.appearance.set": ResolvedTerminalAppearance
   "terminal.create": TerminalCreated
   "terminal.operation": TerminalOperation
   "terminal.restart": Ack
@@ -15563,10 +16667,29 @@ export interface ResponseByOperation {
   "layout.apply": LayoutApplied
   "tab.close": LayoutApplied
   "pane.close": LayoutApplied
+  "settings.appearance.observe": Settings
+  "settings.palettes": PaletteCatalog
+  "settings.appearance.reset": Settings
+  "settings.appearance": ResolvedAppearance
   "settings.get": Settings
   "settings.set": Settings
+  "themes.ghostty.export": GhosttyThemeExport
+  "themes.ghostty.validate": GhosttyThemeValidation
+  "themes.warp.validate": WarpThemeValidation
+  "themes.file.validate": ThemeFileValidation
+  "themes.pack.export": ThemePackExport
+  "themes.validate": ThemeValidationResponse
+  "themes.list": ThemeLibrary
+  "themes.inspect": ThemeInspectResponse
+  "themes.install": ThemeInstallation
+  "themes.rename": ThemeInstallation
+  "themes.export": ThemeExport
+  "themes.preview": ThemePreview
+  "themes.draft.preview": ThemeDraftPreview
+  "themes.removal": ThemeRemovalPlan
+  "themes.remove": ThemeRemoval
 }
 
-export type FeedFrame = CatalogFrame | WorkspaceWorktreeOperationChanged | ConversationChanged | ConversationDeletedFrame | ConversationReloadFrame | TerminalChanged | ServiceChanged | ActivityChanged | WindowChanged | LayoutChanged | LayoutRemoved | SettingsChanged
+export type FeedFrame = CatalogFrame | WorkspaceWorktreeOperationChanged | ConversationChanged | ConversationDeletedFrame | ConversationReloadFrame | TerminalChanged | ServiceChanged | ActivityChanged | WindowChanged | LayoutChanged | LayoutRemoved | SettingsChanged | ThemeLibraryChanged
 
-export type TerminalStreamFrame = TerminalSnapshotFrame | TerminalOutputFrame | TerminalResizeFrame | TerminalViewportFrame | TerminalMetricsFrame | TerminalDetachedFrame | TerminalWarningFrame | TerminalErrorFrame | TerminalConversationFrame | Ack
+export type TerminalStreamFrame = TerminalSnapshotFrame | TerminalOutputFrame | TerminalAppearanceFrame | TerminalResizeFrame | TerminalViewportFrame | TerminalMetricsFrame | TerminalDetachedFrame | TerminalWarningFrame | TerminalErrorFrame | TerminalConversationFrame | Ack

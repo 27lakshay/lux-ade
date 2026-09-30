@@ -166,6 +166,7 @@ struct BrowserOwner {
     socket: PathBuf,
     device: u64,
     inode: u64,
+    appearance_observation: Option<(u64, ade_core::appearance::PaletteMode)>,
 }
 
 impl BrowserOwner {
@@ -965,12 +966,13 @@ impl Host {
                     );
                 }
             };
-            let candidate = BrowserOwner {
+            let mut candidate = BrowserOwner {
                 profile_id,
                 owner_id: register.owner_id,
                 socket,
                 device,
                 inode,
+                appearance_observation: None,
             };
             let mut current = self.browser_owner.lock().unwrap();
             if let Some(previous) = current.as_ref()
@@ -978,6 +980,11 @@ impl Host {
                 && browser_connect(previous).is_ok()
             {
                 return browser_error("conflict", "Another live browser owner is registered");
+            }
+            if let Some(previous) = current.as_ref()
+                && previous.same_endpoint(&candidate)
+            {
+                candidate.appearance_observation = previous.appearance_observation;
             }
             *current = Some(candidate.clone());
             return reply(&BrowserOwnerReply {
@@ -1870,6 +1877,32 @@ impl Host {
             self.workspace_create_worktree(request)
         } else if op == "workspace.delete_worktree" {
             self.workspace_delete_worktree(request)
+        } else if op == "settings.appearance.observe" {
+            let observation: ade_core::contract::settings::SystemAppearanceObservation =
+                match browser_decode(request) {
+                    Ok(value) => value,
+                    Err(error) => return Ok(error),
+                };
+            let mut current = self.browser_owner.lock().unwrap();
+            let Some(owner) = current.as_mut().filter(|owner| {
+                owner.profile_id == observation.profile_id && owner.owner_id == observation.owner_id
+            }) else {
+                return Ok(browser_error(
+                    "unavailable",
+                    "System appearance requires the current desktop owner",
+                ));
+            };
+            if let Some((sequence, mode)) = owner.appearance_observation
+                && (observation.sequence < sequence
+                    || (observation.sequence == sequence && observation.mode != mode))
+            {
+                return Ok(browser_error(
+                    "conflict",
+                    "System appearance observation is stale or conflicts with its sequence",
+                ));
+            }
+            owner.appearance_observation = Some((observation.sequence, observation.mode));
+            self.sessions.observe_system_appearance(observation.mode)
         } else if matches!(
             op,
             "browser.owner.register"
@@ -2071,13 +2104,26 @@ fn handle_connection(mut stream: UnixStream, host: Arc<Host>, lane: Lane) -> any
         if let Some(diagnostic_id) = diagnostic_id {
             tracing::info!(target: "ade", event = "rpc_started", diagnostic_id, operation_family);
         }
-        // Attachments and client-supplied context text (up to 1 MiB before
-        // JSON escaping) are the only large requests.
-        if first.len() > 128 * 1024 && !matches!(op, "attachment.put" | "context.capture") {
+        // Match the SDK's bounded allowance for 512 KiB theme sources plus JSON string escaping.
+        let theme_source = matches!(
+            op,
+            "themes.validate"
+                | "themes.file.validate"
+                | "themes.ghostty.validate"
+                | "themes.warp.validate"
+                | "themes.install"
+                | "themes.draft.preview"
+        );
+        let limit = if theme_source {
+            4 * 1024 * 1024 + 1
+        } else {
+            128 * 1024
+        };
+        if first.len() > limit && !matches!(op, "attachment.put" | "context.capture") {
             writeln!(
                 stream,
                 "{}",
-                json!({"type":"error","code":"invalid_request","message":"Request exceeds 128 KiB"})
+                json!({"type":"error","code":"invalid_request","message": if theme_source { "Theme request exceeds 4 MiB" } else { "Request exceeds 128 KiB" }})
             )?;
             if let Some(diagnostic_id) = diagnostic_id {
                 tracing::warn!(target: "ade", event = "rpc_failed", diagnostic_id, operation_family, elapsed_ms = started.elapsed().as_millis().min(u64::MAX as u128) as u64);

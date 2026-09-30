@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { TerminalFrame } from './feed'
 import { GhosttyTerminalCore } from './ghostty/core'
 import { snapshotFrame } from './ghostty/testing'
+import { GhosttyTerminalSurface } from './ghostty/surface'
 import { mountTerminal, type TerminalBridge, type TerminalChannel } from './index'
 import { terminalThemeFrom } from './theme'
 
@@ -58,7 +59,10 @@ describe('mountTerminal', () => {
     const mount = container()
     const fake = fakeBridge()
     const statuses: string[] = []
-    const view = mountTerminal(mount, fake.bridge, 'ws', 'term', { onStatus: (message) => statuses.push(message) })
+    const view = mountTerminal(mount, fake.bridge, 'ws', 'term', {
+      onStatus: (message) => statuses.push(message),
+      preferences: { size: 14 },
+    })
     cleanups.push(() => view.dispose())
     await vi.waitFor(() => expect(fake.attached()).toBe(true))
 
@@ -70,6 +74,13 @@ describe('mountTerminal', () => {
     expect([width, height]).toEqual([400, 200])
 
     const input = mount.querySelector('textarea')!
+    const resizeCount = fake.sent.resize.length
+    await view.setPreferences({ size: 18 })
+    await vi.waitFor(() => expect(fake.sent.resize.length).toBeGreaterThan(resizeCount))
+    expect(fake.sent.resize.at(-1)?.[1]).toBeLessThan(rows)
+    expect(fake.sent.disposed).toBe(0)
+    expect(mount.querySelector('textarea')).toBe(input)
+
     input.focus()
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', code: 'KeyA', bubbles: true, cancelable: true }))
     input.value = 'a'
@@ -82,6 +93,38 @@ describe('mountTerminal', () => {
     expect(mount.querySelector('canvas')).toBeNull()
   })
 
+  it('applies the latest preferences requested before surface creation finishes', async () => {
+    const source = await GhosttyTerminalCore.create(40, 5, 8, 16, theme)
+    const snapshot = await snapshotFrame(source, 5)
+    source.dispose()
+    const mount = container()
+    const fake = fakeBridge()
+    let startCreation!: () => void
+    const creationStarted = new Promise<void>((resolve) => (startCreation = resolve))
+    let releaseCreation!: () => void
+    const creationGate = new Promise<void>((resolve) => (releaseCreation = resolve))
+    const createSurface = GhosttyTerminalSurface.create.bind(GhosttyTerminalSurface)
+    const create = vi.spyOn(GhosttyTerminalSurface, 'create').mockImplementation(async (element, options) => {
+      startCreation()
+      await creationGate
+      return createSurface(element, options)
+    })
+    const view = mountTerminal(mount, fake.bridge, 'ws', 'term', { onStatus: () => {} })
+    cleanups.push(() => view.dispose())
+    try {
+      await creationStarted
+      await view.setPreferences({ size: 18 })
+      releaseCreation()
+      await vi.waitFor(() => expect(fake.attached()).toBe(true))
+      fake.send(snapshot)
+      await vi.waitFor(() => expect(fake.sent.resize.length).toBeGreaterThan(0))
+      expect(mount.querySelector('canvas')?.getContext('2d')?.font).toContain('18px')
+      expect(fake.sent.disposed).toBe(0)
+    } finally {
+      releaseCreation()
+      create.mockRestore()
+    }
+  })
   it('sends no input before the screen is restored', async () => {
     const mount = container()
     const fake = fakeBridge()

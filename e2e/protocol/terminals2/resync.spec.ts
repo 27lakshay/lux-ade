@@ -12,7 +12,7 @@ import { join } from 'node:path'
 import { expect, primaryShell, type ScratchProfile, test } from '../fixtures'
 import type { ProcessLedger } from '../fixtures/processes'
 import { attachThroughTty, clientSdk, terminalMetrics, TerminalStream, type TerminalFrame } from '../fixtures/terminals'
-import { restoredScreen, type ScreenState } from './viewer'
+import { openView, restoredScreen, type ScreenState } from './viewer'
 import { slowViewer, type ViewerReport } from './slow-viewer'
 
 async function openTerminal(profile: ScratchProfile) {
@@ -449,4 +449,71 @@ test('the SDK passes a resync snapshot on and refuses a real output gap', async 
     ['error', 'output_gap'],
   ])
   await new Promise<void>((resolveClose) => server.close(() => resolveClose()))
+})
+
+test('a slow viewer resync adopts appearance changes made while output is queued', async ({ profile }) => {
+  test.setTimeout(180_000)
+  await profile.call('settings.set', { appearance: 'dark' })
+  const { target, runId, shellPid, stream } = await openTerminal(profile)
+  const viewer = await slowViewer(profile, ...target, 200)
+  try {
+    await expect.poll(async () => (await viewer.report()).feed.ready).toBe(true)
+    startFlood(stream, runId, 'seq 1 360000; echo "flo""od-end"')
+    await expect
+      .poll(async () => (await terminalMetrics(profile, ...target))!.viewer_resyncs as number, {
+        message: 'the viewer to exceed its output queue budget',
+        timeout: 120_000,
+      })
+      .toBeGreaterThanOrEqual(1)
+    await profile.call('settings.set', { appearance: 'light' })
+    await profile.call('settings.set', { appearance: 'dark' })
+    await profile.call('settings.set', { appearance: 'light' })
+    const committed = await profile.call('settings.appearance', {})
+    viewer.release()
+    await expect
+      .poll(
+        async () => {
+          const report = await viewer.report()
+          const total = (await terminalMetrics(profile, ...target))!.terminal_bytes
+          return (
+            report.sdk.offset === total &&
+            report.screen.lines.includes('flood-end') &&
+            report.appearance.revision === committed.revision
+          )
+        },
+        { message: 'the resynchronized viewer to converge on output and appearance', timeout: 90_000 },
+      )
+      .toBe(true)
+    const report = await viewer.report()
+    expect(report.resyncs).toBeGreaterThanOrEqual(1)
+    expect(report).toMatchObject({
+      errors: [],
+      statuses: [],
+      closed: null,
+      feed: { ready: true, failed: false },
+      sdk: { incarnation: runId },
+      appearance: {
+        revision: committed.revision,
+        foreground: { r: 32, g: 36, b: 43 },
+        background: { r: 232, g: 235, b: 239 },
+      },
+    })
+    const fresh = await openView(profile, ...target)
+    try {
+      expect(fresh.screen()).toEqual(report.screen)
+      expect(fresh.viewer.screen.snapshot().background).toEqual(report.appearance.background)
+      expect(fresh.viewer.screen.snapshot().foreground).toEqual(report.appearance.foreground)
+    } finally {
+      fresh.dispose()
+    }
+    expect(await terminalMetrics(profile, ...target)).toMatchObject({
+      run_id: runId,
+      shell_pid: shellPid,
+      shell_running: true,
+    })
+  } finally {
+    viewer.release()
+    await viewer.close()
+    stream.close()
+  }
 })

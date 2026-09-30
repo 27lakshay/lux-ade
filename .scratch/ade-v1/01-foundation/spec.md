@@ -37,13 +37,13 @@ Deliver a React/Electron workbench with a framework-neutral client SDK and lazy 
 1. Electron main owns windows, native integration and fresh-renderer recovery. React owns composition and interaction state. The client SDK owns one synchronized projection and cursor; the daemon owns durable application state.
 2. Each active profile has its own daemon/runtime and SQLite state. Inactive profiles with no work do not need processes. Profile identity is not a sandbox against trusted same-user code.
 3. Host, profile, workspace, conversation and execution attempt are stable identities. A workspace is a checkout or directory on an execution host, not a conversation or a display name.
-4. React, Electron, TypeScript, pnpm/Cargo monorepo, xterm.js and Fallow are agreed. Vite/electron-vite and other shortlisted packages remain proposed defaults until their compatibility is checked.
+4. React, Electron, TypeScript, pnpm/Cargo, Ghostty WebAssembly and Fallow are agreed. D06 and D07 record the terminal and toolchain choices; use the repository’s pinned dependencies.
 5. Window layout and interaction state are separate from execution lifetime. Replacing React later preserves contracts and backend code but requires migration of React components and UI bindings.
 6. Use local desktop notifications and host capabilities without requiring future mobile, relay or simultaneous-client products.
 
 ## Testing Decisions
 
-All new tests are end-to-end. Exercise the running Electron application, CLI or public protocol with actual ADE processes, as approved by the user. Assert observable behavior, not internal classes, reducers, database layouts or implementation call counts. Use isolated host/profile/repository fixtures. External protocol fixtures are permitted; report real-provider evidence separately.
+Feature acceptance uses end-to-end tests; pure-core and renderer browser tests remain allowed under the current project test policy. Exercise the running Electron application, CLI or public protocol with actual ADE processes, as approved by the user. Assert observable behavior, not internal classes, reducers, database layouts or implementation call counts. Use isolated host/profile/repository fixtures. External protocol fixtures are permitted; report real-provider evidence separately.
 
 Modules exercised through these public interfaces: Desktop, profiles, client SDK, launcher and daemon.
 
@@ -60,8 +60,8 @@ Prior art: Prototype view cleanup, weak subscription ownership and bounded comma
 | F010 | Close all views during terminal/provider activity; reopen and recover state without replaying the command. |
 | F011 | Create and resize splits; restart the UI; restore layout and bind panes to the original resource IDs. |
 | F012 | Detach and reattach a terminal or conversation; preserve underlying execution and restore focus predictably. |
-| F013 | Import a supported theme, apply it across built-in surfaces, export it and restore equivalent tokens; reject malformed input visibly. |
-| F014 | Change font, density and reduced-motion preferences; verify persistence and readable terminal/composer layout. |
+| F013 | Import a supported theme, apply it across built-in surfaces, export it and restore equivalent tokens; reject malformed input visibly. Apply the full [theming acceptance](theming.md#acceptance-matrix). |
+| F014 | Change font, density and reduced-motion preferences; verify persistence and readable terminal/composer layout. Apply TH26 and the related [appearance criteria](theming.md#acceptance-matrix). |
 | F015 | Rebind a command, resolve a conflict, and verify focused editor/terminal shortcuts do not trigger unrelated application actions. |
 | F016 | Find a command by search; navigate to a resource; disabled actions expose why they are unavailable. |
 | F018 | Resize to narrow and wide supported desktop sizes; preserve reachable controls, pane recovery and keyboard focus. |
@@ -86,5 +86,7 @@ Browser/mobile/cross-platform clients and shipping simultaneous-client UX are de
 | F017 — Localization | Not now |
 
 ## Further Notes
+
+The [detailed theming specification](theming.md) defines shared appearance behavior and TH01–TH32 acceptance under D20. The owning feature IDs remain unchanged; appearance acceptance is unverified until the relevant detailed criteria pass.
 
 This specification records required behavior, not implemented completeness. The shared v1 register contains all 140 original catalogue dispositions, scope corrections, delivery dependencies and remaining decisions. No source file layout or package candidate overrides the agreed product behavior.

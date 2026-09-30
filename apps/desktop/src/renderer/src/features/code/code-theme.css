@@ -1,0 +1,6 @@
+/* Shiki maps token colors; the browser owns native text selection. */
+.shiki::selection,
+.shiki ::selection {
+  background-color: var(--ade-code-selection);
+  color: var(--ade-code-selection-foreground);
+}

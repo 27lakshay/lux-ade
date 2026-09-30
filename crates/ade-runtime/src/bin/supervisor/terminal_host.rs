@@ -122,6 +122,7 @@ impl ReplayEvent {
 }
 
 struct State {
+    appearance: ade_core::appearance::TerminalAppearance,
     started: Instant,
     terminal: VecDeque<u8>,
     xterm_replay: Vec<ReplayEvent>,
@@ -185,7 +186,7 @@ impl State {
         let bytes = self.screen.binary_snapshot()?;
         protocol::check_snapshot_size(bytes.len())?;
         let event = json!({"type":"snapshot", "conversation":self.conversation,
-            "streaming":self.streaming,"metrics":self.metrics(),
+            "streaming":self.streaming,"metrics":self.metrics(),"appearance":self.appearance,
             "response_owner":"daemon-v1",
             "terminal_snapshot_format":"ghostty-snapshot-v1-herdr-9c96f7d",
             "terminal_recovery":{"scope":"both-screens-history-continuation",
@@ -195,7 +196,7 @@ impl State {
     }
     fn xterm_snapshot(&self) -> Value {
         json!({"type":"snapshot","conversation":self.conversation,
-            "streaming":self.streaming,"metrics":self.metrics(),
+            "streaming":self.streaming,"metrics":self.metrics(),"appearance":self.appearance,
             "response_owner":"daemon-v1",
             "terminal_snapshot_format":"xterm-replay-v1",
             "terminal_recovery":{"complete":self.xterm_replay_complete,
@@ -224,6 +225,7 @@ impl State {
         if !terminal {
             return event;
         }
+        event["appearance"] = json!(self.appearance);
         if raw {
             let bytes: Vec<u8> = self.terminal.iter().copied().collect();
             event["terminal"] = json!(String::from_utf8_lossy(&bytes));
@@ -246,7 +248,10 @@ impl State {
         let line = event.to_string();
         // A slow client is resynchronized from a fresh snapshot; it cannot
         // stall the PTY producer. Only a client whose writer is gone is dropped.
-        let terminal = event["type"] == "terminal" || event["type"] == "terminal_resize";
+        let terminal = matches!(
+            event["type"].as_str(),
+            Some("terminal" | "terminal_resize" | "terminal_appearance")
+        );
         self.clients.retain(|_, client| {
             if terminal && !client.terminal {
                 return true;
@@ -808,7 +813,12 @@ pub fn spawn_runtime(
     workspace: &Workspace,
     launch: Option<&ade_runtime::terminal_launch::Launch>,
     data_directory: &std::path::Path,
+    appearance: &ade_core::appearance::TerminalAppearance,
 ) -> anyhow::Result<Runtime> {
+    let mut screen = TerminalState::new(100, 30).map_err(anyhow::Error::msg)?;
+    screen
+        .set_appearance(appearance)
+        .map_err(anyhow::Error::msg)?;
     let pair = native_pty_system().openpty(PtySize {
         rows: 30,
         cols: 100,
@@ -892,12 +902,13 @@ pub fn spawn_runtime(
         }
     });
     let state = Arc::new(Mutex::new(State {
+        appearance: appearance.clone(),
         started: Instant::now(),
         terminal: VecDeque::new(),
         xterm_replay: Vec::new(),
         xterm_replay_bytes: 0,
         xterm_replay_complete: true,
-        screen: TerminalState::new(100, 30).map_err(anyhow::Error::msg)?,
+        screen,
         conversation: String::new(),
         streaming: false,
         clients: HashMap::new(),
@@ -1145,6 +1156,37 @@ impl Runtime {
         }
         Ok(())
     }
+    pub fn set_appearance(
+        &self,
+        appearance: &ade_core::appearance::TerminalAppearance,
+    ) -> anyhow::Result<()> {
+        let mut state = self.state.lock().unwrap();
+        anyhow::ensure!(
+            appearance.revision >= state.appearance.revision,
+            "Stale terminal appearance"
+        );
+        if appearance == &state.appearance {
+            return Ok(());
+        }
+        state
+            .screen
+            .set_appearance(appearance)
+            .map_err(anyhow::Error::msg)?;
+        if state.appearance.dark != appearance.dark {
+            state
+                .screen
+                .notify_scheme(appearance.dark)
+                .map_err(anyhow::Error::msg)?;
+            state.flush_replies();
+        }
+        state.appearance = appearance.clone();
+        let run_id = state.run_id.clone();
+        state.broadcast(
+            json!({"type":"terminal_appearance", "run_id":run_id, "appearance":appearance}),
+        );
+        Ok(())
+    }
+
     pub fn set_session_subscribers(&self, count: usize) {
         self.state
             .lock()
@@ -1262,6 +1304,7 @@ mod tests {
         let (tx, rx) = mpsc::sync_channel(1);
         tx.send(vec![0]).unwrap();
         let mut state = State {
+            appearance: Default::default(),
             workspace_id: String::new(),
             terminal_id: String::new(),
             run_id: String::new(),
@@ -1309,6 +1352,7 @@ mod tests {
     #[test]
     fn active_screen_survives_discarded_raw_history() {
         let mut state = State {
+            appearance: Default::default(),
             workspace_id: String::new(),
             terminal_id: String::new(),
             run_id: String::new(),
@@ -1370,6 +1414,7 @@ mod tests {
     #[test]
     fn history_is_bounded_and_a_slow_subscriber_is_resynchronized_not_removed() {
         let mut state = State {
+            appearance: Default::default(),
             workspace_id: String::new(),
             terminal_id: String::new(),
             run_id: String::new(),

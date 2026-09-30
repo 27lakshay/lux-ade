@@ -160,7 +160,7 @@ export const Meta = textComponent<'span', 'p' | 'time'>('Meta', {
 })
 
 const CodeBlock = textComponent<'code', 'span' | 'kbd' | 'samp'>('Code', {
-  size: 'text-caption font-mono',
+  size: 'text-code font-mono',
   element: 'code',
   tone: 'default',
   weight: 'regular',

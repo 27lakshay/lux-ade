@@ -4,6 +4,8 @@ const APPLICATION_PROTOCOL = 'ade-application-v1'
 const SESSION_PROTOCOL = 'ade-sessions-v1'
 const MAX_RESPONSE_BYTES = 32 * 1024 * 1024
 const MAX_REQUEST_BYTES = 128 * 1024
+// Theme sources are bounded to 512 KiB by the daemon; JSON string escaping can expand them sixfold.
+const MAX_THEME_REQUEST_BYTES = 4 * 1024 * 1024
 
 /**
  * The codes the client raises itself, and the general categories the daemon
@@ -179,9 +181,22 @@ function requestOnce(
     )
   }
   const request = JSON.stringify({ ...fields, op })
-  // Attachments and client-supplied context text are the only large requests.
-  if (Buffer.byteLength(request) > MAX_REQUEST_BYTES && op !== 'attachment.put' && op !== 'context.capture') {
-    return Promise.reject(new DaemonRequestError('invalid_request', 'Request exceeds 128 KiB.'))
+  const themeSource = [
+    'themes.validate',
+    'themes.file.validate',
+    'themes.ghostty.validate',
+    'themes.warp.validate',
+    'themes.install',
+    'themes.draft.preview',
+  ].includes(op)
+  const limit = themeSource ? MAX_THEME_REQUEST_BYTES : MAX_REQUEST_BYTES
+  if (Buffer.byteLength(request) > limit && op !== 'attachment.put' && op !== 'context.capture') {
+    return Promise.reject(
+      new DaemonRequestError(
+        'invalid_request',
+        themeSource ? 'Theme request exceeds 4 MiB.' : 'Request exceeds 128 KiB.',
+      ),
+    )
   }
   const timeoutMs = options.timeoutMs ?? 30_000
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) {

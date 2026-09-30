@@ -160,6 +160,9 @@ pub struct PluginContributions {
     pub panels: Vec<PluginPanelContribution>,
     #[serde(default)]
     pub settings: Vec<PluginSettingContribution>,
+    /// Static, validated declarative theme definitions contributed by this plugin.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub themes: Vec<crate::appearance::definition::ThemeDefinition>,
     /// Lifecycle events delivered to the backend entry point after they commit (F058).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hooks: Vec<super::hooks::HookEvent>,

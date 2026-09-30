@@ -53,6 +53,7 @@ const samples: Record<string, Sample> = {
     cli: (c) => ['terminal', 'operation', c.workspace, 'e2e-missing'],
   },
   settings: { op: 'settings.get', request: () => ({}), cli: () => ['settings', 'get'] },
+  themes: { op: 'themes.list', request: () => ({}), cli: () => ['themes', 'list'] },
   services: {
     op: 'service.list',
     request: (c) => ({ workspace_id: c.workspace }),

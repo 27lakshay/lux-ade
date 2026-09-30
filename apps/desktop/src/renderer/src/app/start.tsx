@@ -19,6 +19,7 @@ import { CommandPalette, openCommandPalette } from '../provisional/CommandPalett
 import { ConfirmHost } from '../provisional/ConfirmDialog'
 import { NameHost } from '../provisional/NameDialog'
 import { ErrorReport } from '../provisional/ErrorReport'
+import { SafeModeRecovery } from '../provisional/SafeModeRecovery'
 import './app.css'
 import { commandService, registerAppCommands } from './commands'
 import { clearOnProfileSwitch, queryClient } from './query-client'
@@ -52,12 +53,14 @@ export async function start(): Promise<void> {
     new URLSearchParams(window.location.search).has('bench')
       ? await loadBench()
       : undefined
+  const safeMode = new URLSearchParams(window.location.search).get('safeMode') === '1'
   const daemon = window.adeHost ? createDaemonStore(window.adeHost) : null
   const profile = window.adeHost ? createProfileStore(window.adeHost.profiles) : null
   if (profile) window.addEventListener('pagehide', profile.stop, { once: true })
   const router = createAppRouter({
     Workspace: bench ? () => <Workspace renderContent={bench} /> : Workspace,
     profile: profile?.store,
+    Recovery: safeMode ? SafeModeRecovery : undefined,
   })
   if (daemon && window.adeHost) startProfileSettings(window.adeHost, daemon.store)
   // This window's layouts come from the daemon; the bench serves its own (dev/bench.tsx).

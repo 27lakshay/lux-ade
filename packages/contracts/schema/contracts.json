@@ -1,5 +1,14 @@
 {
   "$defs": {
+    "AccessibilityPreference": {
+      "description": "Accessibility preferences: follow the system, enable, or disable.",
+      "enum": [
+        "system",
+        "on",
+        "off"
+      ],
+      "type": "string"
+    },
     "Account": {
       "description": "Profile-owned account metadata. Credentials remain with the native provider.",
       "properties": {
@@ -1768,6 +1777,114 @@
       ],
       "type": "string"
     },
+    "AppearanceDiagnostic": {
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/AppearanceDiagnosticCode"
+        },
+        "fallback_id": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "selected_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "slot": {
+          "$ref": "#/$defs/PaletteMode"
+        }
+      },
+      "required": [
+        "code",
+        "slot",
+        "selected_id",
+        "fallback_id",
+        "message"
+      ],
+      "type": "object"
+    },
+    "AppearanceDiagnosticCode": {
+      "enum": [
+        "missing_theme",
+        "missing_section",
+        "invalid_definition",
+        "wrong_mode",
+        "invalid_selection"
+      ],
+      "type": "string"
+    },
+    "AppearancePropagation": {
+      "oneOf": [
+        {
+          "properties": {
+            "revision": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "state": {
+              "const": "applied",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "revision"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "applied_revision": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "desired_revision": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "state": {
+              "const": "pending",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "desired_revision",
+            "applied_revision"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "desired_revision": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "message": {
+              "type": "string"
+            },
+            "state": {
+              "const": "unavailable",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "desired_revision",
+            "message"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "Attachment": {
       "properties": {
         "id": {
@@ -2178,6 +2295,24 @@
         "incompatible"
       ],
       "type": "object"
+    },
+    "BoldColor": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Rgb"
+        },
+        {
+          "$ref": "#/$defs/BoldColorMode"
+        }
+      ],
+      "description": "Bold color is a rendering policy; it never changes native palette/query values."
+    },
+    "BoldColorMode": {
+      "enum": [
+        "inherit",
+        "bright"
+      ],
+      "type": "string"
     },
     "BranchPolicy": {
       "description": "What `worktree.remove` does with the removed tree's branch.",
@@ -4446,6 +4581,32 @@
         }
       ]
     },
+    "BuiltinPalette": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "mode": {
+          "$ref": "#/$defs/PaletteMode"
+        },
+        "name": {
+          "type": "string"
+        },
+        "tokens": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "mode",
+        "tokens"
+      ],
+      "type": "object"
+    },
     "Caller": {
       "description": "Who asks. An Agent caller names its own Conversation; the daemon records\nthe attribution and refuses an Agent that acts as another Conversation.",
       "oneOf": [
@@ -4773,6 +4934,13 @@
         "terminals"
       ],
       "type": "object"
+    },
+    "CellColor": {
+      "enum": [
+        "cell-foreground",
+        "cell-background"
+      ],
+      "type": "string"
     },
     "CheckState": {
       "enum": [
@@ -8525,6 +8693,17 @@
         }
       ]
     },
+    "CursorColor": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Rgb"
+        },
+        {
+          "$ref": "#/$defs/CellColor"
+        }
+      ],
+      "description": "Cursor fill is literal RGB or the resolved cursor cell color."
+    },
     "DaemonHello": {
       "description": "The `hello` reply: build identity and every protocol version.",
       "properties": {
@@ -8706,6 +8885,14 @@
           "type": "string"
         }
       ]
+    },
+    "Density": {
+      "description": "Every profile setting, each at its default until set.",
+      "enum": [
+        "default",
+        "compact"
+      ],
+      "type": "string"
     },
     "Descriptor": {
       "description": "The daemon advertises the same contract it uses to validate configuration.\nClients consume descriptors; they do not infer support from a provider name.",
@@ -10379,6 +10566,14 @@
         "running"
       ],
       "type": "object"
+    },
+    "DiagnosticSeverity": {
+      "enum": [
+        "error",
+        "warning",
+        "info"
+      ],
+      "type": "string"
     },
     "DiagnosticTerminal": {
       "description": "One runtime terminal.",
@@ -12104,6 +12299,49 @@
       ],
       "type": "object"
     },
+    "GhosttyAppearancePolicies": {
+      "description": "Independently accepted profile settings, never part of an installed color definition.",
+      "properties": {
+        "bold_color": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BoldColor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "minimum_contrast": {
+          "maximum": 21,
+          "minimum": 1,
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "minimum_contrast",
+        "bold_color"
+      ],
+      "type": "object"
+    },
+    "GhosttyExportOmission": {
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "reason"
+      ],
+      "type": "object"
+    },
     "GhosttyRecovery": {
       "description": "A Ghostty snapshot: both screens, history up to the limit, and any\nunfinished escape sequence.",
       "properties": {
@@ -12125,6 +12363,136 @@
         "scope",
         "history_limit_bytes",
         "continuation_limit_bytes"
+      ],
+      "type": "object"
+    },
+    "GhosttyThemeExport": {
+      "properties": {
+        "omissions": {
+          "items": {
+            "$ref": "#/$defs/GhosttyExportOmission"
+          },
+          "type": "array"
+        },
+        "source": {
+          "type": "string"
+        },
+        "theme": {
+          "$ref": "#/$defs/ThemeSummary"
+        },
+        "type": {
+          "description": "The `ghostty_theme_export` type tag.",
+          "enum": [
+            "ghostty_theme_export"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "theme",
+        "source",
+        "omissions"
+      ],
+      "type": "object"
+    },
+    "GhosttyThemeExportRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "expected_revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "themes.ghostty.export"
+        }
+      },
+      "required": [
+        "op",
+        "id",
+        "expected_revision"
+      ],
+      "type": "object"
+    },
+    "GhosttyThemeValidateRequest": {
+      "additionalProperties": false,
+      "description": "Theme text with inert optional setting proposals. Source names never cause filesystem access.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "mode": {
+          "$ref": "#/$defs/PaletteMode"
+        },
+        "name": {
+          "type": "string"
+        },
+        "op": {
+          "const": "themes.ghostty.validate"
+        },
+        "source": {
+          "type": "string"
+        },
+        "source_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "source",
+        "id",
+        "name",
+        "mode"
+      ],
+      "type": "object"
+    },
+    "GhosttyThemeValidation": {
+      "properties": {
+        "policies": {
+          "$ref": "#/$defs/GhosttyAppearancePolicies"
+        },
+        "preview": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TerminalAppearance"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Resolved candidate colors for an isolated local renderer; never applied to real terminals."
+        },
+        "source": {
+          "description": "Canonical ADE source for explicit review and the ordinary revision-checked installation.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "description": "The `ghostty_theme_validation` type tag.",
+          "enum": [
+            "ghostty_theme_validation"
+          ],
+          "type": "string"
+        },
+        "validation": {
+          "$ref": "#/$defs/ThemeValidationResponse"
+        }
+      },
+      "required": [
+        "type",
+        "source",
+        "preview",
+        "policies",
+        "validation"
       ],
       "type": "object"
     },
@@ -16032,6 +16400,36 @@
       ],
       "type": "string"
     },
+    "PaletteCatalog": {
+      "properties": {
+        "palettes": {
+          "items": {
+            "$ref": "#/$defs/BuiltinPalette"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `palettes` type tag.",
+          "enum": [
+            "palettes"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "palettes"
+      ],
+      "type": "object"
+    },
+    "PaletteMode": {
+      "description": "A palette variant has a fixed mode; system following belongs to the selection.",
+      "enum": [
+        "light",
+        "dark"
+      ],
+      "type": "string"
+    },
     "PaneCloseRequest": {
       "additionalProperties": false,
       "description": "`pane.close`: close a pane and its tabs, closing each shell terminal whose\nlast tab it holds, as `tab.close` does.",
@@ -17010,6 +17408,13 @@
           "default": [],
           "items": {
             "$ref": "#/$defs/PluginSettingContribution"
+          },
+          "type": "array"
+        },
+        "themes": {
+          "description": "Static, validated declarative theme definitions contributed by this plugin.",
+          "items": {
+            "$ref": "#/$defs/ThemeDefinition"
           },
           "type": "array"
         }
@@ -18971,21 +19376,123 @@
       ]
     },
     "ProfileSettings": {
-      "description": "Every profile setting, each at its default until set. Typography (F014)\njoins as a key here.",
       "properties": {
+        "app_dark_theme": {
+          "type": "string"
+        },
+        "app_light_theme": {
+          "type": "string"
+        },
         "appearance": {
           "$ref": "#/$defs/Appearance"
+        },
+        "appearance_revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "code_font_family": {
+          "pattern": "^[\\s\\S]{1,128}$",
+          "type": "string"
+        },
+        "code_font_size": {
+          "maximum": 32,
+          "minimum": 10,
+          "type": "integer"
+        },
+        "density": {
+          "$ref": "#/$defs/Density"
+        },
+        "differentiate_without_color": {
+          "$ref": "#/$defs/AccessibilityPreference"
+        },
+        "high_contrast": {
+          "$ref": "#/$defs/AccessibilityPreference"
         },
         "keybindings": {
           "$ref": "#/$defs/Keybindings"
         },
         "reduced_motion": {
           "$ref": "#/$defs/ReducedMotion"
+        },
+        "reduced_transparency": {
+          "$ref": "#/$defs/AccessibilityPreference"
+        },
+        "syntax_binding": {
+          "$ref": "#/$defs/ThemeBinding"
+        },
+        "terminal_binding": {
+          "$ref": "#/$defs/ThemeBinding"
+        },
+        "terminal_bold_color": {
+          "$ref": "#/$defs/BoldColor"
+        },
+        "terminal_color_overrides": {
+          "$ref": "#/$defs/TerminalColorOverrides"
+        },
+        "terminal_cursor_blink": {
+          "type": "boolean"
+        },
+        "terminal_cursor_shape": {
+          "$ref": "#/$defs/TerminalCursorShape"
+        },
+        "terminal_font_family": {
+          "pattern": "^[\\s\\S]{1,128}$",
+          "type": "string"
+        },
+        "terminal_font_kerning": {
+          "$ref": "#/$defs/TerminalFontKerning"
+        },
+        "terminal_font_size": {
+          "maximum": 32,
+          "minimum": 6,
+          "type": "integer"
+        },
+        "terminal_line_height": {
+          "maximum": 2,
+          "minimum": 1,
+          "type": "number"
+        },
+        "terminal_minimum_contrast": {
+          "maximum": 21,
+          "minimum": 1,
+          "type": "number"
+        },
+        "ui_font_family": {
+          "pattern": "^[\\s\\S]{1,128}$",
+          "type": "string"
+        },
+        "ui_font_size": {
+          "maximum": 24,
+          "minimum": 12,
+          "type": "integer"
         }
       },
       "required": [
+        "appearance_revision",
         "appearance",
+        "app_light_theme",
+        "app_dark_theme",
+        "terminal_binding",
+        "syntax_binding",
+        "terminal_color_overrides",
+        "terminal_minimum_contrast",
+        "terminal_bold_color",
         "reduced_motion",
+        "high_contrast",
+        "reduced_transparency",
+        "differentiate_without_color",
+        "ui_font_family",
+        "ui_font_size",
+        "code_font_family",
+        "code_font_size",
+        "terminal_font_family",
+        "terminal_font_size",
+        "density",
+        "terminal_line_height",
+        "terminal_font_kerning",
+        "terminal_cursor_shape",
+        "terminal_cursor_blink",
         "keybindings"
       ],
       "type": "object"
@@ -21462,6 +21969,180 @@
       ],
       "type": "string"
     },
+    "ResolvedAppearance": {
+      "properties": {
+        "dark_palette": {
+          "$ref": "#/$defs/BuiltinPalette"
+        },
+        "diagnostics": {
+          "items": {
+            "$ref": "#/$defs/AppearanceDiagnostic"
+          },
+          "type": "array"
+        },
+        "light_palette": {
+          "$ref": "#/$defs/BuiltinPalette"
+        },
+        "mode": {
+          "$ref": "#/$defs/PaletteMode"
+        },
+        "preference": {
+          "$ref": "#/$defs/Appearance"
+        },
+        "propagation": {
+          "$ref": "#/$defs/AppearancePropagation"
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "syntax": {
+          "$ref": "#/$defs/ResolvedSyntaxAppearance"
+        },
+        "terminal": {
+          "$ref": "#/$defs/TerminalAppearance"
+        },
+        "terminal_diagnostics": {
+          "items": {
+            "$ref": "#/$defs/AppearanceDiagnostic"
+          },
+          "type": "array"
+        },
+        "theme_id": {
+          "type": "string"
+        },
+        "tokens": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "type": {
+          "description": "The `appearance` type tag.",
+          "enum": [
+            "appearance"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "revision",
+        "theme_id",
+        "preference",
+        "diagnostics",
+        "light_palette",
+        "dark_palette",
+        "mode",
+        "tokens",
+        "syntax",
+        "terminal",
+        "terminal_diagnostics",
+        "propagation"
+      ],
+      "type": "object"
+    },
+    "ResolvedSyntaxAppearance": {
+      "description": "Independently selected code colors and surface tokens. App chrome is separate.",
+      "properties": {
+        "binding": {
+          "$ref": "#/$defs/ThemeBinding"
+        },
+        "dark_palette": {
+          "$ref": "#/$defs/BuiltinPalette"
+        },
+        "diagnostics": {
+          "items": {
+            "$ref": "#/$defs/AppearanceDiagnostic"
+          },
+          "type": "array"
+        },
+        "light_palette": {
+          "$ref": "#/$defs/BuiltinPalette",
+          "description": "Both startup variants; a valid fixed binding repeats its palette in both slots."
+        },
+        "palette": {
+          "$ref": "#/$defs/BuiltinPalette"
+        },
+        "selected_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "light_palette",
+        "dark_palette",
+        "binding",
+        "selected_id",
+        "palette",
+        "diagnostics"
+      ],
+      "type": "object"
+    },
+    "ResolvedTerminalAppearance": {
+      "properties": {
+        "appearance": {
+          "$ref": "#/$defs/TerminalAppearance"
+        },
+        "binding": {
+          "$ref": "#/$defs/ThemeBinding"
+        },
+        "diagnostics": {
+          "items": {
+            "$ref": "#/$defs/AppearanceDiagnostic"
+          },
+          "type": "array"
+        },
+        "fallback": {
+          "type": "boolean"
+        },
+        "mode": {
+          "$ref": "#/$defs/PaletteMode"
+        },
+        "propagation": {
+          "$ref": "#/$defs/AppearancePropagation"
+        },
+        "provenance": {
+          "$ref": "#/$defs/TerminalAppearanceProvenance"
+        },
+        "resolved_id": {
+          "type": "string"
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "selected_id": {
+          "type": "string"
+        },
+        "terminal_id": {
+          "type": "string"
+        },
+        "type": {
+          "description": "The `terminal_appearance` type tag.",
+          "enum": [
+            "terminal_appearance"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "terminal_id",
+        "revision",
+        "binding",
+        "provenance",
+        "selected_id",
+        "resolved_id",
+        "mode",
+        "fallback",
+        "diagnostics",
+        "appearance",
+        "propagation"
+      ],
+      "type": "object"
+    },
     "ResourceClaim": {
       "description": "One physical resource claim.",
       "properties": {
@@ -23546,6 +24227,65 @@
           "type": "string"
         }
       ]
+    },
+    "Rgb": {
+      "additionalProperties": false,
+      "properties": {
+        "b": {
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "g": {
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "r": {
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "r",
+        "g",
+        "b"
+      ],
+      "type": "object"
+    },
+    "Rgba": {
+      "additionalProperties": false,
+      "description": "Eight-bit alpha is retained exactly; only view rendering composites it.",
+      "properties": {
+        "a": {
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "b": {
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "g": {
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "r": {
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "r",
+        "g",
+        "b",
+        "a"
+      ],
+      "type": "object"
     },
     "RunChanges": {
       "description": "A run's Git changes, or why they could not be read.",
@@ -26000,6 +26740,19 @@
       ],
       "type": "object"
     },
+    "SettingsAppearanceRequest": {
+      "additionalProperties": false,
+      "description": "Inspect the saved projection and independently acknowledged runtime state.",
+      "properties": {
+        "op": {
+          "const": "settings.appearance"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
     "SettingsChanged": {
       "description": "The `settings_changed` feed frame: every setting after a change.",
       "properties": {
@@ -26043,14 +26796,124 @@
       ],
       "type": "object"
     },
+    "SettingsPalettesRequest": {
+      "additionalProperties": false,
+      "description": "Built-in app palette variants, including their explicit mode and complete semantic tokens.",
+      "properties": {
+        "op": {
+          "const": "settings.palettes"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    "SettingsResetAppearanceRequest": {
+      "additionalProperties": false,
+      "description": "Restore the core appearance defaults without changing other preferences.",
+      "properties": {
+        "expected_appearance_revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "op": {
+          "const": "settings.appearance.reset"
+        }
+      },
+      "required": [
+        "op",
+        "expected_appearance_revision"
+      ],
+      "type": "object"
+    },
     "SettingsSetRequest": {
       "additionalProperties": false,
       "description": "`settings.set`: change the named settings and leave the others. A key the\nprofile does not keep, or a command in `keybindings` or\n`reset_keybindings` that does not exist, is refused with\n`unknown_setting`, before anything changes.\n\n`keybindings` binds each named command to an Electron accelerator, or\nunbinds it with null; the other commands keep their keys.\n`reset_keybindings` first returns the named commands, or `\"all\"`, to their\ndefault keys; a command may not appear in both. A key that is not an\naccelerator is `invalid_keybinding`; two commands left on the same key is\n`keybinding_conflict`. Either refusal changes nothing.",
       "properties": {
+        "app_dark_theme": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "app_light_theme": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "appearance": {
           "anyOf": [
             {
               "$ref": "#/$defs/Appearance"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "code_font_family": {
+          "pattern": "^[\\s\\S]{1,128}$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "code_font_size": {
+          "maximum": 32,
+          "minimum": 10,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "density": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Density"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "differentiate_without_color": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AccessibilityPreference"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "expected_appearance_revision": {
+          "description": "Reject the entire change if another appearance edit has committed since this revision.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "expected_theme_revisions": {
+          "additionalProperties": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "description": "Fence custom definitions captured by a selection or preview, including inactive variants.",
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "high_contrast": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AccessibilityPreference"
             },
             {
               "type": "null"
@@ -26139,6 +27002,16 @@
             }
           ]
         },
+        "reduced_transparency": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AccessibilityPreference"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "reset_keybindings": {
           "anyOf": [
             {
@@ -26147,6 +27020,112 @@
             {
               "type": "null"
             }
+          ]
+        },
+        "syntax_binding": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ThemeBinding"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "terminal_binding": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ThemeBinding"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "terminal_bold_color": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BoldColor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "terminal_color_overrides": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TerminalColorOverrides"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "terminal_cursor_blink": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "terminal_cursor_shape": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TerminalCursorShape"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "terminal_font_family": {
+          "pattern": "^[\\s\\S]{1,128}$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "terminal_font_kerning": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TerminalFontKerning"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "terminal_font_size": {
+          "maximum": 32,
+          "minimum": 6,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "terminal_line_height": {
+          "maximum": 2,
+          "minimum": 1,
+          "type": "number"
+        },
+        "terminal_minimum_contrast": {
+          "maximum": 21,
+          "minimum": 1,
+          "type": "number"
+        },
+        "ui_font_family": {
+          "pattern": "^[\\s\\S]{1,128}$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ui_font_size": {
+          "maximum": 24,
+          "minimum": 12,
+          "type": [
+            "integer",
+            "null"
           ]
         }
       },
@@ -27166,6 +28145,37 @@
         }
       ]
     },
+    "SystemAppearanceObservation": {
+      "additionalProperties": false,
+      "description": "A sequenced OS observation from the registered local desktop owner.",
+      "properties": {
+        "mode": {
+          "$ref": "#/$defs/PaletteMode"
+        },
+        "op": {
+          "const": "settings.appearance.observe"
+        },
+        "owner_id": {
+          "type": "string"
+        },
+        "profile_id": {
+          "type": "string"
+        },
+        "sequence": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "op",
+        "profile_id",
+        "owner_id",
+        "sequence",
+        "mode"
+      ],
+      "type": "object"
+    },
     "Tab": {
       "description": "One tab: a stable ID in its layout and what it shows.",
       "properties": {
@@ -27324,6 +28334,155 @@
         }
       ]
     },
+    "TerminalAppearance": {
+      "properties": {
+        "background": {
+          "$ref": "#/$defs/Rgb"
+        },
+        "bold_color": {
+          "$ref": "#/$defs/BoldColor"
+        },
+        "cursor": {
+          "$ref": "#/$defs/CursorColor"
+        },
+        "cursor_text": {
+          "$ref": "#/$defs/TerminalColor"
+        },
+        "dark": {
+          "type": "boolean"
+        },
+        "foreground": {
+          "$ref": "#/$defs/Rgb"
+        },
+        "minimum_contrast": {
+          "maximum": 21,
+          "minimum": 1,
+          "type": "number"
+        },
+        "palette": {
+          "items": {
+            "$ref": "#/$defs/Rgb"
+          },
+          "maxItems": 256,
+          "minItems": 256,
+          "type": "array"
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "selection_background": {
+          "$ref": "#/$defs/TerminalColor"
+        },
+        "selection_foreground": {
+          "$ref": "#/$defs/TerminalColor"
+        }
+      },
+      "required": [
+        "revision",
+        "minimum_contrast",
+        "bold_color",
+        "foreground",
+        "background",
+        "cursor",
+        "cursor_text",
+        "selection_foreground",
+        "selection_background",
+        "palette",
+        "dark"
+      ],
+      "type": "object"
+    },
+    "TerminalAppearanceFrame": {
+      "description": "A default appearance update, ordered with PTY output under the terminal lock.",
+      "properties": {
+        "appearance": {
+          "$ref": "#/$defs/TerminalAppearance"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "type": {
+          "description": "The `terminal_appearance` type tag.",
+          "enum": [
+            "terminal_appearance"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "run_id",
+        "appearance"
+      ],
+      "type": "object"
+    },
+    "TerminalAppearanceProvenance": {
+      "enum": [
+        "profile",
+        "terminal"
+      ],
+      "type": "string"
+    },
+    "TerminalAppearanceRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "op": {
+          "const": "terminal.appearance.get"
+        },
+        "terminal_id": {
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id",
+        "terminal_id"
+      ],
+      "type": "object"
+    },
+    "TerminalAppearanceSetRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "binding": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ThemeBinding"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Null removes this terminal's override and follows the profile binding."
+        },
+        "expected_appearance_revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "op": {
+          "const": "terminal.appearance.set"
+        },
+        "terminal_id": {
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id",
+        "terminal_id",
+        "binding",
+        "expected_appearance_revision"
+      ],
+      "type": "object"
+    },
     "TerminalChanged": {
       "description": "The `terminal_changed` feed frame: a terminal's status, busy state or\ntitle changed. At most four per second per terminal. A terminal added or\nremoved arrives as a `catalog` frame instead.",
       "properties": {
@@ -27381,6 +28540,57 @@
         "operation_id",
         "terminal_id"
       ],
+      "type": "object"
+    },
+    "TerminalColor": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Rgb"
+        },
+        {
+          "$ref": "#/$defs/Rgba"
+        },
+        {
+          "$ref": "#/$defs/CellColor"
+        }
+      ],
+      "description": "Literal sRGB or the underlying cell color after reverse-video resolution."
+    },
+    "TerminalColorOverrides": {
+      "additionalProperties": false,
+      "description": "Explicit profile overrides; omitted roles retain the selected theme's colors.",
+      "properties": {
+        "cursor_text": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TerminalColor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "selection_background": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TerminalColor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "selection_foreground": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TerminalColor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
       "type": "object"
     },
     "TerminalConversationFrame": {
@@ -27466,6 +28676,14 @@
       ],
       "type": "object"
     },
+    "TerminalCursorShape": {
+      "enum": [
+        "block",
+        "bar",
+        "underline"
+      ],
+      "type": "string"
+    },
     "TerminalDescendant": {
       "properties": {
         "pid": {
@@ -27548,6 +28766,14 @@
         "message"
       ],
       "type": "object"
+    },
+    "TerminalFontKerning": {
+      "enum": [
+        "auto",
+        "normal",
+        "none"
+      ],
+      "type": "string"
     },
     "TerminalMetrics": {
       "properties": {
@@ -27841,6 +29067,17 @@
     "TerminalRecord": {
       "description": "A terminal as the catalog lists it. It is owned by its workspace and\nstored by the daemon; `status`, `busy`, `foreground` and a title the\nprogram set follow the runtime and reach the feed as `terminal_changed`.",
       "properties": {
+        "appearance_binding": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ThemeBinding"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "busy": {
           "default": false,
           "description": "A process other than the terminal's own program holds its foreground,\nsuch as a command started from the shell. Closing asks first.",
@@ -27903,6 +29140,7 @@
         }
       },
       "required": [
+        "appearance_binding",
         "id",
         "workspace_id",
         "kind",
@@ -28028,6 +29266,17 @@
     "TerminalSnapshotFrame": {
       "description": "The first frame of an attachment, and a later one marked `resync` when the\nruntime skipped output this viewer could not keep up with. Which recovery\nfields it carries depends on the `snapshot_format` the attachment asked for.",
       "properties": {
+        "appearance": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TerminalAppearance"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Present for terminal snapshots; absent for conversation-only streams."
+        },
         "attachment": {
           "maximum": 9007199254740991,
           "minimum": 0,
@@ -28193,6 +29442,1275 @@
       "required": [
         "type",
         "message"
+      ],
+      "type": "object"
+    },
+    "ThemeBinding": {
+      "description": "How a color consumer selects a variant independently of app chrome.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "follow_app",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "dark": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "paired",
+              "type": "string"
+            },
+            "light": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "light",
+            "dark"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "fixed",
+              "type": "string"
+            },
+            "theme_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "theme_id"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ThemeConsumer": {
+      "enum": [
+        "app",
+        "terminal",
+        "syntax"
+      ],
+      "type": "string"
+    },
+    "ThemeDefinition": {
+      "additionalProperties": true,
+      "properties": {
+        "app": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ThemeSection"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "format": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "mode": {
+          "$ref": "#/$defs/PaletteMode"
+        },
+        "name": {
+          "type": "string"
+        },
+        "pack": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ThemePackIdentity"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "provenance": {
+          "$ref": "#/$defs/ThemeProvenance"
+        },
+        "syntax": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ThemeSection"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "terminal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ThemeSection"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "version": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "format",
+        "version",
+        "id",
+        "name",
+        "mode",
+        "provenance",
+        "app",
+        "terminal",
+        "syntax"
+      ],
+      "type": "object"
+    },
+    "ThemeDiagnostic": {
+      "description": "Offsets and lengths count UTF-8 bytes; line and column are one-based (column counts characters).",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "column": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "length": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "line": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "message": {
+          "type": "string"
+        },
+        "offset": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "path": {
+          "type": "string"
+        },
+        "severity": {
+          "$ref": "#/$defs/DiagnosticSeverity"
+        }
+      },
+      "required": [
+        "severity",
+        "code",
+        "message",
+        "path",
+        "offset",
+        "length",
+        "line",
+        "column"
+      ],
+      "type": "object"
+    },
+    "ThemeDraftPreview": {
+      "properties": {
+        "app": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BuiltinPalette"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Declared app projection for role inspection, absent for terminal-only themes."
+        },
+        "dark": {
+          "$ref": "#/$defs/ThemePreviewSample"
+        },
+        "definition": {
+          "$ref": "#/$defs/ThemeDefinition"
+        },
+        "diagnostics": {
+          "items": {
+            "$ref": "#/$defs/ThemeDiagnostic"
+          },
+          "type": "array"
+        },
+        "light": {
+          "$ref": "#/$defs/ThemePreviewSample"
+        },
+        "syntax": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BuiltinPalette"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Declared syntax projection for role inspection, absent for other themes."
+        },
+        "terminal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TerminalAppearance"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Declared terminal projection for role inspection, absent for other themes."
+        },
+        "type": {
+          "description": "The `theme_draft_preview` type tag.",
+          "enum": [
+            "theme_draft_preview"
+          ],
+          "type": "string"
+        },
+        "valid": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type",
+        "definition",
+        "app",
+        "terminal",
+        "syntax",
+        "light",
+        "dark",
+        "valid",
+        "diagnostics"
+      ],
+      "type": "object"
+    },
+    "ThemeDraftPreviewRequest": {
+      "additionalProperties": false,
+      "description": "Resolves an unsaved definition for editor rendering without installing or applying it.",
+      "properties": {
+        "op": {
+          "const": "themes.draft.preview"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "source"
+      ],
+      "type": "object"
+    },
+    "ThemeExport": {
+      "properties": {
+        "source": {
+          "type": "string"
+        },
+        "theme": {
+          "$ref": "#/$defs/ThemeSummary"
+        },
+        "type": {
+          "description": "The `theme_export` type tag.",
+          "enum": [
+            "theme_export"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "theme",
+        "source"
+      ],
+      "type": "object"
+    },
+    "ThemeExportRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "expected_revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "themes.export"
+        }
+      },
+      "required": [
+        "op",
+        "id"
+      ],
+      "type": "object"
+    },
+    "ThemeFileCandidate": {
+      "properties": {
+        "source": {
+          "description": "Accepted definition data; pack identity is materialized without selecting the member.",
+          "type": "string"
+        },
+        "validation": {
+          "$ref": "#/$defs/ThemeValidationResponse"
+        }
+      },
+      "required": [
+        "source",
+        "validation"
+      ],
+      "type": "object"
+    },
+    "ThemeFileValidateRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "op": {
+          "const": "themes.file.validate"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "source"
+      ],
+      "type": "object"
+    },
+    "ThemeFileValidation": {
+      "properties": {
+        "candidates": {
+          "description": "Valid members may be explicitly accepted even when another member has a required color error.",
+          "items": {
+            "$ref": "#/$defs/ThemeFileCandidate"
+          },
+          "type": "array"
+        },
+        "container_valid": {
+          "description": "False for invalid/unsupported pack headers, ambiguous structure or bounded-source failures.",
+          "type": "boolean"
+        },
+        "diagnostics": {
+          "items": {
+            "$ref": "#/$defs/ThemeDiagnostic"
+          },
+          "type": "array"
+        },
+        "pack": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ThemePackIdentity"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "type": {
+          "description": "The `theme_file_validation` type tag.",
+          "enum": [
+            "theme_file_validation"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "pack",
+        "container_valid",
+        "diagnostics",
+        "candidates"
+      ],
+      "type": "object"
+    },
+    "ThemeInspectRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "themes.inspect"
+        }
+      },
+      "required": [
+        "op",
+        "id"
+      ],
+      "type": "object"
+    },
+    "ThemeInspectResponse": {
+      "properties": {
+        "theme": {
+          "$ref": "#/$defs/ThemeRecord"
+        },
+        "type": {
+          "description": "The `theme_record` type tag.",
+          "enum": [
+            "theme_record"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "theme"
+      ],
+      "type": "object"
+    },
+    "ThemeInstallItem": {
+      "properties": {
+        "expected_revision": {
+          "description": "Zero creates an absent ID. A replacement names the currently inspected revision.\nRepeating already-committed identical normalized content returns its current record unchanged.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "expected_revision"
+      ],
+      "type": "object"
+    },
+    "ThemeInstallReport": {
+      "properties": {
+        "diagnostics": {
+          "items": {
+            "$ref": "#/$defs/ThemeDiagnostic"
+          },
+          "type": "array"
+        },
+        "index": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "theme": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ThemeSummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "valid": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "index",
+        "valid",
+        "diagnostics",
+        "theme"
+      ],
+      "type": "object"
+    },
+    "ThemeInstallRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "description": "Only the explicitly accepted definitions belong here. The entire set validates before mutation.",
+          "items": {
+            "$ref": "#/$defs/ThemeInstallItem"
+          },
+          "type": "array"
+        },
+        "op": {
+          "const": "themes.install"
+        }
+      },
+      "required": [
+        "op",
+        "items"
+      ],
+      "type": "object"
+    },
+    "ThemeInstallation": {
+      "properties": {
+        "changed": {
+          "type": "boolean"
+        },
+        "committed": {
+          "type": "boolean"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/ThemeInstallReport"
+          },
+          "type": "array"
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "type": {
+          "description": "The `theme_installation` type tag.",
+          "enum": [
+            "theme_installation"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "committed",
+        "changed",
+        "revision",
+        "items"
+      ],
+      "type": "object"
+    },
+    "ThemeLibrary": {
+      "properties": {
+        "next_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "themes": {
+          "items": {
+            "$ref": "#/$defs/ThemeSummary"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `theme_library` type tag.",
+          "enum": [
+            "theme_library"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "revision",
+        "themes",
+        "next_id"
+      ],
+      "type": "object"
+    },
+    "ThemeLibraryChanged": {
+      "properties": {
+        "boot_id": {
+          "type": "string"
+        },
+        "changed_ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "library_revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "revision": {
+          "description": "Feed ordering is independent of durable theme library revisions.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "type": {
+          "description": "The `theme_library_changed` type tag.",
+          "enum": [
+            "theme_library_changed"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "revision",
+        "boot_id",
+        "library_revision",
+        "changed_ids"
+      ],
+      "type": "object"
+    },
+    "ThemeListRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "after_id": {
+          "description": "Exclusive stable ID cursor. Pages contain at most 16 summaries.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "op": {
+          "const": "themes.list"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    "ThemeOrigin": {
+      "enum": [
+        "bundled",
+        "imported",
+        "user",
+        "plugin"
+      ],
+      "type": "string"
+    },
+    "ThemePackExport": {
+      "properties": {
+        "pack": {
+          "$ref": "#/$defs/ThemePackIdentity"
+        },
+        "source": {
+          "type": "string"
+        },
+        "themes": {
+          "items": {
+            "$ref": "#/$defs/ThemeSummary"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `theme_pack_export` type tag.",
+          "enum": [
+            "theme_pack_export"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "pack",
+        "themes",
+        "source"
+      ],
+      "type": "object"
+    },
+    "ThemePackExportItem": {
+      "properties": {
+        "expected_revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "expected_revision"
+      ],
+      "type": "object"
+    },
+    "ThemePackExportRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/ThemePackExportItem"
+          },
+          "type": "array"
+        },
+        "name": {
+          "type": "string"
+        },
+        "op": {
+          "const": "themes.pack.export"
+        }
+      },
+      "required": [
+        "op",
+        "id",
+        "name",
+        "items"
+      ],
+      "type": "object"
+    },
+    "ThemePackIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ],
+      "type": "object"
+    },
+    "ThemePreview": {
+      "properties": {
+        "appearance_revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "expected_theme_revisions": {
+          "additionalProperties": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "object"
+        },
+        "samples": {
+          "items": {
+            "$ref": "#/$defs/ThemePreviewSample"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `theme_preview` type tag.",
+          "enum": [
+            "theme_preview"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "appearance_revision",
+        "expected_theme_revisions",
+        "samples"
+      ],
+      "type": "object"
+    },
+    "ThemePreviewRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "app_dark_theme": {
+          "type": "string"
+        },
+        "app_light_theme": {
+          "type": "string"
+        },
+        "op": {
+          "const": "themes.preview"
+        },
+        "syntax_binding": {
+          "$ref": "#/$defs/ThemeBinding"
+        },
+        "terminal_binding": {
+          "$ref": "#/$defs/ThemeBinding"
+        }
+      },
+      "required": [
+        "op",
+        "app_light_theme",
+        "app_dark_theme",
+        "terminal_binding",
+        "syntax_binding"
+      ],
+      "type": "object"
+    },
+    "ThemePreviewSample": {
+      "properties": {
+        "app": {
+          "$ref": "#/$defs/BuiltinPalette"
+        },
+        "diagnostics": {
+          "items": {
+            "$ref": "#/$defs/AppearanceDiagnostic"
+          },
+          "type": "array"
+        },
+        "syntax": {
+          "$ref": "#/$defs/BuiltinPalette"
+        },
+        "terminal": {
+          "$ref": "#/$defs/TerminalAppearance"
+        },
+        "terminal_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "app",
+        "syntax",
+        "terminal",
+        "terminal_name",
+        "diagnostics"
+      ],
+      "type": "object"
+    },
+    "ThemeProvenance": {
+      "additionalProperties": false,
+      "properties": {
+        "author": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "$ref": "#/$defs/ThemeOrigin"
+        },
+        "license": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_digest": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "source",
+        "source_version",
+        "source_digest",
+        "author",
+        "license"
+      ],
+      "type": "object"
+    },
+    "ThemeRecord": {
+      "properties": {
+        "definition": {
+          "$ref": "#/$defs/ThemeDefinition"
+        },
+        "diagnostics": {
+          "items": {
+            "$ref": "#/$defs/ThemeDiagnostic"
+          },
+          "type": "array"
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "source": {
+          "description": "Accepted source is retained independently of the original file.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "revision",
+        "definition",
+        "source",
+        "diagnostics"
+      ],
+      "type": "object"
+    },
+    "ThemeRemoval": {
+      "properties": {
+        "appearance_revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "changed": {
+          "type": "boolean"
+        },
+        "id": {
+          "type": "string"
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "type": {
+          "description": "The `theme_removal` type tag.",
+          "enum": [
+            "theme_removal"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "changed",
+        "revision",
+        "appearance_revision"
+      ],
+      "type": "object"
+    },
+    "ThemeRemovalImpact": {
+      "properties": {
+        "consumer": {
+          "$ref": "#/$defs/ThemeConsumer"
+        },
+        "fallback_id": {
+          "type": "string"
+        },
+        "indirect": {
+          "description": "Follow-app references change through their app slot; their binding remains follow-app.",
+          "type": "boolean"
+        },
+        "key": {
+          "type": "string"
+        },
+        "slot": {
+          "$ref": "#/$defs/ThemeSelectionSlot"
+        },
+        "terminal_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "workspace_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "key",
+        "consumer",
+        "slot",
+        "workspace_id",
+        "terminal_id",
+        "indirect",
+        "fallback_id"
+      ],
+      "type": "object"
+    },
+    "ThemeRemovalPlan": {
+      "properties": {
+        "appearance_revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "impacts": {
+          "items": {
+            "$ref": "#/$defs/ThemeRemovalImpact"
+          },
+          "type": "array"
+        },
+        "next_key": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "removable": {
+          "type": "boolean"
+        },
+        "theme": {
+          "$ref": "#/$defs/ThemeSummary"
+        },
+        "total": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "type": {
+          "description": "The `theme_removal_plan` type tag.",
+          "enum": [
+            "theme_removal_plan"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "theme",
+        "removable",
+        "appearance_revision",
+        "total",
+        "impacts",
+        "next_key"
+      ],
+      "type": "object"
+    },
+    "ThemeRemovalPlanRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "after_key": {
+          "description": "Exclusive impact key. Pages contain at most 16 affected selections.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "themes.removal"
+        }
+      },
+      "required": [
+        "op",
+        "id"
+      ],
+      "type": "object"
+    },
+    "ThemeRemoveRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "expected_appearance_revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "expected_revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "themes.remove"
+        }
+      },
+      "required": [
+        "op",
+        "id",
+        "expected_revision",
+        "expected_appearance_revision"
+      ],
+      "type": "object"
+    },
+    "ThemeRenameRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "expected_revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "op": {
+          "const": "themes.rename"
+        }
+      },
+      "required": [
+        "op",
+        "id",
+        "name",
+        "expected_revision"
+      ],
+      "type": "object"
+    },
+    "ThemeSection": {
+      "additionalProperties": true,
+      "description": "A declared default is resolved independently of current profile appearance.",
+      "properties": {
+        "defaults": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tokens": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "type": "object"
+        }
+      },
+      "required": [
+        "defaults",
+        "tokens"
+      ],
+      "type": "object"
+    },
+    "ThemeSections": {
+      "properties": {
+        "app": {
+          "type": "boolean"
+        },
+        "syntax": {
+          "type": "boolean"
+        },
+        "terminal": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "app",
+        "terminal",
+        "syntax"
+      ],
+      "type": "object"
+    },
+    "ThemeSelectionSlot": {
+      "enum": [
+        "light",
+        "dark",
+        "fixed"
+      ],
+      "type": "string"
+    },
+    "ThemeSummary": {
+      "properties": {
+        "bundled": {
+          "type": "boolean"
+        },
+        "id": {
+          "type": "string"
+        },
+        "mode": {
+          "$ref": "#/$defs/PaletteMode"
+        },
+        "name": {
+          "type": "string"
+        },
+        "provenance": {
+          "$ref": "#/$defs/ThemeProvenance"
+        },
+        "revision": {
+          "description": "A record revision is the library revision at which its definition last changed.\nBundled definitions use revision 0 and are immutable.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sections": {
+          "$ref": "#/$defs/ThemeSections"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "mode",
+        "revision",
+        "bundled",
+        "sections",
+        "provenance"
+      ],
+      "type": "object"
+    },
+    "ThemeValidateRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "op": {
+          "const": "themes.validate"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "source"
+      ],
+      "type": "object"
+    },
+    "ThemeValidationResponse": {
+      "properties": {
+        "definition": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ThemeDefinition"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "diagnostics": {
+          "items": {
+            "$ref": "#/$defs/ThemeDiagnostic"
+          },
+          "type": "array"
+        },
+        "target": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ThemeSummary"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Existing stable ID at validation time, for explicit revision-checked replacement."
+        },
+        "type": {
+          "description": "The `theme_validation` type tag.",
+          "enum": [
+            "theme_validation"
+          ],
+          "type": "string"
+        },
+        "valid": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type",
+        "valid",
+        "definition",
+        "diagnostics",
+        "target"
       ],
       "type": "object"
     },
@@ -29097,6 +31615,70 @@
           "type": "object"
         }
       ]
+    },
+    "WarpThemeValidateRequest": {
+      "additionalProperties": false,
+      "description": "Warp YAML becomes a standard ADE terminal definition after preview.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "themes.warp.validate"
+        },
+        "source": {
+          "type": "string"
+        },
+        "source_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "source",
+        "id"
+      ],
+      "type": "object"
+    },
+    "WarpThemeValidation": {
+      "properties": {
+        "preview": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TerminalAppearance"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "description": "The `warp_theme_validation` type tag.",
+          "enum": [
+            "warp_theme_validation"
+          ],
+          "type": "string"
+        },
+        "validation": {
+          "$ref": "#/$defs/ThemeValidationResponse"
+        }
+      },
+      "required": [
+        "type",
+        "source",
+        "preview",
+        "validation"
+      ],
+      "type": "object"
     },
     "Window": {
       "description": "A window: which workspace it shows, where it is and its view state. Its\npanes and tabs are in one [`LayoutRecord`] per workspace it has shown.",
@@ -31474,6 +34056,11 @@
       "domain": "settings",
       "frame": "SettingsChanged",
       "type": "settings_changed"
+    },
+    {
+      "domain": "themes",
+      "frame": "ThemeLibraryChanged",
+      "type": "theme_library_changed"
     }
   ],
   "operations": [
@@ -31896,6 +34483,20 @@
       "request": "AccountSwitchListRequest",
       "response": "AccountSwitches",
       "tier": "query"
+    },
+    {
+      "domain": "terminals",
+      "name": "terminal.appearance.get",
+      "request": "TerminalAppearanceRequest",
+      "response": "ResolvedTerminalAppearance",
+      "tier": "query"
+    },
+    {
+      "domain": "terminals",
+      "name": "terminal.appearance.set",
+      "request": "TerminalAppearanceSetRequest",
+      "response": "ResolvedTerminalAppearance",
+      "tier": "idempotent_command"
     },
     {
       "domain": "terminals",
@@ -33523,6 +36124,34 @@
     },
     {
       "domain": "settings",
+      "name": "settings.appearance.observe",
+      "request": "SystemAppearanceObservation",
+      "response": "Settings",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "settings",
+      "name": "settings.palettes",
+      "request": "SettingsPalettesRequest",
+      "response": "PaletteCatalog",
+      "tier": "query"
+    },
+    {
+      "domain": "settings",
+      "name": "settings.appearance.reset",
+      "request": "SettingsResetAppearanceRequest",
+      "response": "Settings",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "settings",
+      "name": "settings.appearance",
+      "request": "SettingsAppearanceRequest",
+      "response": "ResolvedAppearance",
+      "tier": "query"
+    },
+    {
+      "domain": "settings",
       "name": "settings.get",
       "request": "SettingsGetRequest",
       "response": "Settings",
@@ -33533,6 +36162,111 @@
       "name": "settings.set",
       "request": "SettingsSetRequest",
       "response": "Settings",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "themes",
+      "name": "themes.ghostty.export",
+      "request": "GhosttyThemeExportRequest",
+      "response": "GhosttyThemeExport",
+      "tier": "query"
+    },
+    {
+      "domain": "themes",
+      "name": "themes.ghostty.validate",
+      "request": "GhosttyThemeValidateRequest",
+      "response": "GhosttyThemeValidation",
+      "tier": "query"
+    },
+    {
+      "domain": "themes",
+      "name": "themes.warp.validate",
+      "request": "WarpThemeValidateRequest",
+      "response": "WarpThemeValidation",
+      "tier": "query"
+    },
+    {
+      "domain": "themes",
+      "name": "themes.file.validate",
+      "request": "ThemeFileValidateRequest",
+      "response": "ThemeFileValidation",
+      "tier": "query"
+    },
+    {
+      "domain": "themes",
+      "name": "themes.pack.export",
+      "request": "ThemePackExportRequest",
+      "response": "ThemePackExport",
+      "tier": "query"
+    },
+    {
+      "domain": "themes",
+      "name": "themes.validate",
+      "request": "ThemeValidateRequest",
+      "response": "ThemeValidationResponse",
+      "tier": "query"
+    },
+    {
+      "domain": "themes",
+      "name": "themes.list",
+      "request": "ThemeListRequest",
+      "response": "ThemeLibrary",
+      "tier": "query"
+    },
+    {
+      "domain": "themes",
+      "name": "themes.inspect",
+      "request": "ThemeInspectRequest",
+      "response": "ThemeInspectResponse",
+      "tier": "query"
+    },
+    {
+      "domain": "themes",
+      "name": "themes.install",
+      "request": "ThemeInstallRequest",
+      "response": "ThemeInstallation",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "themes",
+      "name": "themes.rename",
+      "request": "ThemeRenameRequest",
+      "response": "ThemeInstallation",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "themes",
+      "name": "themes.export",
+      "request": "ThemeExportRequest",
+      "response": "ThemeExport",
+      "tier": "query"
+    },
+    {
+      "domain": "themes",
+      "name": "themes.preview",
+      "request": "ThemePreviewRequest",
+      "response": "ThemePreview",
+      "tier": "query"
+    },
+    {
+      "domain": "themes",
+      "name": "themes.draft.preview",
+      "request": "ThemeDraftPreviewRequest",
+      "response": "ThemeDraftPreview",
+      "tier": "query"
+    },
+    {
+      "domain": "themes",
+      "name": "themes.removal",
+      "request": "ThemeRemovalPlanRequest",
+      "response": "ThemeRemovalPlan",
+      "tier": "query"
+    },
+    {
+      "domain": "themes",
+      "name": "themes.remove",
+      "request": "ThemeRemoveRequest",
+      "response": "ThemeRemoval",
       "tier": "idempotent_command"
     }
   ],
@@ -33545,6 +36279,10 @@
       {
         "frame": "TerminalOutputFrame",
         "type": "terminal"
+      },
+      {
+        "frame": "TerminalAppearanceFrame",
+        "type": "terminal_appearance"
       },
       {
         "frame": "TerminalResizeFrame",

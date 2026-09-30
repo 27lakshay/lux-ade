@@ -40,7 +40,8 @@ test('selected rows use the accent fill; others stay clear until hovered', async
   const plain = screen.getByRole('button', { name: 'feat/settings' })
   expect(fill(plain.element())).toBe('rgba(0, 0, 0, 0)')
   await plain.hover()
-  expect(fill(plain.element())).not.toBe('rgba(0, 0, 0, 0)')
+  // Hover uses the shared 100ms color transition; observe its settled fill.
+  await expect.poll(() => fill(plain.element())).toBe(colour('var(--muted)'))
 })
 
 test('keyboard focus draws a ring; a click does not', async () => {

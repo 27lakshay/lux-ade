@@ -19,6 +19,7 @@ const MAX_NAME: usize = 128;
 const MAX_COMMANDS: usize = 256;
 const MAX_PANELS: usize = 64;
 const MAX_SETTINGS: usize = 128;
+const MAX_THEMES: usize = 32;
 
 /// Parses and validates `ade-plugin.json`. `files` lists every regular file in
 /// the artifact as a `/`-separated relative path; entry points must be among them.
@@ -99,6 +100,68 @@ pub fn problems(manifest: &PluginManifest, files: &BTreeSet<String>) -> Vec<Stri
     }
     if contributes.settings.len() > MAX_SETTINGS {
         out.push(format!("at most {MAX_SETTINGS} settings"));
+    }
+    if contributes.themes.len() > MAX_THEMES {
+        out.push(format!("at most {MAX_THEMES} themes"));
+    }
+    let theme_prefix = format!("plugin.{}:", manifest.id);
+    let mut theme_ids = HashSet::new();
+    for theme in &contributes.themes {
+        let source = match serde_json::to_string(theme) {
+            Ok(source) => source,
+            Err(error) => {
+                out.push(format!("theme definition cannot be serialized: {error}"));
+                continue;
+            }
+        };
+        let validated = ade_core::appearance::definition::validate(&source);
+        let sections = [
+            ("app", &theme.app),
+            ("terminal", &theme.terminal),
+            ("syntax", &theme.syntax),
+        ];
+        let unsupported_roles = sections.into_iter().any(|(kind, section)| {
+            section.as_ref().is_some_and(|section| {
+                section
+                    .tokens
+                    .keys()
+                    .any(|role| !ade_core::appearance::definition::known_role(kind, role))
+            })
+        });
+        if !validated.valid || unsupported_roles {
+            out.push(format!("theme {} is invalid", theme.id));
+            continue;
+        }
+        if !theme.id.starts_with(&theme_prefix) || theme.id.len() == theme_prefix.len() {
+            out.push(format!(
+                "theme {} must use namespaced ID {theme_prefix}<name>",
+                theme.id
+            ));
+        }
+        if !theme_ids.insert(theme.id.as_str()) {
+            out.push(format!("theme {} is declared twice", theme.id));
+        }
+        if !matches!(
+            theme.provenance.kind,
+            ade_core::appearance::definition::ThemeOrigin::Plugin
+        ) {
+            out.push(format!("theme {} provenance kind must be plugin", theme.id));
+        }
+        if !theme.extensions.is_empty()
+            || [&theme.app, &theme.terminal, &theme.syntax]
+                .into_iter()
+                .flatten()
+                .any(|section| !section.extensions.is_empty())
+            || validated
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "unsupported_extension")
+        {
+            out.push(format!(
+                "theme {} contains unsupported extension data",
+                theme.id
+            ));
+        }
     }
     if !contributes.commands.is_empty() && entries.ui.is_none() && entries.backend.is_none() {
         out.push("commands need a ui or backend entry point".into());
@@ -313,6 +376,38 @@ mod tests {
         change(&mut manifest);
         let error = check(manifest).unwrap_err();
         assert!(error.contains(expected), "{error} lacks {expected}");
+    }
+
+    #[test]
+    fn unsupported_theme_roles_are_rejected_after_diagnostic_limit() {
+        let mut manifest = base();
+        let tokens: serde_json::Map<String, Value> = (0..256)
+            .map(|index| (format!("terminal-ansi-{index}"), json!("#AABBCC")))
+            .collect();
+        manifest["contributes"]["themes"] = json!([{
+            "format": "ade-theme",
+            "version": 1,
+            "id": "plugin.acme.notes:diagnostic-limit",
+            "name": "Diagnostic limit",
+            "mode": "dark",
+            "provenance": {"kind": "plugin", "source": "acme.notes", "source_version": "1.0.0"},
+            "terminal": {"defaults": "ade:graphite", "tokens": tokens}
+        }]);
+
+        let theme_source = serde_json::to_string(&manifest["contributes"]["themes"][0]).unwrap();
+        let validation = ade_core::appearance::definition::validate(&theme_source);
+        assert!(validation.valid, "{:?}", validation.diagnostics);
+        let baseline = check(manifest.clone());
+        assert!(baseline.is_ok(), "{baseline:?}");
+        manifest["contributes"]["themes"][0]["terminal"]["tokens"]
+            .as_object_mut()
+            .unwrap()
+            .insert("zzz-unsupported".into(), json!("#123456"));
+        let error = check(manifest).unwrap_err();
+        assert!(
+            error.contains("theme plugin.acme.notes:diagnostic-limit is invalid"),
+            "{error}"
+        );
     }
 
     #[test]

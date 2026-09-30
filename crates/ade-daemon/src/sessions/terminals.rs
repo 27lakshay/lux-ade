@@ -21,6 +21,77 @@ fn terminal_title(title: &str) -> Result<&str> {
 impl Sessions {
     pub(super) fn terminal_command(self: &Arc<Self>, request: &Value) -> Result<Value> {
         match request["op"].as_str().unwrap_or("") {
+            "terminal.appearance.get" | "terminal.appearance.set" => {
+                use ade_core::contract::terminals::{
+                    ResolvedTerminalAppearance, TerminalAppearanceProvenance,
+                    TerminalAppearanceRequest, TerminalAppearanceSetRequest,
+                };
+                let mut d = self.data.lock().unwrap();
+                let (workspace, id) = if request["op"] == "terminal.appearance.set" {
+                    ensure!(
+                        request.get("binding").is_some(),
+                        "Missing terminal binding; use null to reset"
+                    );
+                    let change: TerminalAppearanceSetRequest = decode(request)?;
+                    if d.store.set_terminal_binding(
+                        &change.workspace_id,
+                        &change.terminal_id,
+                        change.binding,
+                        change.expected_appearance_revision,
+                    )? {
+                        let settings = d.store.settings()?;
+                        self.publish(
+                            &mut d,
+                            json!({"type":"settings_changed", "settings": settings}),
+                        );
+                        self.catalog_changed(&mut d)?;
+                    }
+                    self.runtime
+                        .command(runtime::Command::Appearance {
+                            appearance: d.store.terminal_appearance_projection()?,
+                        })
+                        .context(
+                            "Appearance saved, but the terminal update could not be confirmed",
+                        )?;
+                    (change.workspace_id, change.terminal_id)
+                } else {
+                    let target: TerminalAppearanceRequest = decode(request)?;
+                    (target.workspace_id, target.terminal_id)
+                };
+                let record = d.store.terminal(&id)?.context("Unknown terminal")?;
+                ensure!(
+                    record.workspace_id == workspace,
+                    "Terminal belongs to another workspace"
+                );
+                let settings = d.store.settings()?;
+                let provenance = if record.appearance_binding.is_some() {
+                    TerminalAppearanceProvenance::Terminal
+                } else {
+                    TerminalAppearanceProvenance::Profile
+                };
+                let binding = record
+                    .appearance_binding
+                    .unwrap_or(settings.terminal_binding);
+                let (palette, selected_id, diagnostic) = d.store.resolve_theme_binding(
+                    &binding,
+                    ade_core::appearance::ThemeSectionKind::Terminal,
+                )?;
+                let desired = d.store.terminal_appearance_projection()?;
+                reply(&ResolvedTerminalAppearance {
+                    tag: Default::default(),
+                    terminal_id: id.clone(),
+                    revision: settings.appearance_revision,
+                    binding,
+                    provenance,
+                    selected_id,
+                    resolved_id: palette.id.clone(),
+                    mode: palette.mode,
+                    fallback: diagnostic.is_some(),
+                    diagnostics: diagnostic.into_iter().collect(),
+                    appearance: desired.for_terminal(&id).clone(),
+                    propagation: self.appearance_propagation(&desired),
+                })
+            }
             "terminal.create" => {
                 if let Some(value) = request.get("operation_id") {
                     ensure!(value.is_string(), "Invalid terminal operation ID");

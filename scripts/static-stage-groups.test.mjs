@@ -17,6 +17,7 @@ test('CI groups partition the complete local gate and retain each stage contract
   assert.ok(expectedStaticStages('native').includes('rust doctests'))
   assert.ok(expectedStaticStages('javascript').includes('provider tests'))
   assert.ok(expectedStaticStages('javascript').includes('renderer tests'))
+  assert.ok(expectedStaticStages('javascript').includes('theme defaults'))
 })
 
 test('an unassigned, missing or duplicate stage fails every selection', () => {

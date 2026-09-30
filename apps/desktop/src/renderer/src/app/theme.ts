@@ -1,14 +1,15 @@
-import type { ThemePreference } from '../../../shared/window-chrome'
+import { applyCodeTheme } from '../features/code/code-theme'
+import type { ResolvedAppearance } from '@ade/contracts'
+import { isThemePreference, type ThemePreference } from '../../../shared/window-chrome'
 
-// Light, dark, or follow the system. The profile's setting lives in the daemon (`appearance`;
-// profile-settings.ts keeps the window in step with it). Main applies each change to macOS and keeps
-// the one startup copy (src/main/appearance.ts): the page's prefers-color-scheme follows it, which
-// is how the boot script (public/theme-boot.js) paints the right theme before the daemon answers.
+// The daemon owns committed appearance. Main supplies a per-profile startup snapshot;
+// profile-settings.ts applies live resolved tokens after connection.
 
 const systemDark = (): MediaQueryList => window.matchMedia('(prefers-color-scheme: dark)')
 
 /** The preference shown now; `system` until the daemon's setting arrives. */
-let current: ThemePreference = 'system'
+const bootPreference = document.documentElement.dataset.appearancePreference
+let current: ThemePreference = isThemePreference(bootPreference) ? bootPreference : 'system'
 
 export const themePreference = (): ThemePreference => current
 
@@ -46,4 +47,15 @@ export function startTheme(): void {
   window.adeHost?.setTheme(preference)
   // Also fires when main changes the native appearance, which lags a preference change slightly.
   systemDark().addEventListener('change', () => paint(themePreference()))
+}
+
+/** Paints the daemon's complete committed app palette, including same-mode changes. */
+export function applyResolvedTheme(appearance: ResolvedAppearance): void {
+  const root = document.documentElement
+  root.classList.add('theme-switching')
+  for (const [role, value] of Object.entries(appearance.tokens)) root.style.setProperty(`--${role}`, value)
+  applyCodeTheme(root, appearance.syntax.palette.tokens)
+  root.style.colorScheme = appearance.mode
+  root.classList.toggle('dark', appearance.mode === 'dark')
+  requestAnimationFrame(() => requestAnimationFrame(() => root.classList.remove('theme-switching')))
 }

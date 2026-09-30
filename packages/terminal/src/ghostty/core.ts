@@ -29,6 +29,7 @@ const RENDER_DATA = {
   foreground: 6,
   cursor: 7,
   cursorHasValue: 8,
+  palette: 9,
   cursorStyle: 10,
   cursorVisible: 11,
   cursorBlinking: 12,
@@ -68,14 +69,24 @@ export interface GhosttyColor {
   readonly r: number
   readonly g: number
   readonly b: number
+  readonly a?: number
 }
+
+export type GhosttyBoldColor = GhosttyColor | 'inherit' | 'bright'
+
+export type GhosttyColorPolicy = GhosttyColor | 'cell-foreground' | 'cell-background'
 
 export interface GhosttyTheme {
   readonly foreground: GhosttyColor
   readonly background: GhosttyColor
-  readonly cursor: GhosttyColor
+  readonly cursor: GhosttyColorPolicy
+  readonly palette?: readonly GhosttyColor[]
   /** CSS color the renderer overlays on selected cells; not sent to Ghostty. */
-  readonly selectionBackground?: string
+  readonly selectionBackground?: string | GhosttyColor
+  readonly selectionForeground?: GhosttyColorPolicy
+  readonly cursorText?: GhosttyColorPolicy
+  readonly minimumContrast?: number
+  readonly boldColor?: GhosttyBoldColor
 }
 
 export interface GhosttyCell {
@@ -83,6 +94,13 @@ export interface GhosttyCell {
   readonly wide: number
   readonly foreground: GhosttyColor
   readonly background: GhosttyColor
+  readonly boldColor?: {
+    readonly foreground: GhosttyColor
+    readonly background: GhosttyColor
+    readonly brightForeground: GhosttyColor | null
+    readonly inverse: boolean
+    readonly faint: boolean
+  }
   readonly bold: boolean
   readonly italic: boolean
   readonly invisible: boolean
@@ -106,6 +124,8 @@ export interface GhosttySnapshot {
   readonly foreground: GhosttyColor
   readonly background: GhosttyColor
   readonly cursor: GhosttyColor
+  /** Explicit OSC 12 cursor color, distinct from the configured default fill. */
+  readonly cursorOverride?: GhosttyColor | null
   readonly cursorX: number
   readonly cursorY: number
   readonly cursorVisible: boolean
@@ -159,7 +179,7 @@ export interface GhosttyMouseInput {
 const decoder = new TextDecoder()
 const encoder = new TextEncoder()
 
-function blend(foreground: GhosttyColor, background: GhosttyColor): GhosttyColor {
+export function ghosttyFaintColor(foreground: GhosttyColor, background: GhosttyColor): GhosttyColor {
   const channel = (front: number, back: number) => Math.floor((front * 155 + back * 100) / 255)
   return {
     r: channel(foreground.r, background.r),
@@ -211,6 +231,7 @@ export class GhosttyTerminalCore {
   private mouseEventSlot = 0
   private mouseEvent = 0
   private scratch = 0
+  private activePalette = 0
   private graphemes = 0
   private graphemeCapacity = 0
   private style = 0
@@ -260,7 +281,7 @@ export class GhosttyTerminalCore {
     )
     this.terminal = this.runtime.readPointer(this.terminalSlot)
     this.configureLimits(this.terminal)
-    this.applyDefaultCursorBlink()
+    this.applyDefaultCursorOptions()
 
     this.renderStateSlot = this.runtime.allocOpaque()
     this.assertSuccess(
@@ -298,6 +319,7 @@ export class GhosttyTerminalCore {
     this.mouseEvent = this.runtime.readPointer(this.mouseEventSlot)
 
     this.scratch = this.runtime.alloc(16)
+    this.activePalette = this.runtime.alloc(256 * 3)
     const styleSize = this.runtime.layout('GhosttyStyle').size
     this.style = this.runtime.alloc(styleSize)
     this.runtime.setField(this.style, 'GhosttyStyle', 'size', styleSize)
@@ -358,7 +380,7 @@ export class GhosttyTerminalCore {
     this.terminalSlot = slot
     this.terminal = next
     this.rows = []
-    this.applyDefaultCursorBlink()
+    this.applyDefaultCursorOptions()
     if (this.theme) this.setTheme(this.theme)
     // Keep the snapshot's grid; restore the cell size the host measured.
     this.resize(
@@ -431,11 +453,21 @@ export class GhosttyTerminalCore {
    * DECSCUSR reset (CSI 0 q), so programs that ask for a specific cursor
    * through DECSCUSR or DEC mode 12 still win.
    */
-  private applyDefaultCursorBlink(): void {
-    const blink = this.runtime.alloc(1)
-    this.runtime.bytes(blink, 1)[0] = 1
-    this.runtime.call('ghostty_terminal_set', this.terminal, 23, blink)
-    this.runtime.free(blink, 1)
+  setDefaultCursorPreferences(shape: 'block' | 'bar' | 'underline', blink: boolean): void {
+    this.ensureActive()
+    const value = this.runtime.alloc(4)
+    try {
+      this.runtime.view(value, 4).setUint32(0, shape === 'bar' ? 0 : shape === 'underline' ? 2 : 1, true)
+      this.runtime.call('ghostty_terminal_set', this.terminal, 22, value)
+      this.runtime.bytes(value, 1)[0] = Number(blink)
+      this.runtime.call('ghostty_terminal_set', this.terminal, 23, value)
+    } finally {
+      this.runtime.free(value, 4)
+    }
+  }
+
+  private applyDefaultCursorOptions(): void {
+    this.setDefaultCursorPreferences('block', true)
   }
 
   setTheme(theme: GhosttyTheme): void {
@@ -445,12 +477,30 @@ export class GhosttyTerminalCore {
     for (const [option, value] of [
       [11, theme.foreground],
       [12, theme.background],
-      [13, theme.cursor],
     ] as const) {
       this.runtime.bytes(color, 3).set([value.r, value.g, value.b])
       this.runtime.call('ghostty_terminal_set', this.terminal, option, color)
     }
+    if (typeof theme.cursor !== 'string') {
+      this.runtime.bytes(color, 3).set([theme.cursor.r, theme.cursor.g, theme.cursor.b])
+      this.runtime.call('ghostty_terminal_set', this.terminal, 13, color)
+    } else {
+      this.runtime.call('ghostty_terminal_set', this.terminal, 13, 0)
+    }
     this.runtime.free(color, 3)
+    if (theme.palette) {
+      if (theme.palette.length !== 256) throw new Error('A terminal palette must contain 256 colors')
+      const palette = this.runtime.alloc(256 * 3)
+      try {
+        const bytes = this.runtime.bytes(palette, 256 * 3)
+        for (const [index, value] of theme.palette.entries()) bytes.set([value.r, value.g, value.b], index * 3)
+        if (this.runtime.call('ghostty_terminal_set', this.terminal, 14, palette) !== GHOSTTY_SUCCESS) {
+          throw new Error('Ghostty could not apply the terminal palette')
+        }
+      } finally {
+        this.runtime.free(palette, 256 * 3)
+      }
+    }
   }
 
   scroll(deltaRows: number): void {
@@ -726,6 +776,10 @@ export class GhosttyTerminalCore {
       }))
     }
 
+    this.assertSuccess(
+      'ghostty_render_state_get(palette)',
+      this.runtime.call('ghostty_render_state_get', this.renderState, RENDER_DATA.palette, this.activePalette),
+    )
     const dirtyRows = new Set<number>()
     if (dirty !== 0) {
       this.assertSuccess(
@@ -754,6 +808,7 @@ export class GhosttyTerminalCore {
       foreground,
       background,
       cursor,
+      cursorOverride: cursorHasValue ? cursor : null,
       cursorX,
       cursorY,
       cursorVisible,
@@ -834,6 +889,7 @@ export class GhosttyTerminalCore {
       this.runtime.free(this.scrollbar, this.runtime.layout('GhosttyTerminalScrollbar').size)
     }
     if (this.scratch) this.runtime.free(this.scratch, 16)
+    if (this.activePalette) this.runtime.free(this.activePalette, 256 * 3)
     if (this.graphemes) this.runtime.free(this.graphemes, this.graphemeCapacity)
     for (const slot of [
       this.mouseEventSlot,
@@ -922,35 +978,58 @@ export class GhosttyTerminalCore {
           text = ghosttyCellText(codepointView, graphemeLength)
         }
       }
-      let wide = 0
-      if (text.length === 0 && cells.at(-1)?.text.length) {
-        this.assertSuccess(
-          'ghostty_render_state_row_cells_get(raw)',
-          this.runtime.call('ghostty_render_state_row_cells_get', cellsIterator, CELL_DATA.raw, this.scratch),
-        )
-        const rawCell = this.runtime.view(this.scratch, 8).getBigUint64(0, true)
-        this.runtime.view(this.scratch + 8, 4).setUint32(0, 0, true)
-        this.assertSuccess(
-          'ghostty_cell_get(wide)',
-          this.runtime.call('ghostty_cell_get', rawCell, RAW_CELL_DATA.wide, this.scratch + 8),
-        )
-        wide = this.runtime.view(this.scratch + 8, 4).getUint32(0, true)
-      }
+      this.assertSuccess(
+        'ghostty_render_state_row_cells_get(raw)',
+        this.runtime.call('ghostty_render_state_row_cells_get', cellsIterator, CELL_DATA.raw, this.scratch),
+      )
+      const rawCell = this.runtime.view(this.scratch, 8).getBigUint64(0, true)
+      this.runtime.view(this.scratch + 8, 4).setUint32(0, 0, true)
+      this.assertSuccess(
+        'ghostty_cell_get(wide)',
+        this.runtime.call('ghostty_cell_get', rawCell, RAW_CELL_DATA.wide, this.scratch + 8),
+      )
+      const wide = this.runtime.view(this.scratch + 8, 4).getUint32(0, true)
       const selected = this.getCellBool(cellsIterator, CELL_DATA.selected)
       // Read the style after allocation and ABI calls, which can grow WASM memory.
       const styleView = this.runtime.view(this.style, styleSize)
+      const bold = styleView.getUint8(styleFields.bold!.offset) !== 0
+      const colorLayout = this.runtime.layout('GhosttyStyleColor')
+      const foregroundStyle = this.style + styleFields.fg_color!.offset
+      const colorTag = this.runtime.readField(foregroundStyle, 'GhosttyStyleColor', 'tag')
+      const paletteIndex =
+        colorTag === 1
+          ? this.runtime.readField(
+              foregroundStyle + colorLayout.fields.value!.offset,
+              'GhosttyStyleColorValue',
+              'palette',
+            )
+          : -1
+      const brightBytes =
+        paletteIndex >= 0 && paletteIndex < 8
+          ? this.runtime.bytes(this.activePalette + (paletteIndex + 8) * 3, 3)
+          : null
+      const boldColor = bold
+        ? {
+            foreground,
+            background,
+            brightForeground: brightBytes ? { r: brightBytes[0]!, g: brightBytes[1]!, b: brightBytes[2]! } : null,
+            inverse: styleView.getUint8(styleFields.inverse!.offset) !== 0,
+            faint: styleView.getUint8(styleFields.faint!.offset) !== 0,
+          }
+        : undefined
       if (styleView.getUint8(styleFields.inverse!.offset) !== 0) {
         ;[foreground, background] = [background, foreground]
       }
       if (styleView.getUint8(styleFields.faint!.offset) !== 0) {
-        foreground = blend(foreground, background)
+        foreground = ghosttyFaintColor(foreground, background)
       }
       cells.push({
         text,
         wide,
         foreground,
         background,
-        bold: styleView.getUint8(styleFields.bold!.offset) !== 0,
+        bold,
+        ...(boldColor ? { boldColor } : {}),
         italic: styleView.getUint8(styleFields.italic!.offset) !== 0,
         invisible: styleView.getUint8(styleFields.invisible!.offset) !== 0,
         strikethrough: styleView.getUint8(styleFields.strikethrough!.offset) !== 0,

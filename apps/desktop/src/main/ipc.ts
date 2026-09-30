@@ -6,7 +6,11 @@ import type {
   InvokeChannels,
   SendChannel,
   SendChannels,
+  ResultChannel,
+  ResultValue,
 } from '../shared/ipc'
+import { bridgeFailure } from './bridge-failure'
+import type { IpcResult } from '../shared/bridge/result'
 
 // Typed wrappers over ipcMain, checked against the contract in src/shared/ipc.ts. Every request is
 // accepted only from the main frame of a registered app window: never from a browser tab, a
@@ -34,6 +38,24 @@ export function handle<C extends InvokeChannel>(
   ipcMain.handle(channel, (event, ...args) => {
     if (!fromAppWindow(event)) throw new Error(`${channel} refused: the request did not come from an app window`)
     return handler(event, ...args)
+  })
+}
+
+/** Preserve failures as data; sender validation remains in the shared handle guard. */
+export function handleResult<C extends ResultChannel>(
+  channel: C,
+  handler: (event: IpcMainInvokeEvent, ...args: unknown[]) => ResultValue<C> | Promise<ResultValue<C>>,
+): void {
+  handle(channel, (event, ...args) => {
+    const result = async (): Promise<IpcResult<ResultValue<C>>> => {
+      try {
+        return { ok: true, value: await handler(event, ...args) }
+      } catch (error) {
+        return { ok: false, error: bridgeFailure(error) }
+      }
+    }
+    // ResultChannel selects exactly these envelope methods; TypeScript cannot reduce the mapped generic here.
+    return result() as ReturnType<InvokeChannels[C]>
   })
 }
 

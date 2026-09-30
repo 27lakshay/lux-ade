@@ -12,7 +12,8 @@ import { defaultKeybindings } from './keybindings'
 test('keybindings default, merge a partial change, reach the feed, survive a restart and reset', async ({
   profile,
 }) => {
-  expect((await profile.call('settings.get', {})).settings.keybindings).toEqual(defaultKeybindings)
+  const initial = (await profile.call('settings.get', {})).settings
+  expect(initial.keybindings).toEqual(defaultKeybindings)
   const feed = await subscribeFeed(profile)
   await feed.connected()
 
@@ -46,7 +47,12 @@ test('keybindings default, merge a partial change, reach the feed, survive a res
     'close-tab': null,
   })
   const all = await profile.call('settings.set', { reset_keybindings: 'all' })
-  expect(all.settings).toEqual({ appearance: 'dark', reduced_motion: 'system', keybindings: defaultKeybindings })
+  expect(all.settings).toEqual({
+    ...initial,
+    appearance: 'dark',
+    appearance_revision: initial.appearance_revision + 1,
+    keybindings: defaultKeybindings,
+  })
   await feed.waitFor(
     (frame) =>
       frame.type === 'settings_changed' &&
@@ -64,6 +70,7 @@ test('keybindings default, merge a partial change, reach the feed, survive a res
 test('a key two commands would share, a key that is not an accelerator, and an unknown command are refused and change nothing', async ({
   profile,
 }) => {
+  const initial = (await profile.call('settings.get', {})).settings
   // CmdOrCtrl+N is Command+N on macOS, so Cmd+N would share it.
   const conflict = await rawReply(profile, {
     op: 'settings.set',
@@ -103,8 +110,7 @@ test('a key two commands would share, a key that is not an accelerator, and an u
   // Unbinding one command frees its key for another.
   await profile.call('settings.set', { keybindings: { 'new-conversation': null, 'close-tab': 'CmdOrCtrl+N' } })
   expect((await profile.call('settings.get', {})).settings).toEqual({
-    appearance: 'system',
-    reduced_motion: 'system',
+    ...initial,
     keybindings: { ...defaultKeybindings, 'new-conversation': null, 'close-tab': 'CmdOrCtrl+N' },
   })
 })
