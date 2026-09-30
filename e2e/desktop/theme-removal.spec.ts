@@ -125,7 +125,7 @@ test('core restore-defaults remains available in safe mode and preserves the cus
   safe.searchParams.set('safeMode', '1')
   safe.hash = '/settings'
   await window.goto(safe.toString())
-  await window.getByRole('button', { name: 'Restore default appearance', exact: true }).click()
+  await window.getByRole('button', { name: 'Restore core appearance defaults', exact: true }).click()
   await expect.poll(async () => (await profile.call('settings.get', {})).settings.app_light_theme).toBe('ade:chalk')
   expect((await profile.call('settings.get', {})).settings.reduced_motion).toBe('on')
   expect((await profile.call('themes.inspect', { id: 'user:remove' })).theme.revision).toBe(1)
