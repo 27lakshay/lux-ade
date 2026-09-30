@@ -8,7 +8,7 @@
 
 **What to build:** The completed overhaul has an evidence-backed comparison and accurate contributor guidance, with outstanding acceptance clearly visible.
 
-**Blocked by:** [06 — Provide one complete local acceptance command](06-local-acceptance.md); [07 — Make CI run the same acceptance gates as local development](07-ci-parity.md); [08 — Add focused test selection with an explanation mode](08-affected-selection.md); [09 — Make browser and Electron failures easy to reproduce](09-failure-debugging.md); [10 — Pilot Bacon for Rust feedback](10-bacon-pilot.md); [11 — Measure and adopt useful Rust CI caching](11-rust-ci-cache.md); [12 — Pilot Turborepo on a narrow build and static-check graph](12-turbo-pilot.md); [13 — Batch lint-rule fixtures without losing diagnostics](13-batch-lint-fixtures.md); [14 — Shorten protocol waits through explicit clock policies](14-protocol-clock-policies.md); [15 — Reduce measured protocol fixture overhead](15-protocol-fixture-overhead.md); [16 — Reduce browser test setup costs](16-browser-setup-cost.md); [17 — Tune workers and evaluate CI sharding](17-workers-and-sharding.md); [18 — Establish an isolated performance suite](18-isolated-performance.md); [19 — Verify a packaged release candidate end to end](19-packaged-release-acceptance.md); [20 — Make live-provider and system-dependent acceptance explicit](20-live-and-system-acceptance.md); [21 — Add targeted axe checks to desktop acceptance](21-desktop-accessibility.md)
+**Blocked by:** [06 — Provide one complete local acceptance command](06-local-acceptance.md); [07 — Make CI run the same acceptance gates as local development](07-ci-parity.md); [08 — Add focused test selection with an explanation mode](08-affected-selection.md); [09 — Make browser and Electron failures easy to reproduce](09-failure-debugging.md); [10 — Pilot Bacon for Rust feedback](10-bacon-pilot.md); [11 — Measure and adopt useful Rust CI caching](11-rust-ci-cache.md); [12 — Adopt Nx for local builds and checks](12-nx-adoption.md); [13 — Batch lint-rule fixtures without losing diagnostics](13-batch-lint-fixtures.md); [14 — Shorten protocol waits through explicit clock policies](14-protocol-clock-policies.md); [15 — Reduce measured protocol fixture overhead](15-protocol-fixture-overhead.md); [16 — Reduce browser test setup costs](16-browser-setup-cost.md); [17 — Tune workers and evaluate CI sharding](17-workers-and-sharding.md); [18 — Establish an isolated performance suite](18-isolated-performance.md); [19 — Verify a packaged release candidate end to end](19-packaged-release-acceptance.md); [20 — Make live-provider and system-dependent acceptance explicit](20-live-and-system-acceptance.md); [21 — Add targeted axe checks to desktop acceptance](21-desktop-accessibility.md)
 
 ## Acceptance criteria
 
@@ -104,3 +104,21 @@ final aggregate median/tail estimate is claimed from the single final gate.
 ### Final cleanup verification
 
 The restored cleanup diagnostic (`package-8a3ec175-7b01-4eff-affb-e4bd6fb9a195`) retained the expected failed recovery-window case and exited 1 without a worker teardown error. No candidate executable or helper survived. This verifies cleanup only; packaged recovery behavior remains failed. The final static gate (`static-1c426dee-d7c6-4aa4-9397-d2972cfbcb71`) passed all 27 stages in 60.181 seconds. The earlier complete ordinary acceptance remains valid; its suites were not rerun for this legacy fixture-only cleanup change.
+
+### Committed main verification — 2026-09-30
+
+The user authorized committing and merging the overhaul as `d08d464`. After preserving unrelated work in Git stashes, complete ordinary acceptance on clean main passed: `acceptance-81df2663-ef71-4957-acef-d24787cb2b92`, 621.750 seconds, 27 static stages, 985 protocol passes and five existing skips, eight desktop passes, and no unexecuted required cases. The native report records dirty=false and the committed revision. This is correctness evidence, not a new speedup measurement. Reports remain under `/Users/lakshyakumar/work/lux-ade/test-results/runs/`. Subsequent recovery-screen changes on the testing branch require their own focused and static validation. Hosted execution, cache/Turbo trial decisions and complete packaged proof remain pending.
+
+
+### 2026-09-30 — Packaged recovery gap resolved
+
+Ticket 19’s rebuilt candidate passes the retained launch-refusal case and the
+eleven current packaged cases against one artifact. The error is visible in the
+renderer, the incompatible owner and registry survive, and the workspace is hidden
+while recovery is shown. Eight legacy cases still need unbuilt product UI. Hosted
+CI, Rust cache and Turbo proof remain pending. No benchmark or aggregate speedup
+claim was added. See ticket 19 for candidate identity and run IDs.
+
+### 2026-09-30 — Local Nx adoption verified
+
+Ticket 12 replaces the unrun Turbo pilot with user-selected Nx 23.2.1. Its local criteria pass: the 16-project graph includes Cargo and contract dependencies, builds/typechecks use explicit inputs and outputs, cache invalidation/output restoration and upstream failure ordering pass, and evidence targets stay uncached. Retain local Nx core. The full static gate passes 28 stages in `static-3f027337-468b-4a52-b23c-fcc3b950d976`; the focused protocol case, four focused browser cases and all eight desktop cases produce fresh reports. The full protocol suite was not repeated for the orchestration setup. See ticket 12 for run IDs and bounded observations. Hosted CI, hosted Rust cache and complete packaged acceptance still block overhaul completion.

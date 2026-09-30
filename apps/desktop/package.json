@@ -119,5 +119,50 @@
     "vite": "8.3.1",
     "vitest": "5.0.2",
     "vitest-browser-react": "2.3.0"
+  },
+  "nx": {
+    "targets": {
+      "build": {
+        "outputs": [
+          "{projectRoot}/out"
+        ],
+        "inputs": [
+          "desktopProduction",
+          "^production",
+          "toolchain",
+          {
+            "env": "NODE_ENV"
+          },
+          {
+            "env": "VITE_ADE_BENCH"
+          },
+          {
+            "env": "ADE_REACT_DEVTOOLS"
+          },
+          {
+            "env": "ADE_REACT_SCAN"
+          },
+          {
+            "env": "ADE_REACT_GRAB"
+          }
+        ]
+      },
+      "test": {
+        "cache": false,
+        "parallelism": false
+      },
+      "dev": {
+        "cache": false,
+        "continuous": true
+      },
+      "test:watch": {
+        "cache": false,
+        "continuous": true
+      },
+      "test:ui": {
+        "cache": false,
+        "continuous": true
+      }
+    }
   }
 }

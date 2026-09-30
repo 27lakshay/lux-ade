@@ -3,7 +3,7 @@
 Date: 2026-09-29
 
 Status: implementation in progress under the user's separate authorization. Hosted CI,
-cache/Turbo trials and complete packaged release proof remain pending. Commits, publishing
+Rust CI cache trials and complete packaged release proof remain pending. Local Nx adoption is verified. Commits, publishing
 and changes to repository branch protection still require separate instructions.
 
 ## Outcome
@@ -498,29 +498,29 @@ Complete when a hosted run proves both cache reuse and invalidation and the comp
 still executes. Local validation alone cannot complete this work item; hosted execution waits
 for authorization to push or dispatch. Cache misses must rebuild successfully.
 
-#### T5 — Narrow Turborepo pilot
+#### T5 — Nx local adoption
 
-Depends on explicit suite ownership, build prerequisites, conservative selection rules, and
-the T4 cache decision. Belongs to the final orchestration work in Phases 3 and 4.
+The user selected Nx instead of the unrun Turborepo pilot on 2026-09-30. Local setup depends
+on explicit ownership and conservative selection; it can proceed before the hosted Rust
+cache decision. Hosted rollout remains dependent on CI proof.
 
-1. Read the official Turborepo skill. Add a pinned root development dependency through pnpm
-   and a small `turbo.json` covering an initial build/static subset. Keep existing pnpm scripts
-   as usable entry points and avoid scripts that invoke themselves through Turbo.
-2. Model the real build dependencies, including contracts before SDK consumers. Declare output
-   paths and all material source, toolchain, native-feature, and environment inputs. Run
-   summaries should explain cache hits, misses, and affected selection.
-3. Leave protocol, desktop, system, live, and performance test-result caching disabled. Preserve
-   the Phase 4 fallback rules for cross-language changes. A task graph must not replace those
-   rules until its equivalence is demonstrated.
-4. Exercise no-change runs, one-package edits, shared Rust edits, changed fixtures, missing
-   outputs, and failed upstream tasks. Compare against the same pnpm-only commands using T1.
-5. Adopt only if measured savings or simpler dependency handling justify the configuration.
-   Expand gradually after that decision. Start with local caching; remote cache setup is a
-   separate decision with its own account, access, and transfer-cost implications.
+1. Pin Nx core through pnpm. Retain the workspace layout and existing leaf commands; model
+   package dependencies and explicit Cargo, provider and acceptance projects.
+2. Cache JS/Electron builds and package typechecks with declared outputs, source/dependency
+   inputs, lockfiles, Node/pnpm/platform identity and material environment. Keep all native
+   and test-result evidence uncached. Use existing Cargo and reporting wrappers.
+3. Verify the graph against Cargo metadata and cross-language consumers in the static gate.
+   Exercise unchanged runs, package/Rust changes, fixtures, deleted outputs, material
+   environment changes and upstream failure. Preserve `test:affected` fallback rules.
+4. Validate current TypeScript 7, Electron Vite 6, Vitest 5, real-process protocol and desktop
+   execution. Read official plugin requirements before adding any inference plugin.
+5. Retain local Nx if bounded feedback evidence and dependency ordering justify it. Run the
+   complete static gate after final changes. Hosted caching and distributed execution need
+   their own compatible-machine, cost and evidence checks.
 
-Complete when dependency and invalidation checks pass, affected selection is conservative,
-failures propagate, and the keep/remove decision cites evidence. Vite+ remains an alternative
-for a later unified-toolchain decision; do not add it alongside this pilot.
+See [Nx commands](testing.md#nx-development-commands) and ticket 12. Neither a cache hit nor
+partial acceptance replaces fresh complete proof. No remote cache or cloud workflow is
+configured by local adoption.
 
 #### T6 — Targeted accessibility scans
 
@@ -557,7 +557,7 @@ tooling work so measurements precede optimization and correct CI coverage preced
 | 4 | Phase 3: local/CI coverage parity, before caching | Correct job membership; hosted run when authorized |
 | 5 | Phase 4 + T3: focused selection and Bacon trial | Conservative selection tests and watcher keep/remove decision |
 | 6 | Phase 3 + T4: CI caching trial | Total-time comparison, invalidation evidence, keep/remove decision |
-| 7 | Phases 3–4 + T5: Turborepo pilot | Task dependency/invalidation proof and keep/remove decision |
+| 7 | Phases 3–4 + T5: Nx local adoption | Task dependency/invalidation proof and keep/remove decision |
 | 8 | Phase 5: measured timer, fixture, build, and concurrency improvements | Repeated before/after measurements with preserved assertions |
 | 9 | Phase 6 + T6: performance/release evidence and accessibility scans | Separate performance results, explicit prerequisites, scan acceptance |
 
@@ -589,9 +589,10 @@ means verified evidence, not merely an implemented command. Tickets 01–06,
 08–10, 13–18, 20 and 21 have recorded completion. Ticket 17’s local worker
 decision passed final static/ordinary acceptance. Ticket 19 has actual
 packaged protocol/current-desktop proof, with eight legacy UI cases unexecuted
-because their profile controls are unbuilt and one legacy launch-refusal case failed. Ticket 22's final ordinary acceptance
+because their profile controls are unbuilt. The retained launch-refusal case now passes
+against the same candidate after the renderer projects main’s profile error. Ticket 22's final ordinary acceptance
 and inventory reconciliation passed; its outstanding proofs remain explicit. Ticket 07's hosted proof remains pending under
-the user's instruction to keep working locally; 11 and 12 remain blocked by it.
+the user's instruction to keep working locally; 11 remains blocked by it. Ticket 12’s local Nx adoption passes its graph, cache, failure and stack checks independently of hosted rollout.
 
 | Ticket | Outcome |
 |---|---|
@@ -606,14 +607,14 @@ the user's instruction to keep working locally; 11 and 12 remain blocked by it.
 | 09 | Complete: Vitest UI/HTML and bounded Electron failure evidence. |
 | 10 | Complete: optional pinned Bacon retained for Rust feedback. |
 | 11 | Pending: hosted cache timing/invalidation proof, blocked by 07. |
-| 12 | Pending: Turbo pilot, blocked by 11; no adoption claim. |
+| 12 | Complete: Nx local adoption; 16-project graph, cache invalidation/output restoration, failure ordering and stack compatibility verified. Remote caching remains separate. |
 | 13 | Complete: batched lint fixtures and journal initialization cleanup fix. |
 | 14 | Complete: explicit debug timing policies; release/production boundaries verified. |
 | 15 | Complete: fewer Git subprocesses with independently mutable scratch repositories. |
 | 16 | Complete: browser configuration retained; order/isolation and launcher fixes verified. |
 | 17 | Complete: bounded local protocol workers, two desktop workers, sharding omitted. |
 | 18 | Complete: separate startup/stream/resync performance workloads and truthful metrics. |
-| 19 | Partial: eleven current candidate cases pass; eight legacy cases unexecuted and one launch-refusal case failed. |
+| 19 | Partial: eleven current candidate cases and the retained launch-refusal case pass; eight legacy cases remain unexecuted because product UI is unbuilt. |
 | 20 | Complete: installed/live/device/system infrastructure; external/product proofs remain explicitly pending. |
 | 21 | Complete: targeted axe scans and keyboard acceptance; no full accessibility signoff. |
 | 22 | Partial: ordinary acceptance/inventory audit and defined cold comparison verified; hosted/trial/full-package proof pending. |
@@ -622,8 +623,8 @@ Keep Hyperfine for explicit measurement, Vitest UI/HTML and bounded Electron
 failure evidence for debugging, and optional Bacon for Rust feedback. Keep the
 existing browser runner and isolation. Retain targeted axe scans; their evidence
 does not establish complete accessibility conformance. Do not add sharding,
-change paid capacity, or claim CI cache/Turbo results without their required
-proof. Existing sccache behavior remains; no new caching trial is complete.
+change paid capacity, or claim hosted CI cache results without their required
+proof. Retain Nx core for local build/typecheck reuse and dependency ordering; test evidence remains uncached. Existing sccache behavior remains; no new hosted Rust caching trial is complete.
 
 | Comparable measured work | Before | After | Scope |
 |---|---:|---:|---|
@@ -646,7 +647,7 @@ restarted benchmark matrices; use existing controlled measurements and one
 final acceptance gate. No final median or tail estimate is claimed from one run.
 
 Required remaining proofs stay visible: hosted provisioning/transport/job
-execution, hosted cache invalidation/costs, the dependent Turbo pilot, legacy
+execution, hosted cache invalidation/costs, legacy
 packaged UI, signed/notarized distribution and separately provisioned physical,
 system and authenticated-provider requirements. The overhaul is not complete.
 
@@ -675,3 +676,7 @@ Repository policy and acceptance remain authoritative:
 [architecture](architecture.md), [protocol fixtures](../e2e/protocol/README.md),
 [desktop E2E](../e2e/desktop/README.md), and
 [shared reliability requirements](../.scratch/ade-v1/13-reliability/spec.md).
+
+### Nx default command integration — 2026-09-30
+
+Steps 1–4 are implemented locally: normal build/typecheck paths use Nx; protocol/desktop tasks declare build prerequisites and execute test-only commands; six independent repository checks run through the Nx scheduler with validated fresh reports; desktop production inputs exclude tests while typecheck inputs retain them. The static gate now has 23 top-level stages because six checks share one scheduling stage, with no coverage removed. Final static evidence: `static-e6ef3cc5-dd9e-4892-9f46-f00a696163f3`. Ticket 12 records cache-selection and focused acceptance evidence.

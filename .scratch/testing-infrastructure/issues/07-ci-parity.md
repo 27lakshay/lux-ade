@@ -10,10 +10,10 @@
 
 ## Acceptance criteria
 
-- [ ] Map local suite definitions into JavaScript/static, Rust/native, protocol and desktop jobs; retain doctests and dependency/license checks.
+- [x] Map local suite definitions into JavaScript/static, Rust/native, protocol and desktop jobs; retain doctests and dependency/license checks.
 - [ ] Start with supported macOS execution; move checks to Linux only after proving their portability. A fresh runner provisions its tools, browsers and native dependencies without live-provider credentials.
 - [x] Transfer immutable builds only across compatible jobs for the same source revision and material build inputs. Do not reuse profiles or test data.
-- [ ] Add bounded timeouts, cancellation of superseded PR runs and failure artifact uploads. Missing reports or skipped required jobs cannot yield aggregate success.
+- [x] Add bounded timeouts, cancellation of superseded PR runs and failure artifact uploads. Missing reports or skipped required jobs cannot yield aggregate success.
 - [x] Validate workflow configuration and demonstrate that representative provider, browser, protocol and desktop failures fail their corresponding jobs.
 - [ ] Record a hosted complete run after separately authorized push or dispatch. Until then, mark hosted proof pending and continue independent local work.
 - [x] Document required branch-protection check names without changing remote settings.
@@ -86,3 +86,7 @@ behavior and the hosted complete run remain unverified until separately authoriz
 Final local gate after removing every failure probe and extending build identity: `pnpm check:static` passed all 25 stages in `static-1e1f0eb7-dfe1-4633-b83b-d9dd4127a81a` (60.53 seconds). `git diff --check` and Actionlint also passed. Local implementation and checks are complete; ticket completion remains pending hosted evidence.
 
 User decision: keep working locally and leave hosted proof pending. No commit, push or workflow dispatch is authorized. Continue independent tickets; ticket 07 remains incomplete until hosted proof is available.
+
+### Local criteria reconciliation — 2026-09-30
+
+The current workflow defines separate JavaScript/static, native/Rust, protocol, desktop and dependency jobs, followed by an always-run Acceptance job. It retains doctests and the existing dependency policy. Each worker job has a 45-minute timeout, Acceptance has ten minutes, superseded PR runs cancel, and evidence uploads run with always(). Existing native-evidence regressions reject skipped jobs and missing reports. The implementation criteria are checked against this configuration and the recorded local probes; actual hosted timeout, cancellation, provisioning and transport behavior remain unverified. The user authorized a local commit and merge; the earlier no-commit instruction is superseded for that merge. Push and workflow dispatch remain unauthorized.

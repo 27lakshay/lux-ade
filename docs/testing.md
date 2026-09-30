@@ -391,8 +391,9 @@ Release executables use scratch profiles, scratch HOME and staged deterministic 
 Metadata stays outside the app so recording it cannot alter the packaged signature.
 
 Eight retained `package-desktop` cases assume profile controls absent from the current
-renderer. The ninth, launch refusal, failed waiting for a window and during teardown.
-Their acceptance is pending. The `package-desktop-current`
+renderer. Their acceptance is pending. The retained launch-refusal case passes against
+the actual candidate: the renderer displays main’s profile error, preserves the incompatible
+owner and registry, and the fixture stops only its own Electron child. The `package-desktop-current`
 project proves the built workspace shell, window relaunch and bundled-provider bridge;
 bridge sends do not prove composer interaction. For explicit partial validation:
 
@@ -638,3 +639,55 @@ health probes, watcher cadence and 10-second debounce cap keep their existing
 values. Pure due-time and drain decisions take explicit timestamps. Acceptance
 still uses real processes, durable receipts, handler effects and process exit;
 the preset changes the intervals, not the outcomes or replay rules.
+
+
+## Nx development commands
+
+Nx 23.2.1 schedules existing commands and caches development builds and package type checks.
+It uses pnpm 12, Node 24 and the current TypeScript 7 compiler. Explicit targets retain Electron
+Vite 6 and Vitest 5 commands; no framework inference plugin is required.
+
+```sh
+pnpm build:nx
+pnpm typecheck:nx
+pnpm nx:check
+pnpm exec nx show project @ade/desktop --json
+pnpm exec nx graph
+pnpm exec nx affected -t build,typecheck --base=main
+pnpm exec nx run ade-protocol-tests:test e2e/protocol/ops/diagnostic-correlation.spec.ts
+pnpm exec nx run ade-desktop-tests:test
+pnpm exec nx run lux-ade-workspace:static-checks
+```
+
+`typecheck:nx` checks workspace packages; the complete static gate also checks E2E TypeScript
+and all repository invariants. Nx affected commands are development feedback. Use
+`pnpm test:affected --base main --list` for the conservative acceptance selection, and the
+complete ordinary acceptance for integration. Explicit Cargo project relationships include
+Rust changes; committed contract verification still runs in the complete static gate.
+
+Build outputs are declared as package `dist` directories and desktop `out`. Inputs include
+package/dependency source, lockfile, workspace configuration, Node/pnpm/platform identity and
+material Node/Electron build environment. Source analysis is disabled for the initial graph;
+`nx:check` compares the actual graph with Cargo metadata and verifies cross-language edges.
+The static gate runs this guard. Add a project definition when adding a Cargo crate or a
+non-package acceptance suite, and declare its real dependencies.
+
+All test, provider, acceptance, native, candidate, live, system, device and performance targets
+explicitly disable task-result caching. Existing runners continue to create fresh native
+reports. Use `--skipNxCache` to force development builds/checks to execute. A cache hit restores
+outputs and replays logs; report it as reuse rather than current test execution.
+
+Normal `pnpm build`, `pnpm build:sdk` and `pnpm typecheck` now use Nx. The complete typecheck
+adds the explicit E2E TypeScript target after package checks. Leaf package commands remain
+directly executable. Avoid scripts that route back into their own Nx target. Targets producing evidence use `parallelism: false` to avoid
+competing aggregate commands and overlapping output writers. Nx schedules up to three tasks;
+Cargo and Playwright retain their existing worker limits. Rust compilation caching remains
+owned by Cargo/sccache. Nx Cloud and hosted distribution are not configured.
+
+### Static checks and build prerequisites
+
+`pnpm check:static` schedules six independent repository checks through `pnpm check:analysis`: formatting, contract verification, architecture, API parity, lint and dead-code checks. Nx runs up to three at once. Type-aware lint waits for SDK declarations. Each check writes a fresh summary beneath the parent run’s `analysis/` directory; the static gate rejects missing, incomplete or unexpected command evidence. The gate groups these six checks into one static-analysis stage, so its 23 top-level stages cover the same checks as the earlier 28-stage layout. Other native/test stages retain their existing evidence and sequencing.
+
+Protocol and desktop Nx test targets declare build dependencies and an uncached backend build, then execute their `:only` commands. Within one Nx task graph, shared prerequisites execute once. Direct pnpm E2E wrappers remain available and prepare their own prerequisites.
+
+Build inputs exclude Markdown. Desktop build inputs also exclude test/spec files and Vitest configuration, which Electron Vite does not compile as build entries. Typecheck inputs continue to include tests. TypeScript package builds retain their compiler inputs, including any tests that their tsconfig could emit. Dependency inputs remain conservative across Rust and contracts. Repository checks, E2E typechecking and discovery remain uncached; only deterministic development builds and package typechecks reuse results.

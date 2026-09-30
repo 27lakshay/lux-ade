@@ -1,0 +1,6 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "ade-daemon",
+  "implicitDependencies": ["ade-core", "ade-platform", "ade-runtime"],
+  "targets": {}
+}

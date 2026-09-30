@@ -36,5 +36,21 @@
       "types": "./dist/journals.d.ts",
       "default": "./dist/journals.js"
     }
+  },
+  "nx": {
+    "targets": {
+      "build": {
+        "outputs": [
+          "{projectRoot}/dist"
+        ]
+      },
+      "test": {
+        "cache": false,
+        "parallelism": false,
+        "dependsOn": [
+          "build"
+        ]
+      }
+    }
   }
 }

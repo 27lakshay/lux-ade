@@ -11,5 +11,13 @@
   },
   "scripts": {
     "test": "node ../../scripts/test-providers.mjs --provider claude"
+  },
+  "nx": {
+    "targets": {
+      "test": {
+        "cache": false,
+        "parallelism": false
+      }
+    }
   }
 }

@@ -1129,7 +1129,6 @@ test('packaged launcher preserves an incompatible live owner and explains recove
     server.listen(socket, resolveListen)
   })
   let application: Awaited<ReturnType<typeof electron.launch>> | null = null
-  let verified = false
   try {
     application = await electron.launch({
       executablePath: executable,
@@ -1139,6 +1138,7 @@ test('packaged launcher preserves an incompatible live owner and explains recove
         PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
         ADE_PROFILES_HOME: profilesHome,
         ADE_E2E_USER_DATA_DIR: join(directory, 'electron'),
+        ADE_E2E_HIDE_WINDOW: '1',
       },
     })
     const window = await application.firstWindow()
@@ -1148,12 +1148,10 @@ test('packaged launcher preserves an incompatible live owner and explains recove
     expect(await readFile(join(profilesHome, 'registry.json'), 'utf8')).toBe(registryBefore)
     const owner = await rpc(socket, { op: 'hello' })
     expect(owner.application_protocol).toBe('future-v2')
-    verified = true
   } finally {
-    if (verified) await application!.close()
-    else if (application) {
-      // The startup path may never open a window or finish graceful quit. Kill only
-      // the Electron child this fixture launched; the incompatible owner stays alive.
+    if (application) {
+      // This refusal fixture has no connected daemon or admitted work. Stop only its
+      // owned Electron child; the incompatible owner must remain alive throughout.
       const child = application.process()
       if (child.exitCode === null && child.signalCode === null) {
         const exited = once(child, 'exit')

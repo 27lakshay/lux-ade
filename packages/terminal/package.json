@@ -16,5 +16,8 @@
   },
   "dependencies": {
     "@ade/contracts": "workspace:*"
+  },
+  "nx": {
+    "targets": {}
   }
 }

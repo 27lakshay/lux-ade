@@ -14,6 +14,8 @@ import { ErrorReport } from '../provisional/ErrorReport'
 import { NotFound } from '../provisional/NotFound'
 import { OnboardingScreen } from '../provisional/OnboardingScreen'
 import { SettingsScreen } from '../provisional/SettingsScreen'
+import { ProfileRecovery } from '../provisional/ProfileRecovery'
+import type { ProfileStore } from '../state/profile-store'
 
 // Full-screen views. The route picks the screen: `/` is the workspace, `/onboarding` and
 // `/settings` replace it. Panes, tabs and open conversations are never in the URL; they are layout
@@ -25,14 +27,16 @@ import { SettingsScreen } from '../provisional/SettingsScreen'
 
 export function createAppRouter({
   Workspace,
+  profile,
   history = createHashHistory(),
 }: {
   Workspace: ComponentType
+  profile?: ProfileStore
   history?: RouterHistory
 }) {
   function Root() {
     const onWorkspace = Boolean(useMatchRoute()({ to: '/' }))
-    return (
+    const screens = (
       <>
         {/* Full height, so the workspace inside (sized with h-full) fills the window. */}
         <div hidden={!onWorkspace} data-testid="workspace" className="h-full">
@@ -41,6 +45,7 @@ export function createAppRouter({
         <Outlet />
       </>
     )
+    return profile ? <ProfileRecovery store={profile}>{screens}</ProfileRecovery> : screens
   }
   const root = createRootRoute({ component: Root, errorComponent: RouteError, notFoundComponent: NotFound })
   const workspace = createRoute({ getParentRoute: () => root, path: '/', component: () => null })

@@ -16,5 +16,17 @@
       "default": "./dist/index.js"
     },
     "./schema.json": "./schema/contracts.json"
+  },
+  "nx": {
+    "targets": {
+      "build": {
+        "outputs": [
+          "{projectRoot}/dist"
+        ]
+      }
+    },
+    "implicitDependencies": [
+      "ade-core"
+    ]
   }
 }

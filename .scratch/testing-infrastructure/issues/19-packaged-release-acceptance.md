@@ -4,7 +4,7 @@
 
 **Status:** ready-for-agent
 
-**Completion:** local infrastructure verified; full packaged acceptance pending eight unbuilt UI cases and one failed legacy launch-refusal case
+**Completion:** local infrastructure verified; full packaged acceptance pending eight unbuilt UI cases
 
 **What to build:** An explicit release-candidate command verifies both protocol and desktop behavior against the same packaged application artifact.
 
@@ -142,3 +142,47 @@ Final static verification and restored diagnostic verification are pending below
 ### Final cleanup verification
 
 The restored cleanup diagnostic (`package-8a3ec175-7b01-4eff-affb-e4bd6fb9a195`) retained the expected failed recovery-window case and exited 1 without a worker teardown error. No candidate executable or helper survived. This verifies cleanup only; packaged recovery behavior remains failed. The final static gate (`static-1c426dee-d7c6-4aa4-9397-d2972cfbcb71`) passed all 27 stages in 60.181 seconds. The earlier complete ordinary acceptance remains valid; its suites were not rerun for this legacy fixture-only cleanup change.
+
+
+### 2026-09-30 — Recovery behavior verified on the rebuilt candidate
+
+The renderer now projects main’s existing profile error through a Zustand store.
+The recovery screen hides the mounted workspace while showing the original error
+and guidance. A pushed state wins over a delayed initial read. Successful recovery
+restores the workspace. This adds no package or process ownership change.
+
+The original incompatible-owner assertions pass in
+`package-cb3f19ea-0059-4800-a612-5d6f3bdcffea`: recovery alert, a live owner,
+unchanged registry and a subsequent incompatible hello. The fixture uses the shared
+hidden-window environment and stops only its owned Electron child. Graceful quit
+hung even after every assertion passed; no assertion, retry or product deadline
+was relaxed. Earlier failed evidence remains in the run directories.
+
+The same candidate passes all eleven current cases in
+`candidate-d5cb60a4-ff53-4cbb-b80f-fc2fee63ffed`, with no skips or retries.
+Candidate SHA-256: `ed9e6d860829e4b93f9505a6fb9b977c319c6bd8e260d8695ea6e096f0aa39d5`;
+revision `d08d46461903b814e30ab57de1e173f28ed9e456`, dirty source SHA-256
+`f9bb0be6b4b03c54d85806bb45410c5fea973ed76962b8e2473a4af7f7b4210b`.
+The four focused browser checks pass in
+`browser-7cef146e-4b55-432e-bf93-9def1fb2c6eb`, including workspace visibility.
+Earlier removal of recovery rendering made both recovery tests fail; restoring
+it passed. These are correctness checks, not performance benchmarks.
+
+This supersedes the earlier failed launch-refusal classification. Twelve packaged
+cases are verified across two selections against the same artifact. Eight legacy
+profile/composer UI cases remain required and unexecuted. Ticket 19 stays incomplete.
+
+The native `capturePage` image confirms the recovery screen is fully visible with
+no workspace sidebars painted over it. The image is retained at
+`test-results/ticket19-recovery.png`.
+
+Keyboard activation of Back to workspace leaves the recovery alert visible while
+the profile error persists. The ordinary desktop suite passes all eight cases in
+`desktop-ec21c68e-b773-49ed-aa46-01c70c30baef`. After packaging, the static gate
+required replacing two raw paragraphs with ADE’s `Body` component. The packaged
+evidence above describes the artifact before that typography-only correction;
+final-source browser checks are included in the static gate.
+
+Final source passes all 27 static stages in `static-40b11402-72a1-4e6b-87ce-0db92f69973b`, including all
+315 browser tests. The first static attempt rejected raw paragraphs; the corrected
+run passes without suppressions. No full protocol benchmark was repeated.

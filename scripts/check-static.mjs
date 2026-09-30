@@ -1,4 +1,5 @@
 // Static and in-process validation. Full application acceptance adds protocol and desktop E2E.
+import { analysisEvidence } from './check-analysis.mjs'
 import { nodeTestGlobs, pythonChecks } from './test-catalog.mjs'
 import { selectStaticStages } from './static-stage-groups.mjs'
 import { createRun, runStages } from './run-stages.mjs'
@@ -32,11 +33,16 @@ writeFileSync(
 )
 const steps = [
   ['rustfmt', [...cargo, 'fmt', '--all', '--check']],
-  // TypeScript and JavaScript formatting (.oxfmtrc.json).
-  ['oxfmt', ['pnpm', 'format:check']],
-  // The committed packages/contracts must match the Rust contract types.
-  ['contract check', ['pnpm', 'contract:check']],
-  ['architecture', ['python3', 'scripts/check_architecture.py']],
+  // Nx schedules independent repository checks; each retains its own fresh stage report.
+  [
+    'static analysis',
+    ['pnpm', 'check:analysis'],
+    {
+      env: { ADE_STATIC_REPORT_DIR: directory },
+      after: () => analysisEvidence(directory),
+    },
+  ],
+  ['nx graph', ['pnpm', 'nx:check']],
   // Unique checks retained from the older shell gate, shared with discovery.
   ...pythonChecks.map((file) => [
     file,
@@ -45,17 +51,12 @@ const steps = [
       : ['python3', 'scripts/run_python_tests.py', file, reportFile(`${file}.json`)],
     file === 'test_native_accessibility.py' ? {} : { reports: [reportFile(`${file}.json`)] },
   ]),
-  // Every contract operation has a CLI command or a written exemption, and an SDK validator.
-  ['api parity', ['node', 'scripts/api-parity.mjs']],
   // Dependent packages typecheck against the SDK's built declarations.
   ['sdk build', ['pnpm', 'build:sdk']],
   ['typecheck', ['pnpm', 'typecheck']],
-  // Type-aware lint of every TypeScript and JavaScript file (.oxlintrc.json).
-  ['lint', ['pnpm', 'lint']],
-  ['fallow', ['pnpm', 'deadcode']],
   // The SDK was built before typecheck; consumers reuse that immutable output.
-  ['cli build', ['pnpm', '--filter', '@ade/cli', 'build']],
-  ['desktop build', ['pnpm', '--filter', '@ade/desktop', 'build']],
+  ['cli build', ['pnpm', 'exec', 'nx', 'run', '@ade/cli:build']],
+  ['desktop build', ['pnpm', 'exec', 'nx', 'run', '@ade/desktop:build']],
   // In-process tests of pure TypeScript cores, beside their modules.
   [
     'js pure tests',
@@ -88,7 +89,7 @@ const steps = [
   ['clippy', [...cargo, 'clippy', '--locked', '--workspace', ...features, '--all-targets', '--', '-D', 'warnings']],
   [
     'test discovery',
-    ['node', 'scripts/check-test-discovery.mjs'],
+    ['pnpm', 'exec', 'nx', 'run', 'lux-ade-workspace:discovery'],
     {
       env: { ADE_DISCOVERY_REPORT: reportFile('discovery.json') },
       after: () => {

@@ -16,3 +16,6 @@
 # Vitest browser mode's failure screenshots.
 /apps/*/.vitest/
 /.dev/
+
+# Nx graph state and workspace-local diagnostics.
+/.nx/

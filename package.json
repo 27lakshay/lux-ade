@@ -6,13 +6,13 @@
   "scripts": {
     "prepare": "husky",
     "dev": "pnpm build:sdk && pnpm --filter @ade/cli build && node scripts/dev-desktop.mjs",
-    "build": "pnpm build:sdk && pnpm --filter @ade/cli build && pnpm --filter @ade/desktop build",
-    "build:sdk": "pnpm --filter @ade/contracts build && pnpm --filter @ade/client build",
+    "build": "nx run-many -t build",
+    "build:sdk": "nx run-many -t build -p @ade/contracts @ade/client",
     "contract:generate": "node scripts/generate-contracts.mjs",
     "contract:check": "node scripts/generate-contracts.mjs --check",
     "build:backend": "node scripts/cargo.mjs build --locked -p ade-daemon -p ade-runtime --features ade-runtime/native-terminal --bins",
     "package:mac": "node scripts/package-macos.mjs",
-    "typecheck": "pnpm --filter @ade/contracts typecheck && pnpm --filter @ade/client typecheck && pnpm --filter @ade/terminal typecheck && pnpm --filter @ade/plugin-host typecheck &&pnpm --filter @ade/cli typecheck && pnpm --filter @ade/desktop typecheck && tsc -p e2e/protocol/tsconfig.json && tsc -p e2e/desktop/tsconfig.json",
+    "typecheck": "pnpm typecheck:nx && nx run lux-ade-workspace:e2e-typecheck",
     "test:e2e:protocol": "pnpm build:backend && pnpm build:sdk && pnpm --filter @ade/cli build && pnpm test:e2e:protocol:only",
     "test:e2e:protocol:only": "playwright test --config playwright.protocol.config.ts",
     "test:e2e:protocol:faults": "pnpm build:backend && pnpm build:sdk && pnpm --filter @ade/cli build && pnpm test:e2e:protocol:faults:only",
@@ -42,7 +42,12 @@
     "test:providers:installed": "node scripts/test-installed-providers.mjs",
     "test:e2e:devices": "pnpm build:backend && pnpm build:sdk && pnpm --filter @ade/cli build && pnpm test:e2e:devices:only",
     "test:e2e:devices:only": "playwright test --config playwright.devices.config.ts",
-    "test:e2e:live:handoff": "python3 scripts/test_agent_handoff_live.py"
+    "test:e2e:live:handoff": "python3 scripts/test_agent_handoff_live.py",
+    "build:nx": "nx run-many -t build",
+    "typecheck:nx": "nx run-many -t typecheck",
+    "nx:graph": "nx graph",
+    "nx:check": "node scripts/check-nx.mjs",
+    "check:analysis": "nx run-many -t format-check contract-check architecture-check api-parity lint-check deadcode-check -p lux-ade-workspace"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.13.0",
@@ -55,11 +60,199 @@
     "husky": "9.1.7",
     "json-schema-to-typescript": "16.0.0",
     "lint-staged": "17.6.0",
+    "nx": "23.2.1",
     "oxfmt": "0.70.0",
     "oxlint": "1.85.0",
     "oxlint-plugin-react-doctor": "0.9.14",
     "oxlint-tsgolint": "7.0.2003",
     "playwright-core": "1.60.0",
     "typescript": "7.0.2"
+  },
+  "nx": {
+    "includedScripts": [],
+    "targets": {
+      "acceptance": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "parallelism": false,
+        "options": {
+          "command": "pnpm test:acceptance",
+          "cwd": "."
+        }
+      },
+      "affected": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "parallelism": false,
+        "options": {
+          "command": "pnpm test:affected",
+          "cwd": "."
+        }
+      },
+      "backend-build": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "parallelism": false,
+        "options": {
+          "command": "pnpm build:backend",
+          "cwd": "."
+        }
+      },
+      "providers": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "parallelism": false,
+        "options": {
+          "command": "pnpm test:providers",
+          "cwd": "."
+        }
+      },
+      "candidate": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "parallelism": false,
+        "options": {
+          "command": "pnpm test:candidate",
+          "cwd": "."
+        }
+      },
+      "performance": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "parallelism": false,
+        "options": {
+          "command": "pnpm test:performance",
+          "cwd": "."
+        }
+      },
+      "live": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "parallelism": false,
+        "options": {
+          "command": "pnpm test:e2e:live",
+          "cwd": "."
+        }
+      },
+      "system": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "parallelism": false,
+        "options": {
+          "command": "pnpm test:e2e:system",
+          "cwd": "."
+        }
+      },
+      "devices": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "parallelism": false,
+        "options": {
+          "command": "pnpm test:e2e:devices",
+          "cwd": "."
+        }
+      },
+      "native-checks": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "parallelism": false,
+        "options": {
+          "command": "pnpm check:static --group native",
+          "cwd": "."
+        }
+      },
+      "static-checks": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "parallelism": false,
+        "options": {
+          "command": "pnpm check:static",
+          "cwd": "."
+        }
+      },
+      "format-check": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "command": "node scripts/check-analysis.mjs format-check",
+          "cwd": "."
+        }
+      },
+      "contract-check": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "command": "node scripts/check-analysis.mjs contract-check",
+          "cwd": "."
+        }
+      },
+      "architecture-check": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "command": "node scripts/check-analysis.mjs architecture-check",
+          "cwd": "."
+        }
+      },
+      "api-parity": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "command": "node scripts/check-analysis.mjs api-parity",
+          "cwd": "."
+        }
+      },
+      "lint-check": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "command": "node scripts/check-analysis.mjs lint-check",
+          "cwd": "."
+        },
+        "dependsOn": [
+          {
+            "target": "build",
+            "projects": [
+              "@ade/contracts",
+              "@ade/client"
+            ]
+          }
+        ]
+      },
+      "deadcode-check": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "command": "node scripts/check-analysis.mjs deadcode-check",
+          "cwd": "."
+        }
+      },
+      "e2e-typecheck": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "dependsOn": [
+          {
+            "target": "build",
+            "projects": [
+              "@ade/contracts",
+              "@ade/client"
+            ]
+          }
+        ],
+        "options": {
+          "command": "tsc -p e2e/protocol/tsconfig.json && tsc -p e2e/desktop/tsconfig.json",
+          "cwd": "."
+        }
+      },
+      "discovery": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "parallelism": false,
+        "options": {
+          "command": "pnpm test:discovery",
+          "cwd": "."
+        }
+      }
+    }
   }
 }

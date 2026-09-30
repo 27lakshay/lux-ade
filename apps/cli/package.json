@@ -17,5 +17,18 @@
   "devDependencies": {
     "@types/node": "24.6.0",
     "typescript": "7.0.2"
+  },
+  "nx": {
+    "targets": {
+      "build": {
+        "outputs": [
+          "{projectRoot}/dist"
+        ]
+      },
+      "test": {
+        "cache": false,
+        "parallelism": false
+      }
+    }
   }
 }

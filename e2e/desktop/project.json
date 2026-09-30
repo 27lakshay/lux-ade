@@ -1,0 +1,32 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "ade-desktop-tests",
+  "implicitDependencies": [
+    "ade-daemon",
+    "ade-runtime",
+    "@ade/client",
+    "@ade/cli",
+    "ade-claude-adapter",
+    "ade-opencode-adapter",
+    "ade-omp-bridge",
+    "@ade/desktop"
+  ],
+  "targets": {
+    "test": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "parallelism": false,
+      "dependsOn": [
+        "^build",
+        {
+          "projects": ["lux-ade-workspace"],
+          "target": "backend-build"
+        }
+      ],
+      "options": {
+        "command": "pnpm test:e2e:desktop:only",
+        "cwd": "."
+      }
+    }
+  }
+}

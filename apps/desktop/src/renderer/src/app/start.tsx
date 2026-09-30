@@ -10,6 +10,7 @@ import { Workspace } from '../features/workspace/Workspace'
 import { handleLayoutCommand, registerLayoutCommands } from '../features/workspace/model/layout-commands'
 import { hostConnection, startLayoutSync } from '../features/workspace/model/layout-sync'
 import { createDaemonStore } from '../state/daemon-store'
+import { createProfileStore } from '../state/profile-store'
 import { DaemonStoreContext } from '../state/hooks'
 import { IconProvider } from '../icons/Icon'
 import { MotionProvider } from './MotionProvider'
@@ -51,8 +52,13 @@ export async function start(): Promise<void> {
     new URLSearchParams(window.location.search).has('bench')
       ? await loadBench()
       : undefined
-  const router = createAppRouter({ Workspace: bench ? () => <Workspace renderContent={bench} /> : Workspace })
   const daemon = window.adeHost ? createDaemonStore(window.adeHost) : null
+  const profile = window.adeHost ? createProfileStore(window.adeHost.profiles) : null
+  if (profile) window.addEventListener('pagehide', profile.stop, { once: true })
+  const router = createAppRouter({
+    Workspace: bench ? () => <Workspace renderContent={bench} /> : Workspace,
+    profile: profile?.store,
+  })
   if (daemon && window.adeHost) startProfileSettings(window.adeHost, daemon.store)
   // This window's layouts come from the daemon; the bench serves its own (dev/bench.tsx).
   if (daemon && !bench) {

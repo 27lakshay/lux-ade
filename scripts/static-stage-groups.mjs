@@ -1,9 +1,8 @@
 // Each maintained stage belongs to exactly one CI job. The local gate selects all.
 export const staticStageGroups = {
   rustfmt: 'native',
-  oxfmt: 'javascript',
-  'contract check': 'javascript',
-  architecture: 'javascript',
+  'static analysis': 'javascript',
+  'nx graph': 'javascript',
   'test_native_report.py': 'javascript',
   'test_live_profile.py': 'javascript',
   'test_runtime_test_support.py': 'javascript',
@@ -13,11 +12,8 @@ export const staticStageGroups = {
   'test_build_identity.py': 'javascript',
   'test_first_launch.py': 'javascript',
   'test_native_accessibility.py': 'native',
-  'api parity': 'javascript',
   'sdk build': 'javascript',
   typecheck: 'javascript',
-  lint: 'javascript',
-  fallow: 'javascript',
   'cli build': 'javascript',
   'desktop build': 'javascript',
   'js pure tests': 'javascript',
