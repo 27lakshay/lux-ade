@@ -20,6 +20,10 @@ pub fn operations() -> Vec<OperationSpec> {
             "conversation.history",
             Tier::Query,
         ),
+        OperationSpec::new::<ConversationExportRequest, ConversationExport>(
+            "conversation.export",
+            Tier::Query,
+        ),
         OperationSpec::new::<AgentSendRequest, Ack>("agent.send", Tier::EffectCommand),
         OperationSpec::new::<AgentAnswerRequest, AgentAnswerOutcome>(
             "agent.answer",
@@ -84,6 +88,15 @@ pub fn operations() -> Vec<OperationSpec> {
             "conversation.controls",
             Tier::Query,
         ),
+        OperationSpec::new::<ConversationSettingsRequest, ConversationSettings>(
+            "conversation.settings",
+            Tier::Query,
+        ),
+        // Stores a new configuration revision and relaunches an idle Agent under it.
+        OperationSpec::new::<ConversationSettingsUpdateRequest, ConversationSettingsUpdated>(
+            "conversation.settings.update",
+            Tier::EffectCommand,
+        ),
         // Adds user input to a running provider turn; a retry must not add it twice.
         OperationSpec::new::<ConversationSteerRequest, ConversationControlReply>(
             "conversation.steer",
@@ -146,6 +159,68 @@ pub struct ConversationMarkSeenRequest {
     /// client has not shown yet stays unread.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub through: Option<i64>,
+}
+
+/// `conversation.export`: one page of a conversation's retained messages in
+/// order, readable without its provider, its credentials or any renderer.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ConversationExportRequest {
+    pub conversation_id: String,
+    /// Export messages after this sequence; from the first when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after_sequence: Option<i64>,
+    /// At most 32, the bounded read window; 32 when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+}
+
+wire_tag!(ConversationExportTag, "conversation_export");
+
+/// Whether the provider that ran a conversation can continue it natively.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+pub struct ExportContinuity {
+    /// The provider is installed and registered in this profile now.
+    pub provider_available: bool,
+    /// The conversation names a native session a provider could resume.
+    pub native_session: Option<String>,
+    /// True only when both hold. Readability never implies it.
+    pub native_resume_possible: bool,
+    pub reason: String,
+}
+
+/// One attachment of an exported message and whether its payload remains.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+pub struct ExportedAttachment {
+    pub attachment: Attachment,
+    /// `live`, or why the payload is gone (such as `reclaimed`).
+    pub state: String,
+}
+
+/// One retained message, with its attachments' availability.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ExportedMessage {
+    pub message: crate::model::Message,
+    pub attachments: Vec<ExportedAttachment>,
+}
+
+/// The `conversation.export` reply.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ConversationExport {
+    #[serde(rename = "type")]
+    pub tag: ConversationExportTag,
+    pub conversation: crate::model::Conversation,
+    /// The daemon boot and feed revision this page was read at; a reader that
+    /// sees either change between pages is reading a history that changed.
+    pub boot_id: String,
+    pub revision: u64,
+    pub history_epoch: u64,
+    pub continuity: ExportContinuity,
+    pub messages: Vec<ExportedMessage>,
+    /// Pass as `after_sequence` for the next page; null on the last.
+    pub next_after_sequence: Option<i64>,
+    /// What this export does not contain: provider-native history that ADE
+    /// never retained, and private reasoning a provider withheld.
+    pub not_included: Vec<String>,
 }
 
 /// `conversation.get`: one page of a conversation's messages, newest first.
@@ -745,6 +820,140 @@ pub struct AttachmentReclaim {
 // context state that the provider did not report.
 
 wire_tag!(ConversationControlsTag, "conversation_controls");
+wire_tag!(ConversationSettingsTag, "conversation_settings");
+wire_tag!(
+    ConversationSettingsUpdatedTag,
+    "conversation_settings_updated"
+);
+
+/// `conversation.settings`: the requested provider settings, what the provider
+/// reported in effect, and the choices offered now.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ConversationSettingsRequest {
+    pub conversation_id: String,
+}
+
+/// Where an effective value comes from.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SettingSource {
+    /// The provider reported it when its session opened.
+    NativeReported,
+    /// The provider did not report it; ADE requested this value.
+    RequestedOnly,
+    /// Neither requested nor reported: the provider's own default applies, unseen.
+    ProviderDefault,
+}
+
+/// Where a setting's choices come from.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ChoicesSource {
+    /// The open provider session listed them for the model in question,
+    /// narrowed to what ADE can request.
+    NativeReported,
+    /// ADE's table for the provider: the provider listed none for this model.
+    Static,
+    /// No list: discovery is unavailable and ADE has no table (model is free text).
+    Unavailable,
+}
+
+/// One setting: what ADE asked for, what is known to be in effect, and why.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+pub struct SettingState {
+    pub requested: Option<String>,
+    /// Null when nothing reports the value in effect.
+    pub effective: Option<String>,
+    pub source: SettingSource,
+    /// Values ADE can request now, for the requested model (or the model in
+    /// effect); empty when unsupported or when `choices_source` is `unavailable`.
+    pub choices: Vec<String>,
+    pub choices_source: ChoicesSource,
+    /// Whether ADE can change this setting for the provider at all.
+    pub supported: bool,
+    /// Why the setting is unsupported or limited.
+    pub reason: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+pub struct ConversationSettings {
+    #[serde(rename = "type")]
+    pub tag: ConversationSettingsTag,
+    pub conversation_id: String,
+    pub provider: String,
+    /// Guards `conversation.settings.update`; rises with every change.
+    pub revision: u64,
+    pub model: SettingState,
+    pub reasoning_effort: SettingState,
+    pub permission_mode: SettingState,
+    /// What the open provider session listed; choices are rediscovered from it.
+    pub discovery: SettingsDiscovery,
+    /// Whether an Agent is connected; a change relaunches an idle Agent so it applies.
+    pub agent_connected: bool,
+    /// A change is refused while a turn runs.
+    pub turn_running: bool,
+}
+
+/// The models a connected provider session listed when it opened. Discovery
+/// belongs to that session's installation and account: with no Agent
+/// connected, or a provider that lists nothing, it is unavailable and says why.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+pub struct SettingsDiscovery {
+    pub available: bool,
+    /// The native call that listed the models, such as `model/list`.
+    pub source: Option<String>,
+    /// The Agent run whose session listed them.
+    pub source_attempt_id: Option<String>,
+    /// Why discovery is unavailable.
+    pub reason: Option<String>,
+    pub models: Vec<DiscoveredModel>,
+}
+
+/// One listed model, as the provider reported it, with what ADE would offer
+/// for the settings that depend on it were it selected.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+pub struct DiscoveredModel {
+    pub native: crate::provider::NativeModel,
+    pub reasoning_choices: Vec<String>,
+    pub reasoning_choices_source: ChoicesSource,
+    pub permission_choices: Vec<String>,
+    pub permission_choices_source: ChoicesSource,
+}
+
+/// `conversation.settings.update`: change requested settings at a known revision.
+/// An absent field keeps its value; an empty `model` or `reasoning_effort`
+/// returns it to the provider's default. The model is applied before the
+/// settings that depend on it, and those (the new values and the ones kept)
+/// are checked against the choices the provider listed for the new model; a
+/// value it does not offer refuses the whole change, so nothing is applied.
+/// Nothing is widened or substituted implicitly.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ConversationSettingsUpdateRequest {
+    pub operation_id: String,
+    pub conversation_id: String,
+    pub expected_revision: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission_mode: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+pub struct ConversationSettingsUpdated {
+    #[serde(rename = "type")]
+    pub tag: ConversationSettingsUpdatedTag,
+    pub conversation_id: String,
+    /// Settings whose requested value changed.
+    pub changed: Vec<String>,
+    /// Whether the idle Agent was relaunched under the new settings.
+    pub relaunched: bool,
+    /// Set when the stored change could not be applied natively. The stored
+    /// revision stays; it is not rolled back, and the Conversation reports the error.
+    pub native_error: Option<String>,
+    pub settings: ConversationSettings,
+}
 wire_tag!(ConversationControlReplyTag, "conversation_control");
 wire_tag!(ConversationRewindPreviewTag, "conversation_rewind_preview");
 wire_tag!(ConversationSnoozeReplyTag, "conversation_snooze");
@@ -1187,6 +1396,8 @@ mod tests {
             ("attachment.reclaim.preview", "query"),
             ("attachment.reclaim.apply", "idempotent_command"),
             ("conversation.controls", "query"),
+            ("conversation.settings", "query"),
+            ("conversation.settings.update", "effect_command"),
             ("conversation.steer", "effect_command"),
             ("conversation.compact", "effect_command"),
             ("conversation.rewind.preview", "query"),

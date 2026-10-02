@@ -1,17 +1,13 @@
 import { test, expect } from 'bun:test'
-import { Database } from 'bun:sqlite'
 import { mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { ChildTranscripts, readChildTranscript } from './child-transcripts.mjs'
+import { readChildTranscript } from './child-transcripts.mjs'
 
-test('child reference survives restart; reader follows ancestry and rejects unrelated parents and replacement files', async () => {
+test('child reader follows ancestry, hides private thinking and rejects a replacement file', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'ade-child-reader-'))
-  const filename = join(directory, 'child.jsonl'),
-    database = join(directory, 'references.sqlite')
-  let db = new Database(database)
+  const filename = join(directory, 'child.jsonl')
   try {
-    let reader = new ChildTranscripts(db)
     const records = [
       { type: 'session', id: 'native-child', version: 3, cwd: directory, timestamp: new Date().toISOString() },
       { type: 'message', id: 'user', parentId: null, message: { role: 'user', content: 'Task' } },
@@ -36,24 +32,16 @@ test('child reference survives restart; reader follows ancestry and rejects unre
       },
     ]
     await writeFile(filename, records.map((x) => JSON.stringify(x)).join('\n') + '\n{"partial":')
-    reader.remember('parent', { id: 'child', sessionFile: filename })
-    const direct = await readChildTranscript(filename, 'child', 0)
-    const first = await reader.read('parent', 'child', 0)
-    expect(direct.page).toEqual(first)
-    expect(direct.header_id).toBe('native-child')
-    expect(first.items.map((i) => i.text)).toEqual(['Task', 'Current answer'])
+    const first = await readChildTranscript(filename, 'child', 0)
+    expect(first.header_id).toBe('native-child')
+    expect(first.page.items.map((i) => i.text)).toEqual(['Task', 'Current answer'])
     expect(JSON.stringify(first)).not.toContain('PRIVATE')
-    db.close()
-    db = new Database(database)
-    reader = new ChildTranscripts(db)
-    expect(await reader.read('parent', 'child', 0)).toEqual(first)
-    await expect(reader.read('other', 'child', 0)).rejects.toThrow('not announced')
-    expect(() => reader.remember('parent', { id: 'child', sessionFile: filename + '.other' })).toThrow('path changed')
+    expect(await readChildTranscript(filename, 'child', 0, first.header_id)).toEqual(first)
     records[0].id = 'replacement'
     await writeFile(filename, records.map((x) => JSON.stringify(x)).join('\n') + '\n')
-    await expect(reader.read('parent', 'child', 0)).rejects.toThrow('identity changed')
+    await expect(readChildTranscript(filename, 'child', 0, first.header_id)).rejects.toThrow('identity changed')
+    await expect(readChildTranscript('relative.jsonl', 'child', 0)).rejects.toThrow('identity')
   } finally {
-    db.close()
     await rm(directory, { recursive: true, force: true })
   }
 })

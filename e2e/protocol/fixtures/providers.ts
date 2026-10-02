@@ -1,7 +1,7 @@
 // Deterministic process fixtures. Scratch profiles launch Rust-supervised v2
-// workers; an isolated Node loader substitutes only the Claude SDK import.
+// workers; the Claude worker loads its SDK double through ADE_E2E_CLAUDE_SDK.
 // The mock SDK never calls a model or reads a real account.
-import { readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { repositoryRoot } from './environment'
 
@@ -52,7 +52,9 @@ export function providerEnvironment(profileRoot: string): Record<string, string>
     ADE_CODEX_BIN: join(repositoryRoot, 'scripts/fixtures/codex_mock.py'),
     ADE_CODEX_TRANSPORT: 'stdio',
     ADE_MOCK_DIR: mockDirectory(profileRoot, 'codex'),
-    NODE_OPTIONS: '--experimental-loader ' + join(repositoryRoot, 'providers/claude/worker-test-loader.mjs'),
+    // The Claude worker's named SDK seam. A managed-account launch keeps the seam but
+    // not this directory: its call log and sessions then live in the account's home.
+    ADE_E2E_CLAUDE_SDK: join(repositoryRoot, 'providers/claude/worker-test-sdk.mjs'),
     ADE_CLAUDE_WORKER_TEST_DIR: mockDirectory(profileRoot, 'claude'),
   }
 }
@@ -70,5 +72,23 @@ export async function mockCalls(profileRoot: string, provider: MockProvider): Pr
 
 /** Create the file a scripted mock waits for, such as `release-tool` or `expire-approval`. */
 export async function releaseMock(profileRoot: string, provider: MockProvider, name: string): Promise<void> {
+  // A marker may be set before the provider first starts and creates its directory.
+  await mkdir(mockDirectory(profileRoot, provider), { recursive: true })
   await writeFile(join(mockDirectory(profileRoot, provider), name), '')
+}
+
+type ClaudeEntry = { type: string; parent_tool_use_id?: string | null; message?: { content?: unknown } }
+
+/**
+ * The prompt a native Claude transcript entry holds, or null for any other entry. The
+ * worker sends native content blocks; the prompt is the first text block.
+ */
+export function claudePrompt(entry: ClaudeEntry): string | null {
+  if (entry.type !== 'user' || entry.parent_tool_use_id) return null
+  const content = entry.message?.content
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return null
+  const blocks = content as Array<{ type: string; text?: string }>
+  if (blocks.some((block) => block.type === 'tool_result')) return null
+  return blocks.find((block) => block.type === 'text')?.text ?? null
 }

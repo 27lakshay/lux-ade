@@ -11,7 +11,7 @@ test('shared backend, contracts, providers, fixtures and unknown inputs broaden 
   for (const file of [
     'crates/ade-core/src/lib.rs',
     'packages/contracts/schema/contracts.json',
-    'providers/claude/bridge.mjs',
+    'providers/claude/worker.mjs',
     'e2e/protocol/fixtures/profile.ts',
     'pnpm-lock.yaml',
     'unknown/file.md',

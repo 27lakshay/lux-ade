@@ -20,6 +20,8 @@ const MAX_COMMANDS: usize = 256;
 const MAX_PANELS: usize = 64;
 const MAX_SETTINGS: usize = 128;
 const MAX_THEMES: usize = 32;
+const MAX_TIMELINE: usize = 64;
+const MAX_COMPOSER: usize = 32;
 
 /// Parses and validates `ade-plugin.json`. `files` lists every regular file in
 /// the artifact as a `/`-separated relative path; entry points must be among them.
@@ -104,6 +106,12 @@ pub fn problems(manifest: &PluginManifest, files: &BTreeSet<String>) -> Vec<Stri
     if contributes.themes.len() > MAX_THEMES {
         out.push(format!("at most {MAX_THEMES} themes"));
     }
+    if contributes.timeline.len() > MAX_TIMELINE {
+        out.push(format!("at most {MAX_TIMELINE} timeline renderers"));
+    }
+    if contributes.composer.len() > MAX_COMPOSER {
+        out.push(format!("at most {MAX_COMPOSER} composer contributions"));
+    }
     let theme_prefix = format!("plugin.{}:", manifest.id);
     let mut theme_ids = HashSet::new();
     for theme in &contributes.themes {
@@ -169,6 +177,16 @@ pub fn problems(manifest: &PluginManifest, files: &BTreeSet<String>) -> Vec<Stri
     if !contributes.panels.is_empty() && entries.ui.is_none() {
         out.push("panels need a ui entry point".into());
     }
+    // Renderers and transforms run in the application renderer; a headless
+    // install never loads them.
+    if !contributes.timeline.is_empty() && entries.ui.is_none() {
+        out.push("timeline renderers need a ui entry point".into());
+    }
+    if !contributes.composer.is_empty() && entries.ui.is_none() {
+        out.push("composer contributions need a ui entry point".into());
+    }
+    out.extend(ui_contribution_problems(manifest));
+    out.extend(timeline_detail_problems(manifest));
     // Hooks run in the backend host after the event commits.
     if !contributes.hooks.is_empty() && entries.backend.is_none() {
         out.push("hooks need a backend entry point".into());
@@ -225,6 +243,117 @@ pub fn problems(manifest: &PluginManifest, files: &BTreeSet<String>) -> Vec<Stri
         }
         if let Some(problem) = default_problem(setting) {
             out.push(problem);
+        }
+    }
+    out
+}
+
+/// Timeline actions name commands this plugin declares; required payload
+/// fields are short, distinct and few.
+fn timeline_detail_problems(manifest: &PluginManifest) -> Vec<String> {
+    let mut out = Vec::new();
+    let commands: HashSet<&str> = manifest
+        .contributes
+        .commands
+        .iter()
+        .map(|command| command.id.as_str())
+        .collect();
+    for contribution in &manifest.contributes.timeline {
+        if contribution.actions.len() > 4 {
+            out.push(format!(
+                "timeline renderer {} has more than 4 actions",
+                contribution.id
+            ));
+        }
+        for action in &contribution.actions {
+            if action.title.trim().is_empty() || action.title.chars().count() > 64 {
+                out.push(format!(
+                    "timeline renderer {} has an action title outside 1 to 64 characters",
+                    contribution.id
+                ));
+            }
+            if !commands.contains(action.command.as_str()) {
+                out.push(format!(
+                    "timeline renderer {} names undeclared command {}",
+                    contribution.id, action.command
+                ));
+            }
+        }
+        let fields: HashSet<&str> = contribution
+            .required_fields
+            .iter()
+            .map(String::as_str)
+            .collect();
+        if contribution.required_fields.len() > 16
+            || fields.len() != contribution.required_fields.len()
+            || contribution
+                .required_fields
+                .iter()
+                .any(|field| field.is_empty() || field.len() > 64)
+        {
+            out.push(format!(
+                "timeline renderer {} needs at most 16 distinct required fields of 1 to 64 bytes",
+                contribution.id
+            ));
+        }
+    }
+    out
+}
+
+/// Timeline and composer declarations: namespaced IDs and kinds, each kind
+/// owned by one contribution, versions from 1 and readable titles.
+fn ui_contribution_problems(manifest: &PluginManifest) -> Vec<String> {
+    let contributes = &manifest.contributes;
+    let declared = contributes
+        .timeline
+        .iter()
+        .map(|c| {
+            (
+                "timeline renderer",
+                &c.id,
+                c.version,
+                ("item_kind", &c.item_kind),
+                &c.title,
+            )
+        })
+        .chain(contributes.composer.iter().map(|c| {
+            (
+                "composer contribution",
+                &c.id,
+                c.version,
+                ("node_kind", &c.node_kind),
+                &c.title,
+            )
+        }));
+    let mut out = Vec::new();
+    let mut ids = HashSet::new();
+    let mut kinds = HashSet::new();
+    for (kind, id, version, (field, owned), title) in declared {
+        if !contribution_id(&manifest.id, id) {
+            out.push(format!(
+                "{kind} {id} must be {}.<name> in lowercase letters, digits, hyphens and underscores",
+                manifest.id
+            ));
+        }
+        if !ids.insert((kind, id.as_str())) {
+            out.push(format!("{kind} {id} is declared twice"));
+        }
+        if !contribution_id(&manifest.id, owned) {
+            out.push(format!(
+                "{kind} {id} {field} must be {}.<name>",
+                manifest.id
+            ));
+        }
+        if !kinds.insert((field, owned.as_str())) {
+            out.push(format!("{kind} {id} {field} {owned} is already declared"));
+        }
+        if version == 0 {
+            out.push(format!("{kind} {id} version must be at least 1"));
+        }
+        if !text(title, MAX_TITLE) {
+            out.push(format!(
+                "{kind} {id} title must be 1 to {MAX_TITLE} characters"
+            ));
         }
     }
     out
@@ -481,6 +610,136 @@ mod tests {
         let mut manifest = base();
         manifest["contributes"]["panels"][0]["id"] = json!("acme.notes.open");
         assert!(check(manifest).is_ok());
+    }
+
+    #[test]
+    fn timeline_actions_name_declared_commands_and_required_fields_are_bounded() {
+        let declare = |m: &mut Value| {
+            m["contributes"]["commands"] = json!([{"id": "acme.notes.open", "title": "Open"}]);
+            m["contributes"]["timeline"] = json!([{"id": "acme.notes.card", "version": 1,
+                "item_kind": "acme.notes.card", "title": "Note card",
+                "actions": [{"title": "Open note", "command": "acme.notes.open"}],
+                "required_fields": ["note"]}]);
+        };
+        let mut manifest = base();
+        declare(&mut manifest);
+        let parsed = check(manifest).unwrap();
+        assert_eq!(
+            parsed.contributes.timeline[0].actions[0].command,
+            "acme.notes.open"
+        );
+        assert_eq!(parsed.contributes.timeline[0].required_fields, ["note"]);
+        rejects(
+            |m| {
+                declare(m);
+                m["contributes"]["timeline"][0]["actions"][0]["command"] =
+                    json!("acme.notes.missing");
+            },
+            "names undeclared command acme.notes.missing",
+        );
+        rejects(
+            |m| {
+                declare(m);
+                m["contributes"]["timeline"][0]["required_fields"] = json!(["note", "note"]);
+            },
+            "distinct required fields",
+        );
+    }
+
+    #[test]
+    fn timeline_and_composer_contributions_are_namespaced_and_need_a_ui_entry() {
+        let declare = |m: &mut Value| {
+            m["contributes"]["timeline"] = json!([{"id": "acme.notes.card", "version": 1,
+                "item_kind": "acme.notes.card", "title": "Note card"}]);
+            m["contributes"]["composer"] = json!([{"id": "acme.notes.snippet", "version": 2,
+                "node_kind": "acme.notes.snippet", "title": "Note snippet"}]);
+        };
+        let mut manifest = base();
+        declare(&mut manifest);
+        let parsed = check(manifest).unwrap();
+        assert_eq!(parsed.contributes.timeline[0].item_kind, "acme.notes.card");
+        assert_eq!(parsed.contributes.composer[0].version, 2);
+
+        rejects(
+            |m| {
+                declare(m);
+                m["contributes"]["timeline"][0]["id"] = json!("other.plugin.card");
+            },
+            "timeline renderer other.plugin.card must be acme.notes.<name>",
+        );
+        rejects(
+            |m| {
+                declare(m);
+                m["contributes"]["timeline"][0]["item_kind"] = json!("message");
+            },
+            "item_kind must be acme.notes.<name>",
+        );
+        rejects(
+            |m| {
+                declare(m);
+                m["contributes"]["composer"][0]["node_kind"] = json!("file_range");
+            },
+            "node_kind must be acme.notes.<name>",
+        );
+        rejects(
+            |m| {
+                declare(m);
+                m["contributes"]["timeline"] = json!([
+                    {"id": "acme.notes.a", "version": 1, "item_kind": "acme.notes.card", "title": "A"},
+                    {"id": "acme.notes.b", "version": 1, "item_kind": "acme.notes.card", "title": "B"}]);
+            },
+            "item_kind acme.notes.card is already declared",
+        );
+        rejects(
+            |m| {
+                declare(m);
+                m["contributes"]["composer"][0]["version"] = json!(0);
+            },
+            "version must be at least 1",
+        );
+        rejects(
+            |m| {
+                declare(m);
+                m["contributes"]["timeline"][0]["title"] = json!("");
+            },
+            "title must be 1 to",
+        );
+        rejects(
+            |m| {
+                declare(m);
+                m["contributes"]["timeline"][0]["schema"] = json!({});
+            },
+            "unknown field",
+        );
+        rejects(
+            |m| {
+                declare(m);
+                m["contributes"]["panels"] = json!([]);
+                m["entry_points"] = json!({"backend": "dist/ui.js"});
+            },
+            "timeline renderers need a ui entry point",
+        );
+        rejects(
+            |m| {
+                declare(m);
+                m["contributes"]["panels"] = json!([]);
+                m["entry_points"] = json!({"backend": "dist/ui.js"});
+            },
+            "composer contributions need a ui entry point",
+        );
+        rejects(
+            |m| {
+                m["contributes"]["timeline"] = Value::Array(
+                    (0..=MAX_TIMELINE)
+                        .map(|i| {
+                            json!({"id": format!("acme.notes.t{i}"), "version": 1,
+                            "item_kind": format!("acme.notes.t{i}"), "title": "T"})
+                        })
+                        .collect(),
+                );
+            },
+            "at most 64 timeline renderers",
+        );
     }
 
     #[test]

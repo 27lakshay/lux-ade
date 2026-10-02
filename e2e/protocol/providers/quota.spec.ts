@@ -28,9 +28,7 @@ test('F030: before any report every provider and account says not reported or un
   expect(recording).toEqual({ dropped_batches: 0, last_error: null })
   const key = (entry: { provider: string; account_id: string | null }) =>
     `${entry.provider}:${entry.account_id ?? 'own'}`
-  expect(entries.map(key).sort()).toEqual(
-    ['claude:own', 'codex:own', `codex:${account.id}`, 'omp:own', 'opencode:own'].sort(),
-  )
+  expect(entries.map(key).sort()).toEqual(['claude:own', 'codex:own', `codex:${account.id}`, 'omp:own'].sort())
   for (const entry of entries) {
     expect(entry).toMatchObject({ windows: [], exhausted: false, observed_at: null, age_ms: null })
     expect(entry.reason).not.toBe('')
@@ -40,8 +38,8 @@ test('F030: before any report every provider and account says not reported or un
       expect.arrayContaining(['not_reported']),
     )
   }
-  // Oh My Pi and OpenCode have not been confirmed to report limits.
-  for (const provider of ['omp', 'opencode']) {
+  // Oh My Pi has not been confirmed to report limits.
+  for (const provider of ['omp']) {
     const entry = entries.find((candidate) => candidate.provider === provider)!
     expect(entry.state).toBe('unavailable')
     expect(entry.reason).toMatch(/limits are unavailable/)

@@ -24,6 +24,9 @@ import type {
   ProviderWorkerRewindResult,
   ProviderWorkerConfigureMcpRequest,
   ProviderWorkerChildTranscriptRequest,
+  ProviderWorkerAccountInspectRequest,
+  ProviderWorkerAccountInspection,
+  ProviderWorkerAccountContext,
   ProviderWorkerAck,
   ProviderWorkerCancelResult,
   ResponseByOperation,
@@ -207,6 +210,21 @@ export function decodeProviderWorkerConfigureMcpRequest(value: unknown): Provide
 export function decodeProviderWorkerChildTranscriptRequest(value: unknown): ProviderWorkerChildTranscriptRequest {
   check('ProviderWorkerChildTranscriptRequest', value, 'ProviderWorkerChildTranscriptRequest')
   return value as ProviderWorkerChildTranscriptRequest
+}
+
+export function decodeProviderWorkerAccountInspectRequest(value: unknown): ProviderWorkerAccountInspectRequest {
+  check('ProviderWorkerAccountInspectRequest', value, 'ProviderWorkerAccountInspectRequest')
+  return value as ProviderWorkerAccountInspectRequest
+}
+
+export function decodeProviderWorkerAccountInspection(value: unknown): ProviderWorkerAccountInspection {
+  check('ProviderWorkerAccountInspection', value, 'ProviderWorkerAccountInspection')
+  return value as ProviderWorkerAccountInspection
+}
+
+export function decodeProviderWorkerAccountContext(value: unknown): ProviderWorkerAccountContext {
+  check('ProviderWorkerAccountContext', value, 'ProviderWorkerAccountContext')
+  return value as ProviderWorkerAccountContext
 }
 
 export function decodeProviderWorkerAck(value: unknown): ProviderWorkerAck {

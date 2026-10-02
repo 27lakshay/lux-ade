@@ -46,25 +46,8 @@ pub fn descriptors() -> &'static [Descriptor] {
                     "text_attachments",
                     "resume",
                     "cancel",
-                    "tool_approval",
                     "questions",
                     "child_transcript",
-                ]),
-                permission_modes: strings(&["default"]),
-                setting_sources: vec![],
-            },
-            Descriptor {
-                id: "opencode".into(),
-                name: "OpenCode v2".into(),
-                capabilities: strings(&[
-                    "child_transcript",
-                    "streaming",
-                    "images",
-                    "text_attachments",
-                    "resume",
-                    "cancel",
-                    "tool_approval",
-                    "questions",
                 ]),
                 permission_modes: strings(&["default"]),
                 setting_sources: vec![],
@@ -119,6 +102,9 @@ pub struct Config {
     pub model: Option<String>,
     pub permission_mode: String,
     pub setting_sources: Vec<String>,
+    /// A reasoning level from [`reasoning_efforts`]; absent means the provider's default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
 }
 impl Default for Config {
     fn default() -> Self {
@@ -126,6 +112,7 @@ impl Default for Config {
             model: None,
             permission_mode: "default".into(),
             setting_sources: vec![],
+            reasoning_effort: None,
         }
     }
 }
@@ -155,8 +142,115 @@ impl Config {
                     .all(|s| descriptor.setting_sources.contains(s)),
             "Unsupported setting sources for {provider}"
         );
+        ensure!(
+            self.reasoning_effort
+                .as_ref()
+                .is_none_or(|level| reasoning_efforts(provider).contains(&level.as_str())),
+            "Unsupported reasoning level for {provider}"
+        );
         Ok(())
     }
+}
+
+/// Reasoning levels ADE can request from a provider at launch. Empty means
+/// ADE cannot select reasoning for that provider; it is never emulated.
+pub fn reasoning_efforts(provider: &str) -> &'static [&'static str] {
+    match provider {
+        // Codex app-server `turn/start` takes `effort`.
+        "codex" => &["minimal", "low", "medium", "high"],
+        // The Claude Agent SDK `effort` query option.
+        "claude" => &["low", "medium", "high", "xhigh", "max"],
+        _ => &[],
+    }
+}
+
+/// Most models one discovery report may list; a longer report is not used.
+pub const MAX_NATIVE_MODELS: usize = 512;
+
+/// One model a provider listed for its open session (Codex `model/list`,
+/// Claude `supportedModels()`, Oh My Pi `get_available_models`), with the
+/// dependent settings it reported for that model. A null list was not reported.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
+pub struct NativeModel {
+    /// The value a launch passes as the model.
+    pub id: String,
+    #[serde(default)]
+    pub display_name: Option<String>,
+    /// The provider's default model.
+    #[serde(default)]
+    pub is_default: bool,
+    /// Other names the provider resolves to this model.
+    #[serde(default)]
+    pub aliases: Vec<String>,
+    /// Reasoning levels the provider listed for this model.
+    #[serde(default)]
+    pub reasoning_efforts: Option<Vec<String>>,
+    #[serde(default)]
+    pub default_reasoning_effort: Option<String>,
+    /// Permission modes the provider listed for this model.
+    #[serde(default)]
+    pub permission_modes: Option<Vec<String>>,
+}
+
+/// The models a provider listed when its session opened.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
+pub struct NativeChoices {
+    /// The native call that listed them, such as `model/list`.
+    pub source: String,
+    pub models: Vec<NativeModel>,
+}
+impl NativeChoices {
+    /// A report within ADE's bounds; a larger or malformed one is not used.
+    pub fn validate(&self) -> Result<()> {
+        fn name(value: &str) -> bool {
+            !value.is_empty() && value.len() <= 256 && !value.contains('\0')
+        }
+        fn names(values: Option<&Vec<String>>) -> bool {
+            values.is_none_or(|values| values.len() <= 32 && values.iter().all(|v| name(v)))
+        }
+        ensure!(
+            !self.source.is_empty() && self.source.len() <= 128,
+            "Invalid model discovery source"
+        );
+        ensure!(
+            self.models.len() <= MAX_NATIVE_MODELS,
+            "The provider listed more than {MAX_NATIVE_MODELS} models"
+        );
+        ensure!(
+            self.models.iter().all(|model| name(&model.id)
+                && model.display_name.as_deref().is_none_or(|n| n.len() <= 256)
+                && model.aliases.len() <= 16
+                && model.aliases.iter().all(|alias| name(alias))
+                && names(model.reasoning_efforts.as_ref())
+                && names(model.permission_modes.as_ref())
+                && model.default_reasoning_effort.as_deref().is_none_or(name)),
+            "The provider listed a malformed model"
+        );
+        Ok(())
+    }
+    /// The listed model a launch value names, by its ID or else an alias.
+    pub fn model(&self, value: &str) -> Option<&NativeModel> {
+        self.models
+            .iter()
+            .find(|model| model.id == value)
+            .or_else(|| {
+                self.models
+                    .iter()
+                    .find(|model| model.aliases.iter().any(|alias| alias == value))
+            })
+    }
+    pub fn default_model(&self) -> Option<&NativeModel> {
+        self.models.iter().find(|model| model.is_default)
+    }
+}
+
+/// Settings the provider itself reported for an opened session; each value
+/// is null when the provider did not report it.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
+pub struct NativeSettings {
+    pub model: Option<String>,
+    pub reasoning_effort: Option<String>,
+    pub permission_mode: Option<String>,
 }
 /// Provider-native transcript identity. It is independent of ADE message IDs,
 /// client IDs, and turn IDs, and is valid only in its native session.
@@ -211,6 +305,13 @@ pub struct Connected {
     /// opened (F039): a daemon that reattaches may still hold it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rewound_from: Option<String>,
+    /// What the provider reported in effect when the session opened.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_settings: Option<NativeSettings>,
+    /// The models, with their dependent settings, the provider listed for
+    /// this session; null when it listed none or discovery failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_choices: Option<NativeChoices>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -287,11 +388,30 @@ pub enum Event {
     /// Token, cost or rate-limit figures exactly as the provider reported
     /// them. `source` names the native event; the daemon normalizes `report`
     /// and never fills in a figure the provider left out.
+    /// Background work the provider reports for its session, apart from the
+    /// foreground turn: running native tasks, children or processes. Null
+    /// fields mean the provider gave no evidence for them.
+    Background {
+        session: String,
+        active: Option<bool>,
+        running: Option<u64>,
+        source: String,
+    },
+    /// Settings the provider reported in effect during its session, such as
+    /// Claude's `system/init` frame. A null field was not reported.
+    Settings {
+        session: String,
+        settings: NativeSettings,
+    },
     Usage {
         #[serde(default)]
         session: String,
         #[serde(default)]
         turn: Option<String>,
+        /// The submission the report belongs to, for a provider that names no
+        /// turn; ADE then keys the turn's usage by it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        submission: Option<String>,
         source: String,
         #[serde(default)]
         report: Value,
@@ -306,4 +426,38 @@ pub enum Event {
     Exited {
         error: String,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_discovery_report_finds_models_by_id_then_alias_and_refuses_one_beyond_its_bounds() {
+        let model = |id: &str, aliases: &[&str]| NativeModel {
+            id: id.into(),
+            aliases: aliases.iter().map(|a| (*a).to_owned()).collect(),
+            ..NativeModel::default()
+        };
+        let choices = NativeChoices {
+            source: "supportedModels".into(),
+            models: vec![
+                NativeModel {
+                    is_default: true,
+                    ..model("default", &["claude-x"])
+                },
+                model("claude-x", &[]),
+            ],
+        };
+        choices.validate().unwrap();
+        assert_eq!(choices.model("claude-x").unwrap().id, "claude-x");
+        assert_eq!(choices.default_model().unwrap().id, "default");
+        assert!(choices.model("other").is_none());
+        let mut large = choices.clone();
+        large.models = vec![model("m", &[]); MAX_NATIVE_MODELS + 1];
+        assert!(large.validate().is_err());
+        let mut malformed = choices;
+        malformed.models[0].reasoning_efforts = Some(vec![String::new()]);
+        assert!(malformed.validate().is_err());
+    }
 }

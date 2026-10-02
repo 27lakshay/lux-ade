@@ -276,7 +276,7 @@ test('R001: a file rewind crashed after it wrote files, before it settled, repor
 type Message = { id: string; role: string; text: string; turn_id: string | null; sequence: number }
 
 async function codexMessages(profile: ScratchProfile, conversationId: string): Promise<Message[]> {
-  return (await profile.call('conversation.get', { conversation_id: conversationId, limit: 200 })).messages
+  return (await profile.call('conversation.get', { conversation_id: conversationId, limit: 32 })).messages
 }
 
 async function codexThread(profile: ScratchProfile, conversationId: string): Promise<string | null> {
@@ -326,7 +326,7 @@ test('F039, F043: a Codex conversation rewind forks the thread before the turn, 
 
   expect(await control(profile, conversationId, 'rewind_conversation')).toMatchObject({
     available: true,
-    mechanism: 'codex.thread_fork',
+    mechanism: 'worker.rewind',
     reason: null,
   })
   // A reader holds the newest page and pages back from it.

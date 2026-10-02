@@ -227,6 +227,10 @@ impl ConversationFacts {
         conversation.attention = ade_core::workspaces::attention(
             &conversation.status,
             self.open_requests.contains(&conversation.id),
+            conversation
+                .background
+                .as_ref()
+                .is_some_and(|background| background.active == Some(true)),
         );
         let seen = self.seen.get(&conversation.id).copied().unwrap_or(0);
         conversation.unread = self

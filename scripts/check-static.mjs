@@ -83,7 +83,7 @@ const steps = [
     ['pnpm', 'test:providers'],
     {
       env: { ADE_PROVIDER_REPORT_DIR: reportFile('providers') },
-      reports: ['claude', 'opencode', 'omp'].map((name) => reportFile(`providers/provider-${name}.xml`)),
+      reports: ['claude', 'opencode', 'omp', 'acp'].map((name) => reportFile(`providers/provider-${name}.xml`)),
     },
   ],
   // Renderer stores and components, in headless Chromium (apps/desktop/vitest.config.ts).

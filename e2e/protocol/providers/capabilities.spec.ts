@@ -14,7 +14,7 @@ import {
 } from '../fixtures'
 import { conversationOn } from './steps'
 
-const providers = ['claude', 'codex', 'omp', 'opencode']
+const providers = ['claude', 'codex', 'omp']
 const supportValues = ['supported', 'native_only', 'unsupported', 'unknown']
 
 test('F028: every bundled adapter serves a sealed, revisioned record that matches what launches accept, across a daemon restart', async ({
@@ -46,8 +46,8 @@ test('F028: every bundled adapter serves a sealed, revisioned record that matche
     expect(record.permission_modes.filter((mode) => mode.support === 'supported').map((mode) => mode.id)).toEqual(
       descriptor.permission_modes,
     )
-    // No launch carries a reasoning level yet, so no record may claim it.
-    expect(record.reasoning.selection.support).not.toBe('supported')
+    // A record that claims reasoning selection lists the levels a launch carries.
+    if (record.reasoning.selection.support === 'supported') expect(record.reasoning.levels.length).toBeGreaterThan(0)
   }
 
   // One provider at a time, the same record; an unknown provider is refused.

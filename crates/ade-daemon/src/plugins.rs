@@ -1331,6 +1331,18 @@ fn contributions(manifest: &PluginManifest) -> Vec<(PluginRegistrationKind, Stri
                 .iter()
                 .map(|p| (PluginRegistrationKind::Panel, p.id.clone())),
         )
+        .chain(
+            contributes
+                .timeline
+                .iter()
+                .map(|t| (PluginRegistrationKind::Timeline, t.id.clone())),
+        )
+        .chain(
+            contributes
+                .composer
+                .iter()
+                .map(|c| (PluginRegistrationKind::Composer, c.id.clone())),
+        )
         .collect()
 }
 

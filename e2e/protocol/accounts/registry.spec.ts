@@ -3,7 +3,7 @@
 // restart, a redirected home is refused, and an unverified account never falls
 // back to ambient credentials. Ported from the legacy e2e/specs/account-registry
 // and account-launch specs; the profile registry is ade-control's.
-import { access, chmod, rename, stat, symlink, writeFile } from 'node:fs/promises'
+import { access, rename, stat, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test as scratchTest } from '../fixtures'
 import { expect, test, type ManagedProfile } from '../fixtures/managed-profiles'
@@ -97,11 +97,14 @@ test('accounts have durable, distinct profile homes and conversations keep their
 })
 
 scratchTest('an unverified managed account cannot fall back to ambient Claude credentials', async ({ ade }) => {
-  const launcher = join(ade.root, 'claude-bridge')
+  // The Claude worker loads this SDK module when it starts; it only records that it ran.
+  const sdk = join(ade.root, 'claude-sdk.mjs')
   const launched = join(ade.root, 'launched')
-  await writeFile(launcher, `#!/bin/sh\ntouch ${JSON.stringify(launched)}\nexit 1\n`)
-  await chmod(launcher, 0o700)
-  const profile = await ade.profile({ env: { ADE_CLAUDE_BRIDGE_BIN: launcher, ANTHROPIC_API_KEY: 'ambient-token' } })
+  await writeFile(
+    sdk,
+    `import { writeFileSync } from 'node:fs'\nwriteFileSync(${JSON.stringify(launched)}, '')\nthrow new Error('launched')\n`,
+  )
+  const profile = await ade.profile({ env: { ADE_E2E_CLAUDE_SDK: sdk, ANTHROPIC_API_KEY: 'ambient-token' } })
   const workspace_id = (await profile.call('workspace.open', { path: profile.defaultWorkspaceRoot })).workspace.id
   const account = (await profile.call('account.create', { provider: 'claude', name: 'Other account' })).account
   expect(account.state).toBe('unverified')

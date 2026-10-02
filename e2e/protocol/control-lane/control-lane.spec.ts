@@ -146,7 +146,7 @@ test('a cancel sent while a connection flood fills the profile socket backlog is
   } finally {
     full.resume()
   }
-  expect(await cancelled).toMatchObject({ reply: { type: 'ack' } })
+  expect(await cancelled).toMatchObject({ reply: { type: 'agent_cancel_outcome' } })
   await expect.poll(() => interrupts(profile)).toEqual([turn])
   const replies = await full.replies
   expectNoneLost(replies)

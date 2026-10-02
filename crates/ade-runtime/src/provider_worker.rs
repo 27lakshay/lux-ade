@@ -15,7 +15,10 @@
 use super::registry::{PLUGIN_PREFIX, ProviderEntry, plugin_provider_id};
 use super::{Config, Connected, Descriptor, Event, Item, Provider};
 use crate::{model::PendingRequest, rpc::Framing, rpc::Rpc};
-use ade_core::contract::providers::ProviderWorker;
+use ade_core::contract::providers::{
+    ProviderWorker, ProviderWorkerAccountContext, ProviderWorkerAccountInspection,
+    ProviderWorkerAccountState,
+};
 use ade_core::model::AccountExecution;
 use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
@@ -75,6 +78,12 @@ fn local_name(value: &str) -> bool {
         && value
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// An item kind: a local name, or a plugin-namespaced kind such as
+/// `acme.notes.card` that a timeline contribution declares.
+fn item_kind(value: &str) -> bool {
+    value.len() <= 128 && value.split('.').all(local_name)
 }
 
 /// Validates a worker's `initialize` reply against the provider ID it was
@@ -154,7 +163,7 @@ pub fn check_handshake(provider: &str, reply: &Value) -> Result<Handshake> {
         descriptor.limits.max_cleanup_ms,
     ];
     let supported = [
-        1_048_576, 1_024, 15_000, 1_048_576, 32, 32, 8, 10_000, 45_000, 5_000,
+        16_777_216, 1_024, 15_000, 4_194_304, 32, 32, 8, 10_000, 45_000, 5_000,
     ];
     ensure!(
         declared.iter().all(|n| *n > 0)
@@ -177,6 +186,7 @@ pub fn check_handshake(provider: &str, reply: &Value) -> Result<Handshake> {
         (ProviderWorkerMethod::Compact, Tier::EffectCommand),
         (ProviderWorkerMethod::Rewind, Tier::EffectCommand),
         (ProviderWorkerMethod::ChildTranscript, Tier::Query),
+        (ProviderWorkerMethod::AccountInspect, Tier::Query),
     ];
     for operation in &descriptor.operations {
         ensure!(
@@ -207,6 +217,9 @@ pub fn check_handshake(provider: &str, reply: &Value) -> Result<Handshake> {
             .all(|(method, _)| seen_operations.contains(method)),
         "Provider worker omitted a protocol operation"
     );
+    if let Some(peer) = &descriptor.native_peer {
+        check_native_peer(peer)?;
+    }
     let wire_descriptor = descriptor.clone();
     let name = descriptor.name;
     ensure!(
@@ -267,6 +280,25 @@ pub fn check_handshake(provider: &str, reply: &Value) -> Result<Handshake> {
     })
 }
 
+/// A native peer report is bounded, printable evidence; it grants nothing.
+fn check_native_peer(peer: &ade_core::contract::providers::ProviderWorkerNativePeer) -> Result<()> {
+    let printable = |value: &str, max: usize| {
+        !value.is_empty() && value.len() <= max && !value.chars().any(char::is_control)
+    };
+    ensure!(
+        local_name(&peer.protocol)
+            && peer.name.as_deref().is_none_or(|v| printable(v, 128))
+            && peer.version.as_deref().is_none_or(|v| printable(v, 64))
+            && peer.features.len() <= 32
+            && peer.features.iter().all(|f| local_name(f))
+            && peer.features.iter().collect::<HashSet<_>>().len() == peer.features.len()
+            && peer.auth_methods.len() <= 16
+            && peer.auth_methods.iter().all(|m| printable(m, 128)),
+        "Provider worker native peer report is malformed"
+    );
+    Ok(())
+}
+
 /// Checks the normalized history a worker returned from `open`. Every item
 /// keeps its native ID as provenance, so an item without one, or a repeated
 /// one, is refused rather than renumbered.
@@ -295,7 +327,7 @@ fn check_history_with_limits(history: &[Item], max_items: usize, max_bytes: usiz
             item.id
         );
         ensure!(
-            local_name(&item.role) && local_name(&item.kind) && local_name(&item.status),
+            local_name(&item.role) && item_kind(&item.kind) && local_name(&item.status),
             "Provider worker history item {} has a malformed role, kind or status",
             item.id
         );
@@ -333,27 +365,135 @@ impl ProviderEntry for WorkerEntry {
         account: Option<&AccountExecution>,
         events: mpsc::SyncSender<Event>,
     ) -> Result<Arc<dyn Provider>> {
-        ensure!(
-            account.is_none(),
-            "Plugin providers use their own login; ADE does not manage their accounts yet"
-        );
-        Ok(Worker::spawn(&self.worker, cwd, events)?)
+        Ok(Worker::spawn(&self.worker, cwd, account, events)?)
     }
+}
+
+/// The environment variable that carries a managed account's public context
+/// ([`ProviderWorkerAccountContext`]) to every worker launched on it.
+pub const ACCOUNT_CONTEXT: &str = "ADE_ACCOUNT_CONTEXT";
+
+/// The public context of the managed account `account`, as JSON.
+fn account_context(account: &AccountExecution) -> Result<String> {
+    Ok(serde_json::to_string(&ProviderWorkerAccountContext {
+        account_id: account.id.clone(),
+        provider: account.provider.clone(),
+        generation: account.generation,
+        native_home: account.native_home.clone(),
+        identity: account.identity(),
+    })?)
+}
+
+/// A plugin worker's environment on a managed account: cleared of everything
+/// but locale and path variables, with `HOME` at the account's native home, so
+/// no ambient login or credential reaches it; the account's context is in
+/// [`ACCOUNT_CONTEXT`].
+fn managed_worker_environment(command: &mut Command, account: &AccountExecution) -> Result<()> {
+    command.env_clear();
+    for name in [
+        "PATH", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE", "USER", "LOGNAME", "SHELL", "TERM",
+    ] {
+        if let Some(value) = std::env::var_os(name) {
+            command.env(name, value);
+        }
+    }
+    command
+        .env("HOME", &account.native_home)
+        .env(ACCOUNT_CONTEXT, account_context(account)?);
+    Ok(())
+}
+
+/// The largest identity a worker's `account_inspect` may report, as JSON.
+const MAX_IDENTITY_BYTES: usize = 4096;
+
+/// Checks a worker's `account_inspect` result.
+fn check_account_inspection(reply: Value) -> Result<ProviderWorkerAccountInspection> {
+    let inspection: ProviderWorkerAccountInspection = serde_json::from_value(reply)
+        .context("Provider worker returned a malformed account inspection")?;
+    ensure!(
+        inspection.reason.len() <= 512 && !inspection.reason.chars().any(char::is_control),
+        "Provider worker account inspection reason is invalid"
+    );
+    ensure!(
+        inspection
+            .version
+            .as_ref()
+            .is_none_or(|version| version.len() <= 64 && !version.chars().any(char::is_control)),
+        "Provider worker account inspection version is invalid"
+    );
+    if let Some(identity) = &inspection.identity {
+        ensure!(
+            !identity.is_empty() && serde_json::to_vec(identity)?.len() <= MAX_IDENTITY_BYTES,
+            "Provider worker account identity must be a non-empty object of at most {MAX_IDENTITY_BYTES} bytes"
+        );
+    }
+    ensure!(
+        inspection.state != ProviderWorkerAccountState::Ready || inspection.identity.is_some(),
+        "Provider worker reported a ready account without an identity"
+    );
+    Ok(inspection)
+}
+
+/// Inspects managed account `account` through the plugin worker's own
+/// `account_inspect`, run in the account's launch environment.
+pub fn inspect_account(
+    worker: &ProviderWorker,
+    account: &AccountExecution,
+) -> Result<ProviderWorkerAccountInspection> {
+    use super::Provider;
+    let (events, receiver) = mpsc::sync_channel(32);
+    let _drain = std::thread::spawn(move || while receiver.recv().is_ok() {});
+    let process = Worker::start(worker, &account.native_home, Some(account), events)?;
+    let inspection = process.account_inspection();
+    process.stop_confirmed()?;
+    inspection
 }
 
 /// One running worker process.
 pub struct Worker {
     rpc: Arc<Rpc>,
     handshake: Handshake,
+    /// Checks a provider repeats before each open and send, such as a managed
+    /// account's pinned identity and workspace credential sources.
+    preflight: Option<Box<dyn Fn() -> Result<()> + Send + Sync>>,
+    /// For a plugin worker on a managed account: the account whose pinned
+    /// identity the worker's `account_inspect` must still report before each
+    /// open and send.
+    pinned_account: Option<AccountExecution>,
 }
 
 impl Worker {
+    /// Starts a plugin's worker for a run. On a managed account the worker
+    /// must report, through its own `account_inspect`, the identity ADE pinned
+    /// for the account before each open and send.
     pub fn spawn(
         worker: &ProviderWorker,
         cwd: &str,
+        account: Option<&AccountExecution>,
+        events: mpsc::SyncSender<Event>,
+    ) -> Result<Arc<Self>> {
+        let mut started = Self::start(worker, cwd, account, events)?;
+        if let Some(account) = account {
+            Arc::get_mut(&mut started)
+                .context("A new provider worker is not shared")?
+                .pinned_account = Some(account.clone());
+        }
+        Ok(started)
+    }
+
+    fn start(
+        worker: &ProviderWorker,
+        cwd: &str,
+        account: Option<&AccountExecution>,
         events: mpsc::SyncSender<Event>,
     ) -> Result<Arc<Self>> {
         check_launch(worker)?;
+        if let Some(account) = account {
+            ensure!(
+                account.provider == worker.provider,
+                "Agent account belongs to another provider"
+            );
+        }
         let entry = Path::new(&worker.artifact_path).join(&worker.entry);
         ensure!(
             entry.is_file(),
@@ -362,6 +502,9 @@ impl Worker {
         );
         let mut command =
             Command::new(std::env::var("ADE_NODE_BIN").unwrap_or_else(|_| "node".into()));
+        if let Some(account) = account {
+            managed_worker_environment(&mut command, account)?;
+        }
         command
             .arg(&entry)
             .current_dir(cwd)
@@ -376,6 +519,7 @@ impl Worker {
                 "plugin": {"id": worker.pin.plugin_id, "version": worker.pin.version},
             }),
             events,
+            Vec::new(),
         )
     }
 
@@ -384,6 +528,12 @@ impl Worker {
         account: Option<&ade_core::model::AccountExecution>,
         events: mpsc::SyncSender<Event>,
     ) -> Result<Arc<Self>> {
+        // Readiness is checked here, before the worker starts, so an incompatible
+        // or changed installation reaches the Conversation as its own reason;
+        // behind the worker it would be reduced to a generic provider failure.
+        if let Some(account) = account {
+            crate::provider::codex_probe::verify_launch(account)?;
+        }
         let mut command =
             Command::new(std::env::var("ADE_NODE_BIN").unwrap_or_else(|_| "node".into()));
         command
@@ -391,16 +541,16 @@ impl Worker {
                 "providers/codex/worker.mjs",
             ))
             .current_dir(cwd)
-            .env("ADE_PROVIDER_ID", "codex")
-            .env(
-                "ADE_CODEX_EXECUTION_ACCOUNT",
-                serde_json::to_string(&account)?,
-            );
+            .env("ADE_PROVIDER_ID", "codex");
+        if let Some(account) = account {
+            command.env(ACCOUNT_CONTEXT, account_context(account)?);
+        }
         Self::spawn_command(
             command,
             "codex",
             json!({"versions": PROTOCOL_VERSIONS, "provider":"codex"}),
             events,
+            Vec::new(),
         )
     }
 
@@ -425,8 +575,15 @@ impl Worker {
                 &account.native_home,
                 executable,
             );
+            command.env(ACCOUNT_CONTEXT, account_context(account)?);
             if let Some(directory) = std::env::var_os("ADE_DATA_DIR") {
                 command.env("ADE_DATA_DIR", directory);
+            }
+            // The named test seam: protocol suites replace the Claude Agent SDK with a
+            // deterministic double. It survives the cleared managed environment only when
+            // the runtime itself was started with it.
+            if let Some(module) = std::env::var_os("ADE_E2E_CLAUDE_SDK") {
+                command.env("ADE_E2E_CLAUDE_SDK", module);
             }
         }
         command.env("ADE_PROVIDER_ID", "claude").env(
@@ -438,13 +595,113 @@ impl Worker {
             "claude",
             json!({"versions":PROTOCOL_VERSIONS,"provider":"claude"}),
             events,
+            // The worker passes setting sources to the Agent SDK; the worker protocol has
+            // no field to declare them, so the built-in catalogue's sources apply.
+            ade_core::provider::descriptor("claude")?
+                .setting_sources
+                .clone(),
         )
+    }
+    /// A generic ACP agent (F024) through the bundled ACP worker. The worker
+    /// launches the definition's executable with its arguments and extra
+    /// environment, negotiates ACP `initialize` with it before answering its
+    /// own, and declares only what that negotiation supports.
+    pub fn spawn_acp(
+        definition: &ade_core::contract::providers::adapters::AdapterDefinition,
+        cwd: &str,
+        events: mpsc::SyncSender<Event>,
+    ) -> Result<Arc<Self>> {
+        let provider = crate::adapters::provider_id(&definition.id);
+        let mut command =
+            Command::new(std::env::var("ADE_NODE_BIN").unwrap_or_else(|_| "node".into()));
+        command
+            .arg(ade_platform::resources::resource(
+                "providers/acp/worker.mjs",
+            ))
+            .current_dir(cwd)
+            .env("ADE_PROVIDER_ID", &provider)
+            .env(
+                "ADE_ACP_AGENT",
+                serde_json::to_string(&json!({
+                    "name": definition.name,
+                    "command": definition.command,
+                    "args": definition.args,
+                    "env": definition.env,
+                }))?,
+            );
+        Self::spawn_command(
+            command,
+            &provider,
+            json!({"versions": PROTOCOL_VERSIONS, "provider": provider}),
+            events,
+            Vec::new(),
+        )
+    }
+    /// Oh My Pi through its public worker. Bun runs `providers/omp/worker.mjs`,
+    /// because the worker imports OMP's TypeScript RPC frame sources; the
+    /// worker owns the native OMP RPC process.
+    pub fn spawn_omp(
+        cwd: &str,
+        account: Option<&AccountExecution>,
+        events: mpsc::SyncSender<Event>,
+    ) -> Result<Arc<Self>> {
+        if let Some(account) = account {
+            crate::provider::omp_probe::ensure_identity(account)?;
+            crate::provider::omp_probe::ensure_workspace_sources(cwd, account)?;
+        }
+        let mut command =
+            Command::new(std::env::var("ADE_BUN_BIN").unwrap_or_else(|_| "bun".into()));
+        if account.is_some() {
+            command.arg("--no-env-file");
+        }
+        command
+            .arg(ade_platform::resources::resource(
+                "providers/omp/worker.mjs",
+            ))
+            .current_dir(cwd);
+        if let Some(account) = account {
+            crate::provider::omp_probe::managed_environment(&mut command, &account.native_home, "");
+            let identity = account
+                .omp_identity
+                .as_ref()
+                .context("Oh My Pi identity is not pinned")?;
+            command.env("ADE_OMP_EXPECTED_PROVIDER", &identity.provider);
+            if let Ok(bin) = std::env::var("ADE_OMP_BIN") {
+                command.env("ADE_OMP_BIN", bin);
+            }
+            command.env(ACCOUNT_CONTEXT, account_context(account)?);
+            if let Some(directory) = std::env::var_os("ADE_DATA_DIR") {
+                command.env("ADE_DATA_DIR", directory);
+            }
+        }
+        command.env("ADE_PROVIDER_ID", "omp").env(
+            "ADE_OMP_WORKER_DESCRIPTOR",
+            serde_json::to_string(&crate::omp::worker_descriptor())?,
+        );
+        let mut worker = Self::spawn_command(
+            command,
+            "omp",
+            json!({"versions":PROTOCOL_VERSIONS,"provider":"omp"}),
+            events,
+            Vec::new(),
+        )?;
+        if let Some(account) = account.cloned() {
+            let cwd = cwd.to_owned();
+            Arc::get_mut(&mut worker)
+                .context("A new provider worker is not shared")?
+                .preflight = Some(Box::new(move || {
+                crate::provider::omp_probe::ensure_identity(&account)?;
+                crate::provider::omp_probe::ensure_workspace_sources(&cwd, &account)
+            }));
+        }
+        Ok(worker)
     }
     fn spawn_command(
         mut command: Command,
         provider: &str,
         initialize: Value,
         events: mpsc::SyncSender<Event>,
+        setting_sources: Vec<String>,
     ) -> Result<Arc<Self>> {
         if provider == "codex" {
             command
@@ -462,14 +719,24 @@ impl Worker {
             events,
             Framing::JsonRpc2,
             super::bridge_event,
-            1024 * 1024,
+            // The largest output frame any worker may declare; the handshake then
+            // holds the worker to its own declared limit.
+            4 * 1024 * 1024,
         )?;
         let handshake = rpc
             .request_within("initialize", initialize, Some(INITIALIZE_LIMIT))
             .and_then(|reply| check_handshake(provider, &reply))
             .context("The provider worker did not complete its initialize handshake");
         match handshake {
-            Ok(handshake) => Ok(Arc::new(Self { rpc, handshake })),
+            Ok(mut handshake) => {
+                handshake.descriptor.setting_sources = setting_sources;
+                Ok(Arc::new(Self {
+                    rpc,
+                    handshake,
+                    preflight: None,
+                    pinned_account: None,
+                }))
+            }
             Err(error) => match rpc.stop_confirmed() {
                 Ok(()) => Err(error),
                 Err(stop) => Err(error.context(stop.to_string())),
@@ -479,6 +746,33 @@ impl Worker {
 
     pub fn handshake(&self) -> &Handshake {
         &self.handshake
+    }
+
+    /// The worker's own report of its managed account's native login.
+    fn account_inspection(&self) -> Result<ProviderWorkerAccountInspection> {
+        self.ensure_operation("account_inspect")?;
+        check_account_inspection(self.rpc.request("account_inspect", json!({}))?)
+    }
+
+    /// Refuses unless the worker still reports the identity ADE pinned for its
+    /// managed account: a login changed underneath ADE is never used.
+    fn check_pinned_account(&self) -> Result<()> {
+        let Some(account) = &self.pinned_account else {
+            return Ok(());
+        };
+        let inspection = self.account_inspection()?;
+        ensure!(
+            inspection.state == ProviderWorkerAccountState::Ready,
+            "{} account is not ready: {}",
+            account.provider,
+            inspection.reason
+        );
+        ensure!(
+            account.worker_identity.is_some() && inspection.identity == account.worker_identity,
+            "{} account identity changed since it was verified; inspect and verify the account again",
+            account.provider
+        );
+        Ok(())
     }
 
     fn ensure_operation(&self, method: &str) -> Result<()> {
@@ -496,6 +790,7 @@ impl Worker {
             "compact" => Method::Compact,
             "rewind" => Method::Rewind,
             "child_transcript" => Method::ChildTranscript,
+            "account_inspect" => Method::AccountInspect,
             _ => anyhow::bail!("Unknown provider worker operation"),
         };
         let operation = self
@@ -571,12 +866,19 @@ impl Provider for Worker {
             .request("compact", json!({"session":session,"operation":operation}))?;
         Ok(())
     }
-    fn rewind(&self, session: &str, turn: &str, operation: &str) -> Result<Option<String>> {
+    fn rewind(
+        &self,
+        session: &str,
+        turn: &str,
+        operation: &str,
+        native_message: Option<&ade_core::provider::NativeMessageLocator>,
+    ) -> Result<Option<String>> {
         self.ensure_operation("rewind")?;
-        let reply = self.rpc.request(
-            "rewind",
-            json!({"session":session,"turn":turn,"operation":operation}),
-        )?;
+        let mut params = json!({"session":session,"turn":turn,"operation":operation});
+        if let Some(locator) = native_message {
+            params["native_message"] = serde_json::to_value(locator)?;
+        }
+        let reply = self.rpc.request("rewind", params)?;
         let reply: ade_core::contract::providers::ProviderWorkerRewindResult =
             serde_json::from_value(reply)?;
         Ok(reply.session)
@@ -589,6 +891,10 @@ impl Provider for Worker {
     }
     fn open(&self, resume: Option<&str>, config: &Config) -> Result<Connected> {
         self.ensure_operation("open")?;
+        if let Some(preflight) = &self.preflight {
+            preflight()?;
+        }
+        self.check_pinned_account()?;
         config.validate_against(&self.handshake.descriptor)?;
         ensure!(
             resume.is_none() || self.supports("resume"),
@@ -624,7 +930,16 @@ impl Provider for Worker {
         prompt: &crate::prompt::Prompt,
     ) -> Result<ade_core::contract::providers::ProviderWorkerSendResult> {
         self.ensure_operation("send")?;
-        let value = self.rpc.request("send", json!({"session":session,"source_attempt_id":source_attempt_id,"submission":submission,"message_id":message_id,"text":prompt.text,"attachments":prompt.attachments}))?;
+        if let Some(preflight) = &self.preflight {
+            preflight()?;
+        }
+        self.check_pinned_account()?;
+        let params = json!({"session":session,"source_attempt_id":source_attempt_id,"submission":submission,"message_id":message_id,"text":prompt.text,"attachments":prompt.attachments});
+        within_input_frame(
+            &params,
+            self.handshake.wire_descriptor.limits.max_input_frame_bytes,
+        )?;
+        let value = self.rpc.request("send", params)?;
         Ok(serde_json::from_value(value)?)
     }
     fn steer(
@@ -718,9 +1033,12 @@ impl Provider for Worker {
     }
     fn reject(&self, id: Value, message: &str) -> Result<()> {
         self.ensure_operation("answer")?;
+        // A refusal: `reason` tells the worker to refuse the native request
+        // rather than answer it; the decline choice keeps the request typed.
         self.rpc.request(
             "answer",
-            json!({"id":id,"decision":"decline","answers":null,"reason":message}),
+            json!({"id":id,"operation_id":format!("reject:{id}"),
+                "answer":{"kind":"choice","value":"decline"},"reason":message}),
         )?;
         Ok(())
     }
@@ -736,25 +1054,59 @@ impl Provider for Worker {
 pub fn inspect(worker: &ProviderWorker) -> Result<serde_json::Value> {
     use super::Provider;
     let (events, receiver) = mpsc::sync_channel(32);
-    let process = Worker::spawn(worker, &worker.artifact_path, events)?;
+    let process = Worker::start(worker, &worker.artifact_path, None, events)?;
     let handshake = process.handshake().clone();
     let _drain = std::thread::spawn(move || while receiver.recv().is_ok() {});
     let descriptor = handshake.descriptor.clone();
     process.stop_confirmed()?;
+    let (state, reason) = native_readiness(&handshake.wire_descriptor);
     Ok(serde_json::json!({
         "type": "provider_inspect",
         "provider": descriptor.id,
-        "state": "installed_unchecked",
-        "reason": "Installed worker completed compatible read-only initialization; native provider readiness and authentication were not checked",
+        "state": state,
+        "reason": reason,
         "version": worker.pin.version,
         "descriptor": handshake.wire_descriptor,
     }))
+}
+
+/// What a read-only handshake shows about native work. A worker that declares
+/// `open` or `send` unavailable, such as one whose native executable is
+/// missing, is unavailable for that reason; otherwise readiness is unchecked.
+fn native_readiness(
+    descriptor: &ade_core::contract::providers::ProviderWorkerInitialize,
+) -> (&'static str, String) {
+    use ade_core::contract::providers::{
+        ProviderWorkerAvailability as Availability, ProviderWorkerMethod as Method,
+    };
+    match descriptor.operations.iter().find(|operation| {
+        matches!(operation.method, Method::Open | Method::Send)
+            && operation.availability == Availability::Unavailable
+    }) {
+        Some(operation) => ("unavailable", operation.reason.clone()),
+        None => (
+            "installed_unchecked",
+            "Installed worker completed compatible read-only initialization; native provider readiness and authentication were not checked".into(),
+        ),
+    }
 }
 
 /// Whether `provider` names a plugin worker rather than a bundled provider
 /// or adapter.
 pub fn is_plugin_provider(provider: &str) -> bool {
     provider.starts_with(PLUGIN_PREFIX)
+}
+
+/// Refuses, before writing, a request past the worker's declared input frame
+/// limit: the worker would end its transport, not just refuse this prompt. The
+/// request envelope adds under 256 bytes.
+fn within_input_frame(params: &Value, limit: u32) -> Result<()> {
+    let size = serde_json::to_vec(params)?.len() + 256;
+    ensure!(
+        size <= limit as usize,
+        "The prompt is {size} bytes with its attachments; this provider worker accepts at most {limit}. Nothing was sent."
+    );
+    Ok(())
 }
 
 #[cfg(test)]
@@ -774,6 +1126,20 @@ mod tests {
             artifact_path: "/profile/plugins/artifacts/acme.agent/1.0.0-aa".into(),
             entry: "dist/provider.js".into(),
         }
+    }
+
+    #[test]
+    fn a_prompt_past_the_declared_input_frame_is_refused_before_writing() {
+        let prompt =
+            json!({"text": "look", "attachments": [{"data": "A".repeat(2 * 1024 * 1024)}]});
+        let error = within_input_frame(&prompt, 1_048_576)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("accepts at most 1048576. Nothing was sent."),
+            "{error}"
+        );
+        assert!(within_input_frame(&prompt, 16_777_216).is_ok());
     }
 
     #[test]
@@ -870,7 +1236,7 @@ mod tests {
             ),
             (
                 "oversized limit",
-                json!({"limits":{"max_input_frame_bytes":2097152,"max_input_entries":1024,"max_initialize_ms":15000,"max_output_frame_bytes":1048576,"max_history_page_items":32,"max_output_entries":32,"max_concurrency":8,"max_partial_frame_ms":10000,"max_operation_ms":45000,"max_cleanup_ms":5000}}),
+                json!({"limits":{"max_input_frame_bytes":16777217,"max_input_entries":1024,"max_initialize_ms":15000,"max_output_frame_bytes":1048576,"max_history_page_items":32,"max_output_entries":32,"max_concurrency":8,"max_partial_frame_ms":10000,"max_operation_ms":45000,"max_cleanup_ms":5000}}),
             ),
             (
                 "wrong operation tier",
@@ -907,6 +1273,21 @@ mod tests {
     }
 
     #[test]
+    fn a_worker_declaring_native_work_unavailable_is_unavailable_for_its_reason() {
+        let ready: ade_core::contract::providers::ProviderWorkerInitialize =
+            serde_json::from_value(valid_handshake()).unwrap();
+        assert_eq!(native_readiness(&ready).0, "installed_unchecked");
+        let mut missing = valid_handshake();
+        missing["operations"][2] = json!({"method":"send","tier":"effect_command",
+            "availability":"unavailable","reason":"OpenCode is not installed"});
+        let missing = serde_json::from_value(missing).unwrap();
+        assert_eq!(
+            native_readiness(&missing),
+            ("unavailable", "OpenCode is not installed".to_owned())
+        );
+    }
+
+    #[test]
     fn history_keeps_native_ids_or_is_refused() {
         check_history(&[item("a"), item("b")]).unwrap();
         assert!(check_history(&[item("a"), item("a")]).is_err());
@@ -914,5 +1295,13 @@ mod tests {
         let mut odd = item("c");
         odd.role = "assistant\n".into();
         assert!(check_history(&[odd]).is_err());
+        // A plugin-namespaced kind is accepted; empty or malformed segments are not.
+        let mut custom = item("d");
+        custom.kind = "acme.notes.card".into();
+        check_history(&[custom.clone()]).unwrap();
+        for kind in ["acme..card", ".card", "acme.notes.", "acme/notes"] {
+            custom.kind = kind.into();
+            assert!(check_history(&[custom.clone()]).is_err(), "{kind}");
+        }
     }
 }

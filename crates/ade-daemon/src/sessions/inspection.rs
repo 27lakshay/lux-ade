@@ -36,16 +36,28 @@ impl Sessions {
     }
 
     /// Sends a frame to one subscriber. False removes the subscriber; a full
-    /// queue counts as an eviction, a closed one does not.
-    pub(super) fn deliver(&self, tx: &mpsc::SyncSender<Value>, event: Value) -> bool {
+    /// queue counts as an eviction and marks it overflowed, a closed one does not.
+    pub(super) fn deliver(
+        &self,
+        id: &str,
+        tx: &mpsc::SyncSender<Value>,
+        event: Value,
+        overflowed: &mut HashSet<String>,
+    ) -> bool {
         match tx.try_send(event) {
             Ok(()) => true,
             Err(mpsc::TrySendError::Full(_)) => {
                 self.counters.feed_evictions.fetch_add(1, Ordering::Relaxed);
+                overflowed.insert(id.to_owned());
                 false
             }
             Err(mpsc::TrySendError::Disconnected(_)) => false,
         }
+    }
+
+    /// Whether this subscriber was removed for a full queue, forgetting it.
+    pub fn take_overflowed(&self, id: &str) -> bool {
+        self.data.lock().unwrap().overflowed.remove(id)
     }
 
     /// Removes a subscriber whose connection stopped taking frames (its write

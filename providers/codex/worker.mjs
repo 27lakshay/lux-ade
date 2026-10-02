@@ -6,17 +6,21 @@ import { runProviderWorker } from '@ade/provider-sdk/node'
 // No native executable starts while the factory is acquired or initialized.
 const descriptor = JSON.parse(process.env.ADE_CODEX_WORKER_DESCRIPTOR ?? 'null')
 if (!descriptor) throw new Error('The owning ADE runtime must provide Codex worker metadata')
-const FRAME = 1024 * 1024
-const EVENT_BYTES = 4 * FRAME
+// Frames from the owned native client: an item event can carry a full 1 MiB message and
+// its tool output (F031), so they match the client's 4 MiB output frame.
+const FRAME = 4 * 1024 * 1024
+// Requests to it carry a prompt with ADE's 8 MiB of attachments, base64-encoded.
+const INPUT_FRAME = 16 * 1024 * 1024
+const EVENT_BYTES = 2 * FRAME
 const failure = (code, message) => ({ code, message })
 
-function withinBudget(frame) {
+function withinBudget(frame, max = FRAME) {
   let nodes = 0,
     depth = 0,
     string = false,
     escaped = false,
     primitive = false
-  if (frame.length > FRAME) return false
+  if (frame.length > max) return false
   for (const byte of frame) {
     if (string) {
       if (escaped) escaped = false
@@ -40,7 +44,7 @@ function withinBudget(frame) {
       nodes++
       primitive = true
     }
-    if (nodes > 4096 || depth > 64 || frame.length * 4 + nodes * 512 > 8 * FRAME) return false
+    if (nodes > 4096 || depth > 64 || frame.length * 2 + nodes * 512 > 4 * max) return false
   }
   return true
 }
@@ -51,6 +55,26 @@ runProviderWorker({
   acquire: Effect.gen(function* () {
     const events = yield* Queue.dropping(32)
     let queuedBytes = 0
+    // Backpressure: stop reading the native client while the event queue is mostly full,
+    // and resume once the SDK has drained it. The native client then waits in turn. One chunk
+    // can hold hundreds of small frames, so parsing stops at the pause too: the rest of the
+    // chunk is held and parsed first on resume.
+    let paused = null
+    let parse = null
+    const pauseIfFull = (stream) => {
+      if (paused === null && (Queue.sizeUnsafe(events) >= 24 || queuedBytes > EVENT_BYTES / 2)) {
+        paused = { stream, rest: null }
+        stream.pause()
+      }
+    }
+    const resumeIfDrained = () => {
+      if (paused !== null && Queue.sizeUnsafe(events) < 8 && queuedBytes <= EVENT_BYTES / 4) {
+        const { stream, rest } = paused
+        paused = null
+        if (rest) parse(rest)
+        if (paused === null) stream.resume()
+      }
+    }
     let native
     let launchFailure
     let active = true
@@ -87,7 +111,14 @@ runProviderWorker({
         for (const resume of pending.values()) resume(Effect.fail(detail))
         pending.clear()
       }
-      child.stderr.on('data', () => {}) // Drain, never retain native diagnostics or account material.
+      // Drain, never retain native diagnostics or account material; account for them by size only.
+      let stderrBytes = 0
+      child.stderr.on('data', (chunk) => {
+        stderrBytes += chunk.length
+      })
+      child.once('close', () => {
+        if (stderrBytes > 0) process.stderr.write(`Native Codex client stderr: ${stderrBytes} bytes drained\n`)
+      })
       child.on('error', () => fail(failure('transport_failure', 'Could not launch the owned native Codex client')))
       child.on('close', () => {
         if (active) fail(failure('transport_failure', 'The owned native Codex client disconnected'))
@@ -114,6 +145,7 @@ runProviderWorker({
             )
           }
           queuedBytes += frame.length
+          pauseIfFull(child.stdout)
         } else {
           const resume = pending.get(value.id)
           if (!resume) return // A timed-out/interrupted request is fenced, never replayed.
@@ -123,7 +155,7 @@ runProviderWorker({
           else resume(Effect.succeed(value.result))
         }
       }
-      child.stdout.on('data', (chunk) => {
+      parse = (chunk) => {
         let start = 0
         while (active && start < chunk.length) {
           const end = chunk.indexOf(10, start)
@@ -138,7 +170,16 @@ runProviderWorker({
           carry = Buffer.alloc(0)
           if (frame.length) readFrame(frame)
           start = end + 1
+          if (paused !== null) {
+            if (start < chunk.length) paused.rest = Buffer.from(chunk.subarray(start))
+            return
+          }
         }
+      }
+      child.stdout.on('data', (chunk) => {
+        // A chunk already in flight when the stream paused waits behind the held rest.
+        if (paused !== null) paused.rest = paused.rest ? Buffer.concat([paused.rest, chunk]) : Buffer.from(chunk)
+        else parse(chunk)
       })
       native = {
         failPending,
@@ -158,7 +199,7 @@ runProviderWorker({
             } catch {
               return resume(Effect.fail(failure('invalid_request', 'Native Codex request could not be encoded')))
             }
-            if (!withinBudget(frame) || child.stdin.writableLength + frame.length > 2 * FRAME) {
+            if (!withinBudget(frame, INPUT_FRAME) || child.stdin.writableLength + frame.length > 2 * INPUT_FRAME) {
               return resume(
                 Effect.fail(
                   failure('resource_limit', 'Native Codex request exceeds its retained structural/byte budget'),
@@ -210,6 +251,7 @@ runProviderWorker({
       events: Stream.fromQueue(events).pipe(
         Stream.map(({ value, bytes }) => {
           queuedBytes -= bytes
+          resumeIfDrained()
           return value
         }),
       ),

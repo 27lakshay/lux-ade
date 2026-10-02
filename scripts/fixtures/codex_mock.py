@@ -15,6 +15,7 @@ thread = None
 active = None
 pending = {}
 deferred_reply = None
+burst_after = None
 usage_totals = {}
 send_lock = threading.Lock()
 
@@ -69,6 +70,23 @@ for line in sys.stdin:
             record({"method": "approval/reply", "request_method": pending[str(rpc_id)], "result": message.get("result")})
             pending.pop(str(rpc_id))
             note("serverRequest/resolved", {"threadId": thread["id"], "requestId": rpc_id})
+            if burst_after is not None:
+                # After the approval: more burst text, the tool's terminal state, an error, then the end.
+                base, key, answer = burst_after
+                burst_after = None
+                for index in range(200):
+                    chunk = f"After approval line {index}\n"
+                    answer["text"] += chunk
+                    note("item/agentMessage/delta", {**base, "itemId": answer["id"], "delta": chunk})
+                command = {"id": "command-" + key, "type": "commandExecution", "command": "echo fixture", "cwd": "/fixture",
+                           "aggregatedOutput": "BURST_TOOL_OUTPUT", "exitCode": 2, "status": "failed"}
+                active["items"].append(command)
+                note("item/completed", {**base, "item": command})
+                note("item/completed", {**base, "item": answer})
+                note("error", {**base, "error": {"message": "BURST_FIXTURE_ERROR"}, "willRetry": False})
+                active["error"] = {"message": "BURST_FIXTURE_ERROR"}
+                finish("failed")
+                continue
             finish()
         continue
     record({"method": method, "params": params, "id": rpc_id})
@@ -131,16 +149,35 @@ for line in sys.stdin:
             save()
             send({"id": rpc_id, "result": {"thread": thread}})
             note("thread/started", {"thread": {**thread, "forkedFromId": source["id"]}})
+    elif method == "model/list":
+        # codex-cli 0.159 `Model` rows: reasoning levels differ by model. Two pages, as
+        # `nextCursor` paginates natively. `refuse-model-list` leaves discovery unavailable.
+        if (root / "refuse-model-list").exists():
+            send({"id": rpc_id, "error": {"code": -32601, "message": "Fixture unsupported method"}})
+            continue
+        def model(name, efforts, default=False):
+            return {"id": name, "model": name, "displayName": name.replace("-", " ").title(), "description": "Fixture model",
+                    "hidden": False, "isDefault": default, "defaultReasoningEffort": "medium",
+                    "supportedReasoningEfforts": [{"reasoningEffort": e, "description": e} for e in efforts]}
+        if params.get("cursor") is None:
+            send({"id": rpc_id, "result": {"data": [model("fixture-default-model", ["minimal", "low", "medium", "high"], True),
+                                                    model("fixture-model-b", ["low", "medium", "high", "xhigh"])],
+                                           "nextCursor": "page-2"}})
+        else:
+            send({"id": rpc_id, "result": {"data": [model("fixture-model-small", ["low", "medium"])], "nextCursor": None}})
     elif method == "thread/start":
-        thread = {"id": "mock-thread-" + str(uuid.uuid4()), "turns": []}
+        # A fixed ID lets two native stores (two accounts) hold threads with the same ID.
+        fixed = (root / "fixed-thread-id").exists()
+        thread = {"id": "mock-thread-shared" if fixed else "mock-thread-" + str(uuid.uuid4()), "turns": []}
         save()
-        send({"id": rpc_id, "result": {"thread": thread}})
+        # Native Codex names the model in effect for the thread.
+        send({"id": rpc_id, "result": {"thread": thread, "model": params.get("model") or "fixture-default-model"}})
     elif method == "thread/resume":
         if (root / "fail_resume").exists():
             send({"id": rpc_id, "error": {"code": -32000, "message": "Fixture resume refused"}})
         else:
             thread = json.loads((root / (params["threadId"] + ".json")).read_text())
-            send({"id": rpc_id, "result": {"thread": thread}})
+            send({"id": rpc_id, "result": {"thread": thread, "model": params.get("model") or "fixture-default-model"}})
     elif method == "turn/start":
         text = params["input"][0]["text"]
         key = params["clientUserMessageId"]
@@ -204,8 +241,16 @@ for line in sys.stdin:
         note("item/completed", {**base, "item": user})
         note("item/started", {**base, "item": answer})
         response = ("## Welcome to lux-ade\n\nThis conversation uses a local fixture. No model account is needed.\n\n- Inspect the tool result above.\n- Review the pending approval below.\n- Open a terminal or browser from the empty split.\n\n```python\ndef greet(name):\n    return f\"Hello, {name}\"\n```\n\nYour draft and workspace belong to this isolated demo." if text == "demo" else "Hello world")
-        for chunk in ([response[:len(response)//2], response[len(response)//2:]] if text == "demo" else ["Hello ", "world"]):
+        if text == "slow-stream":
+            # Forty lines over about four seconds, so a reader can act while output arrives.
+            response = "".join(f"Streaming line {index}\n" for index in range(40))
+            chunks = [f"Streaming line {index}\n" for index in range(40)]
+        else:
+            chunks = [response[:len(response)//2], response[len(response)//2:]] if text == "demo" else ["Hello ", "world"]
+        for chunk in chunks:
             note("item/agentMessage/delta", {**base, "itemId": answer["id"], "delta": chunk})
+            if text == "slow-stream":
+                time.sleep(0.1)
         answer["text"] = response
         if text.startswith("handoff-"):
             send({"id": rpc_id, "result": {"turn": active}})
@@ -235,7 +280,14 @@ output.write_text('tool completed once')
                     time.sleep(.04)
             note("item/completed", {**base, "item": answer}); finish()
             continue
-        if text in ("approval", "approval-cancel", "approval-both", "approval-expire", "large-approval", "questions", "rich-questions", "permissions", "permissions-deny", "unsupported-request"):
+        if text == "burst-ordering":
+            # A burst of text with no pause, then an approval request (see the reply handler).
+            for index in range(400):
+                chunk = f"Burst line {index}\n"
+                answer["text"] += chunk
+                note("item/agentMessage/delta", {**base, "itemId": answer["id"], "delta": chunk})
+            burst_after = (base, key, answer)
+        if text in ("approval", "burst-ordering", "approval-cancel", "approval-both", "approval-expire", "large-approval", "questions", "rich-questions", "permissions", "permissions-deny", "unsupported-request"):
             permission = "permission-" + key
             request_method = {"questions": "item/tool/requestUserInput",
                               "rich-questions": "item/tool/requestUserInput",
@@ -292,9 +344,27 @@ output.write_text('tool completed once')
                               if text == "late-error" else {"id": rpc_id, "result": {"turn": json.loads(json.dumps(active))}})
             continue
         # Notifications are flushed in protocol order before the submit reply.
+        if (root / "hang-turn-reply").exists():
+            # The provider never answers turn/start: whether it accepted the prompt is unknown.
+            while True:
+                time.sleep(1)
+        if (root / "delay-turn-reply").exists():
+            # Native Codex may finish the turn well before answering turn/start.
+            time.sleep(0.5)
         send({"id": rpc_id, "result": {"turn": active}})
     elif method == "turn/interrupt":
-        finish("interrupted")
+        if (root / "refuse-interrupt").exists():
+            # The provider refuses and the turn keeps running.
+            send({"id": rpc_id, "error": {"code": -32000, "message": "Fixture interrupt refused"}})
+            continue
+        if (root / "defer-interrupt").exists():
+            # Acknowledge now; the native turn ends only when the test releases it.
+            def interrupt_later():
+                while not (root / "finish-interrupt").exists(): time.sleep(.01)
+                finish("interrupted")
+            threading.Thread(target=interrupt_later, daemon=True).start()
+        else:
+            finish("interrupted")
         send({"id": rpc_id, "result": {}})
     elif method == "turn/steer":
         # Codex 0.157.0 accepts steering only for the active turn it names.
@@ -323,6 +393,14 @@ output.write_text('tool completed once')
             base = {"threadId": thread["id"], "turnId": active["id"]}
             note("turn/started", {"threadId": thread["id"], "turn": active})
             note("item/started", {**base, "item": item})
+            if (root / "compact-replay-tools").exists():
+                # Some providers repeat earlier tool material while compacting: the same item
+                # IDs and output, under the compaction turn. It is not a new execution.
+                for earlier in thread["turns"][:-1]:
+                    for tool in earlier["items"]:
+                        if tool.get("type") == "commandExecution":
+                            note("item/commandExecution/outputDelta", {**base, "itemId": tool["id"], "delta": tool.get("aggregatedOutput", "")})
+                            note("item/completed", {**base, "item": tool})
             note("item/completed", {**base, "item": item})
             finish()
     else:

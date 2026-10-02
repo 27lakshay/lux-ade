@@ -63,6 +63,7 @@ for (const provider of ['codex', 'claude'] as MockProvider[]) {
       conversation_id: conversationId,
       source_attempt_id,
       submission_id,
+      delivery: 'acknowledged',
       evidence: {
         scope: 'turn',
         interruption_requested: true,
@@ -79,7 +80,10 @@ for (const provider of ['codex', 'claude'] as MockProvider[]) {
     }
     // A cancelled turn settles as interrupted, and cancelling pauses the queue.
     await expect.poll(() => conversationStatus(profile, conversationId)).toBe('interrupted')
-    expect((await snapshot(profile, conversationId)).conversation.queue_paused).toBe(true)
+    expect((await snapshot(profile, conversationId)).conversation).toMatchObject({
+      queue_paused: true,
+      stop: { operation_id: 'cancel-held-turn', outcome: 'confirmed', confirmation: 'native_terminal' },
+    })
     await profile.call('queue.pause', { conversation_id: conversationId, paused: false })
 
     await send(profile, conversationId, prompts.turn, 'second-turn')
@@ -291,6 +295,34 @@ test('F034: queued prompts can be inspected, removed and paused, survive a resta
   await expect(
     profile.call('queue.cancel', { conversation_id: conversationId, request_id: 'queued-1' }),
   ).rejects.toThrow(/already been submitted/)
+})
+
+test('a turn that finishes before its send reply arrives stays finished and releases the queue', async ({
+  profile,
+}) => {
+  const { conversationId } = await startConversation(profile, 'codex')
+  // The native turn starts and completes before Codex answers turn/start.
+  await profile.releaseMock('codex', 'delay-turn-reply')
+  await send(profile, conversationId, prompts.turn, 'early-finish')
+  await profile.call('queue.enqueue', {
+    conversation_id: conversationId,
+    request_id: 'queued-after',
+    text: prompts.turn,
+  })
+  await expect
+    .poll(
+      async () =>
+        (await snapshot(profile, conversationId)).messages
+          .filter((message) => message.role === 'user')
+          .map((message) => message.id),
+      { timeout: 20_000 },
+    )
+    .toEqual(['early-finish', 'queued-after'])
+  await waitForIdle(profile, conversationId)
+  // The late send reply must not reopen a finished turn.
+  await new Promise((resolve) => setTimeout(resolve, 1_000))
+  expect(await conversationStatus(profile, conversationId)).toMatch(/^(idle|ready)$/)
+  expect((await snapshot(profile, conversationId)).queued).toEqual([])
 })
 
 test('F034: a prompt queued behind a running turn dispatches automatically when the turn ends', async ({ profile }) => {

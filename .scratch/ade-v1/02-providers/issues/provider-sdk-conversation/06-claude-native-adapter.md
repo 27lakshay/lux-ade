@@ -1,6 +1,6 @@
 # 06 — Run Claude Code through the public provider SDK
 
-Status: ready-for-agent
+Status: complete
 Type: implementation ticket
 
 **Parent:** [TypeScript provider SDK and conversation UI](../../provider-sdk-conversation-ui.md)
@@ -13,12 +13,12 @@ Type: implementation ticket
 
 ## Acceptance criteria
 
-- [ ] Select Claude, submit native input and render correlated text/tools through the same authoring contract and production UI used by Codex.
-- [ ] Read exact installed SDK declarations and record pinned versions. Preserve async input ownership, native message/session identity and approval choices; unavailable optional capabilities remain explicit.
-- [ ] Implement supported request and cancellation behavior through shared operations, including queued input survival and trailing output after interrupt. Do not implement steering by silently queueing.
-- [ ] Native resume preserves requested identity or explicitly reports a fork. Restoring readable history does not claim an execution resumed.
-- [ ] Publish a provider-specific capability/evidence matrix and record remaining installed/live prerequisites without presenting fixture support as native proof.
-- [ ] Record commands, native reports, observable outcomes and explicit failed, skipped or prerequisite-blocked coverage. Pass the required static gate and this slice’s real-process/built-desktop acceptance before claiming completion.
+- [x] Select Claude, submit native input and render correlated text/tools through the same authoring contract and production UI used by Codex.
+- [x] Read exact installed SDK declarations and record pinned versions. Preserve async input ownership, native message/session identity and approval choices; unavailable optional capabilities remain explicit.
+- [x] Implement supported request and cancellation behavior through shared operations, including queued input survival and trailing output after interrupt. Do not implement steering by silently queueing.
+- [x] Native resume preserves requested identity or explicitly reports a fork. Restoring readable history does not claim an execution resumed.
+- [x] Publish a provider-specific capability/evidence matrix and record remaining installed/live prerequisites without presenting fixture support as native proof.
+- [x] Record commands, native reports, observable outcomes and explicit failed, skipped or prerequisite-blocked coverage. Pass the required static gate and this slice’s real-process/built-desktop acceptance before claiming completion.
 
 ## Testing decisions
 
@@ -89,3 +89,27 @@ ADE_CLAUDE_LOOPBACK_BIN=/Users/lakshyakumar/.local/bin/claude node --test provid
 ```
 
 The new same-session/unowned real-daemon request case and shared stop result still await their integration owner's readiness/proof. No new daemon, built-desktop, full static gate, credentialed live-provider, successful native request closure, or effective-grant acceptance is claimed by these owned checks.
+
+2026-10-02: Real-daemon and built-desktop acceptance (decisions taken under the user's standing instruction to decide unattended).
+
+Decisions and fixes:
+- One named test seam replaces the experimental loader: the worker imports the module named by `ADE_E2E_CLAUDE_SDK` when set, else `@anthropic-ai/claude-agent-sdk`; `spawn_claude` keeps that variable through the cleared managed-account environment only when the runtime has it. Protocol and worker tests share one SDK double (`worker-test-sdk.mjs` with `worker-test-store.mjs` sessions and `worker-test-scenarios.mjs` turns). Packaging excludes `worker-test-*` files and the packaged-bundle spec checks it.
+- The worker no longer emits a session-level `started` event after open; the daemon read it as a running turn, so a resumed Conversation could stay `running`.
+- The worker handshake carries Claude's built-in setting sources; `setting_sources: ['project']` was refused before.
+- A native user echo merged by provider item no longer drops the submission's delivery record (`store/conversations.rs`). Every Claude prompt previously stayed "Waiting for confirmation" in the desktop composer.
+- The Claude interrupt reports surviving queued input as `queued_work_count` (ticket 05) instead of an unsupported failure; README updated.
+- Declared limits, unchanged here: the runtime descriptor keeps Claude `history`, `rewind` and `child_transcript` unavailable, and the worker reports `turn: null`. Claude rewind (7 cases in `accounts-rewind/rewind.spec.ts`) and per-turn Claude usage (2 cases in `catalogs/usage.spec.ts`) need ADE to key work by submission when a provider has no turn ID; that design (daemon keys by submission, rewind by native message locator) is assigned to tickets 19 and 27.
+
+Also fixed (regressions of accepted ticket 04 found by the full suite):
+- Parent answers to a child's native request used the pre-04 legacy `decision`/`answers` path, which the runtime no longer accepts. `orchestration.child.answer` now converts to a typed `RequestAnswer` from the request's declared schema (questions, the declared decline choice, or a named native choice; anything else is refused) under a deterministic operation ID, and the legacy daemon path is removed. Codex single-select answers given as a one-item list are accepted.
+- The CLI answer spec now asserts that once an answered request closes with its turn, any further answer (same or conflicting) is refused and never reaches the provider; the typed refusal for an unoffered choice is "Choice is not offered by this request".
+
+Evidence (deterministic SDK double, real daemon/runtime processes; not installed or live provider evidence):
+- `pnpm check:static`: passed (`test-results/runs/static-2b75b4a2-dc06-436f-a4ea-aa4b16eeb31b`; 897 Rust tests passed, 1 skipped; 451 renderer tests).
+- `node --test providers/claude/worker.test.mjs`: 21/21.
+- Full `pnpm test:e2e:protocol:only`: 1054 passed, 31 failed, 5 skipped (`test-results/runs/protocol-1c380de8-e191-4f82-b86c-8bee42550084`). Every Claude send, request, question, stop, account-switch, managed-account, attachment-form, command, skill, MCP and exhausted-limit case passes. Failures: the 7 Claude rewind and 2 per-turn usage cases above (tickets 19 and 27), one Codex 7.6 MB attachment case (ticket 16), and 21 that also fail on a clean build of commit 48949704 (recorded on ticket 05).
+- Full `pnpm test:e2e:desktop:only`: 97 passed, 2 failed (`test-results/runs/desktop-9f9741b0-0930-4932-a65f-6a38f0e024f7`); the two failures are ticket 15 draft cases that also fail with the commit's composer. `e2e/desktop/claude.spec.ts` (a plain Claude turn renders "Hello Claude" with "Accepted by native agent"; a native Bash permission is answered once through the window's native choices; Stop shows a confirmed native terminal outcome) passes, with screenshots `claude-approval.png` and `claude-stopped.png`.
+
+Prerequisite-blocked: authenticated live Claude, and installed-Claude daemon acceptance (the installed SDK/CLI loopback above remains the installed evidence).
+
+2026-10-02 (PC02 parity): D19 cleanup done. The old in-process Claude bridge is deleted: `claude.rs::Adapter`, `providers/claude/bridge.mjs`, `bridge.test.mjs`, `fake-sdk.mjs`, `scripts/fixtures/claude_mock.mjs` and `scripts/test_claude_loopback.py`. Packaged and legacy fixtures now use the worker's `ADE_E2E_CLAUDE_SDK` seam, and the installed Claude check is the worker's `loopback.test.mjs`.

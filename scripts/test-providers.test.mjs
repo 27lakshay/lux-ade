@@ -10,7 +10,7 @@ test('provider discovery includes omitted Claude cases and excludes external pre
   const { commands } = providerCommands([])
   assert.deepEqual(
     commands.map((entry) => entry.name),
-    ['claude', 'opencode', 'omp'],
+    ['claude', 'opencode', 'omp', 'acp'],
   )
   assert.ok(commands[0].args.includes('./tasks.test.mjs'))
   assert.ok(commands[0].args.includes('./subagents.test.mjs'))
@@ -33,13 +33,13 @@ test('filters remain separate arguments and invalid requests fail before any run
 test('deterministic execution removes inherited live opt-ins without mutating the caller', () => {
   const source = {
     PATH: '/bin',
-    ADE_OMP_LIVE: '1',
     ADE_OMP_LOOPBACK: '1',
     ADE_OPENCODE_LIVE_BIN: 'live',
     ADE_OPENCODE_LOOPBACK_BIN: 'installed',
+    ADE_ACP_LIVE_BIN: 'opencode',
   }
   assert.deepEqual(deterministicEnvironment(source), { PATH: '/bin' })
-  assert.equal(source.ADE_OMP_LIVE, '1')
+  assert.equal(source.ADE_OMP_LOOPBACK, '1')
 })
 
 test('runner failures and missing executables are nonzero', async () => {

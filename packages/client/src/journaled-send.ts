@@ -6,6 +6,7 @@
 import { createHash } from 'node:crypto'
 import { resolve } from 'node:path'
 import { DaemonRequestError, requestDaemon, type DaemonResponse } from './request.js'
+import type { Attachment } from '@ade/contracts'
 import type { SendJournal, SendJournalIdentity, SendJournalRecord } from './send-journal.js'
 
 /** The draft owner a draftless client's records name. It never reaches the daemon. */
@@ -65,6 +66,7 @@ async function attempt(journal: SendJournal, endpoint: string, record: SendJourn
       conversation_id: record.conversationId,
       request_id: record.requestId,
       text: record.text,
+      ...(record.attachments.length ? { attachments: record.attachments as Attachment[] } : {}),
     })
   } catch (error) {
     if (!settledFailure(error)) throw new SendHeld(record.requestId, error)
@@ -83,7 +85,7 @@ async function attempt(journal: SendJournal, endpoint: string, record: SendJourn
 export async function sendJournaled(
   journal: SendJournal,
   owner: { endpoint: string; profileId: string; conversationId: string },
-  prompt: { requestId: string; text: string },
+  prompt: { requestId: string; text: string; attachments?: unknown[] },
 ): Promise<DaemonResponse> {
   const held = (await journal.list()).find(
     (record) =>
@@ -106,7 +108,7 @@ export async function sendJournaled(
     text: prompt.text,
     draftText: '',
     draftRevision: 0,
-    attachments: [],
+    attachments: prompt.attachments ?? [],
     contextNodes: [],
     dispatchStarted: false,
   }

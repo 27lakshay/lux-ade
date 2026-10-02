@@ -11,6 +11,8 @@
 /apps/*/out/
 /apps/*/dist/
 /packages/*/dist/
+/plugins/*/dist/
+/plugins/*/artifact/
 /test-results/
 /playwright-report/
 # Vitest browser mode's failure screenshots.

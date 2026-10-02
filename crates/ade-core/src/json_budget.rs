@@ -3,7 +3,9 @@
 
 pub const MAX_NODES: usize = 4096;
 pub const MAX_DEPTH: usize = 64;
-pub const MAX_DECODED_BYTES: usize = 8 * 1024 * 1024;
+/// One stored tool message holds up to 1 MiB of text and 1 MiB of output
+/// (F031); a quarter of this reservation bounds a single value's bytes.
+pub const MAX_DECODED_BYTES: usize = 16 * 1024 * 1024;
 
 /// Conservative decoded tree plus projection reservation, not measured allocator bytes.
 #[derive(Clone, Copy, Default)]
@@ -28,6 +30,7 @@ impl Usage {
 struct Scanner {
     usage: Usage,
     max_bytes: usize,
+    max_decoded: usize,
     depth: usize,
     string: bool,
     escaped: bool,
@@ -39,6 +42,7 @@ impl Scanner {
         Self {
             usage: Usage::default(),
             max_bytes,
+            max_decoded: MAX_DECODED_BYTES,
             depth: 0,
             string: false,
             escaped: false,
@@ -48,7 +52,7 @@ impl Scanner {
     }
     fn feed(&mut self, bytes: &[u8]) -> bool {
         self.usage.bytes = self.usage.bytes.saturating_add(bytes.len());
-        if self.usage.bytes > self.max_bytes || self.usage.bytes > MAX_DECODED_BYTES / 4 {
+        if self.usage.bytes > self.max_bytes || self.usage.bytes > self.max_decoded / 4 {
             self.rejected = true;
             return false;
         }
@@ -89,7 +93,7 @@ impl Scanner {
             }
             if self.usage.nodes > MAX_NODES
                 || self.depth > MAX_DEPTH
-                || self.usage.reservation() > MAX_DECODED_BYTES
+                || self.usage.reservation() > self.max_decoded
             {
                 self.rejected = true;
                 return false;
@@ -117,6 +121,15 @@ pub fn usage(bytes: &[u8], max_bytes: usize) -> Option<Usage> {
 }
 pub fn within_budget(bytes: &[u8], max_bytes: usize) -> bool {
     usage(bytes, max_bytes).is_some()
+}
+/// A request from ADE itself, such as a prompt with its attachments: its
+/// size is bounded by ADE's own admission, so the decoded reservation scales
+/// with `max_bytes` instead of the native-output cap. Node and depth limits
+/// still apply.
+pub fn within_request_budget(bytes: &[u8], max_bytes: usize) -> bool {
+    let mut scan = Scanner::new(max_bytes);
+    scan.max_decoded = MAX_DECODED_BYTES.max(max_bytes.saturating_mul(4));
+    scan.feed(bytes)
 }
 /// Counts known projection nodes and bytes without copying its serialized JSON.
 /// None means resource refusal; serializer failures remain errors.
@@ -149,4 +162,21 @@ pub fn encoded_size<T: serde::Serialize + ?Sized>(value: &T) -> Result<usize, se
     let mut count = Counter(0);
     serde_json::to_writer(&mut count, value)?;
     Ok(count.0)
+}
+
+#[cfg(test)]
+mod request_budget_tests {
+    use super::*;
+
+    #[test]
+    fn a_request_budget_admits_a_large_prompt_that_the_native_budget_refuses() {
+        let image = "A".repeat(11 * 1024 * 1024);
+        let frame = format!(r#"{{"method":"send","params":{{"data":"{image}"}}}}"#);
+        assert!(!within_budget(frame.as_bytes(), 16 * 1024 * 1024));
+        assert!(within_request_budget(frame.as_bytes(), 16 * 1024 * 1024));
+        // Its own byte limit, and node limits, still hold.
+        assert!(!within_request_budget(frame.as_bytes(), 8 * 1024 * 1024));
+        let wide = format!("[{}0]", "0,".repeat(MAX_NODES));
+        assert!(!within_request_budget(wide.as_bytes(), 16 * 1024 * 1024));
+    }
 }

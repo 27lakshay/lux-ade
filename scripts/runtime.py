@@ -151,7 +151,7 @@ def build_identity(binary, providers=None):
         children[:] = sorted(name for name in children if name not in ('node_modules', '.git', '__pycache__'))
         for name in sorted(names):
             source = Path(directory) / name
-            if name.endswith('.test.mjs') or any(word in name for word in ('fixture', 'mock', 'fake-sdk')):
+            if name.endswith('.test.mjs') or name.startswith('worker-test-') or any(word in name for word in ('fixture', 'mock')):
                 continue
             if (source.suffix == '.mjs' or name == 'package.json'
                     or (not workspace_lock.is_file() and name in ('pnpm-lock.yaml', 'pnpm-workspace.yaml'))):

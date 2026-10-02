@@ -228,6 +228,15 @@ impl Sessions {
             .iter()
             .map(|run| self.registered_descriptor(&run.provider))
             .collect::<Result<Vec<_>>>()?;
+        // As for one delegated child: only a provider without managed accounts uses its own login.
+        let own_login: Vec<bool> = start
+            .runs
+            .iter()
+            .zip(&registered)
+            .map(|(run, descriptor)| {
+                descriptor.is_some() && self.ensure_managed_accounts(&run.provider).is_err()
+            })
+            .collect();
 
         let mut d = self.data.lock().unwrap();
         ensure!(!d.draining, "Application daemon is restarting");
@@ -276,11 +285,7 @@ impl Sessions {
                     &parent.provider,
                     parent.account_id.as_deref(),
                 )?;
-                policy::registered_account(
-                    &run.provider,
-                    registered.is_some(),
-                    account.as_deref(),
-                )?;
+                policy::registered_account(&run.provider, own_login[index], account.as_deref())?;
                 let run_operation = group_policy::run_operation_id(&group_id, index);
                 let child = insert_child(
                     &tx,

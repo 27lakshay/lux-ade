@@ -1,0 +1,21 @@
+// The OpenCode plugin worker under the provider conformance harness (@ade/provider-sdk/testing),
+// on the deterministic OpenCode server. Only the gaps recorded in conformance-fixture.mjs may
+// fail. Run after `pnpm --filter @ade/opencode-provider build`.
+import assert from 'node:assert/strict'
+import { test } from 'node:test'
+import { fileURLToPath } from 'node:url'
+import { formatReport, runConformance } from '@ade/provider-sdk/testing'
+import setup, { knownGaps } from './conformance-fixture.mjs'
+
+test('the OpenCode worker conforms apart from its recorded gaps, with every check exercised', async () => {
+  const { env, cleanup, ...fixture } = await setup({ cwd: process.cwd() })
+  try {
+    const worker = fileURLToPath(new URL('../dist/worker.js', import.meta.url))
+    const report = await runConformance({ target: { command: process.execPath, args: [worker], env }, fixture })
+    const failing = report.checks.filter((check) => check.status === 'fail').map((check) => check.id)
+    assert.deepEqual(failing.sort(), Object.keys(knownGaps).sort(), formatReport(report))
+    assert.equal(report.counts.not_exercised, 0, formatReport(report))
+  } finally {
+    await cleanup?.()
+  }
+})

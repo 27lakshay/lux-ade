@@ -6,7 +6,6 @@ import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, realpath, rm, symli
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
-import { pathToFileURL } from 'node:url'
 import {
   managedProfileOwner,
   stopManagedProfile,
@@ -952,11 +951,14 @@ test('packaged provider entry points run deterministic turns through bundled Nod
   await mkdir(folder)
   const codexMock = join(directory, 'codex-mock.py')
   const ompMock = join(directory, 'omp-mock-cli.mjs')
-  const claudeSdkMock = join(directory, 'claude-fake-sdk.mjs')
+  // The Claude worker's SDK double; packaging leaves it out of the bundle, so it is staged here.
+  const claudeSdkMock = join(directory, 'worker-test-sdk.mjs')
   await Promise.all([
     copyFile(resolve('scripts/fixtures/codex_mock.py'), codexMock),
     copyFile(resolve('providers/omp/mock-cli.mjs'), ompMock),
-    copyFile(resolve('providers/claude/fake-sdk.mjs'), claudeSdkMock),
+    ...['worker-test-sdk.mjs', 'worker-test-store.mjs', 'worker-test-scenarios.mjs'].map((name) =>
+      copyFile(resolve('providers/claude', name), join(directory, name)),
+    ),
   ])
   const codexServer = join(directory, 'codex-unix-server.mjs')
   await writeFile(
@@ -986,22 +988,10 @@ const server = Bun.serve({ unix: endpoint.slice('unix://'.length),
 process.on('SIGTERM', () => { child.kill('SIGTERM'); server.stop(); process.exit(0); });
 `,
   )
-  const claudeRunner = join(directory, 'claude-runner.mjs')
-  await writeFile(
-    claudeRunner,
-    `
-import { serve } from ${JSON.stringify(pathToFileURL(join(resources, 'providers/claude/bridge.mjs')).href)};
-import { fakeSdk } from ${JSON.stringify(pathToFileURL(claudeSdkMock).href)};
-process.env.ADE_CLAUDE_BIN = process.execPath;
-serve(fakeSdk(process.env.ADE_MOCK_CLAUDE_DIR));
-`,
-  )
   const codexWrapper = join(directory, 'codex-app-server')
-  const claudeWrapper = join(directory, 'claude-bridge')
   const ompWrapper = join(directory, 'omp-cli')
   await Promise.all([
     executableWrapper(codexWrapper, bundledBun, codexServer),
-    executableWrapper(claudeWrapper, join(resources, 'bin/ade-node'), claudeRunner),
     executableWrapper(ompWrapper, bundledBun, ompMock),
   ])
 
@@ -1013,8 +1003,8 @@ serve(fakeSdk(process.env.ADE_MOCK_CLAUDE_DIR));
     ADE_CODEX_BIN: codexWrapper,
     ADE_MOCK_CODEX_SCRIPT: codexMock,
     ADE_MOCK_DIR: join(directory, 'codex-calls'),
-    ADE_CLAUDE_BRIDGE_BIN: claudeWrapper,
-    ADE_MOCK_CLAUDE_DIR: join(directory, 'claude-calls'),
+    ADE_E2E_CLAUDE_SDK: claudeSdkMock,
+    ADE_CLAUDE_WORKER_TEST_DIR: join(directory, 'claude-calls'),
     ADE_OMP_BIN: ompWrapper,
   }
   const application = await electron.launch({ executablePath: executable, cwd: directory, env })

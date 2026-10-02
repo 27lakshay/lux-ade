@@ -20,8 +20,14 @@ use std::{
 };
 
 const FRAME: usize = 1024 * 1024;
+/// Requests carry a prompt with ADE's 8 MiB of attachments, base64-encoded.
+const INPUT_FRAME: usize = 16 * FRAME;
+/// An item event carries up to 1 MiB of message text and 1 MiB of tool output (F031).
+const OUTPUT_FRAME: usize = 4 * FRAME;
 const EVENT_ENTRIES: usize = 32;
-const EVENT_BYTES: usize = 4 * FRAME;
+/// How long semantic output may wait for a slow reader before it fails.
+const SEMANTIC_BACKPRESSURE: std::time::Duration = std::time::Duration::from_secs(30);
+const EVENT_BYTES: usize = 2 * OUTPUT_FRAME;
 
 pub fn public_descriptor() -> ProviderWorkerInitialize {
     let native = ade_core::provider::descriptors()
@@ -78,20 +84,31 @@ pub fn public_descriptor() -> ProviderWorkerInitialize {
             (ProviderWorkerMethod::Compact, Tier::EffectCommand),
             (ProviderWorkerMethod::Rewind, Tier::EffectCommand),
             (ProviderWorkerMethod::ChildTranscript, Tier::Query),
+            (ProviderWorkerMethod::AccountInspect, Tier::Query),
         ]
         .into_iter()
-        .map(|(method, tier)| ProviderWorkerOperation {
-            method,
-            tier,
-            availability: ProviderWorkerAvailability::Available,
-            reason: String::new(),
+        .map(|(method, tier)| match method {
+            // A bundled provider's managed logins are read by ADE's account probe
+            // for that provider (`codex_probe`, `account_probe`, `omp_probe`).
+            ProviderWorkerMethod::AccountInspect => ProviderWorkerOperation {
+                method,
+                tier,
+                availability: ProviderWorkerAvailability::Unsupported,
+                reason: "ADE's bundled account probe reads this provider's managed logins before the worker starts".into(),
+            },
+            _ => ProviderWorkerOperation {
+                method,
+                tier,
+                availability: ProviderWorkerAvailability::Available,
+                reason: String::new(),
+            },
         })
         .collect(),
         limits: ProviderWorkerLimits {
-            max_input_frame_bytes: FRAME as u32,
+            max_input_frame_bytes: INPUT_FRAME as u32,
             max_input_entries: 1024,
             max_initialize_ms: 15000,
-            max_output_frame_bytes: FRAME as u32,
+            max_output_frame_bytes: OUTPUT_FRAME as u32,
             max_history_page_items: 32,
             max_output_entries: 32,
             max_concurrency: 4,
@@ -106,6 +123,7 @@ pub fn public_descriptor() -> ProviderWorkerInitialize {
             platform_node_version: "4.0.0-rc.118".into(),
             node_engine: ">=22".into(),
         },
+        native_peer: None,
     }
 }
 
@@ -225,7 +243,10 @@ impl State {
                     text: p.text,
                     attachments: p.attachments,
                 };
-                Ok(json!({"turn":client.steer(&p.session, &p.turn, &p.message_id, &prompt)?}))
+                // The worker contract types a steer reply as a send result.
+                Ok(
+                    json!({"turn":client.steer(&p.session, &p.turn, &p.message_id, &prompt)?,"admitted":true,"dispatch":"dispatched","native_outcome":"accepted"}),
+                )
             }
             Cancel => anyhow::bail!(Failure::Rejected),
             Compact => {
@@ -238,7 +259,7 @@ impl State {
                 let result = if let Some(locator) = p.native_message.as_ref() {
                     client.rewind_message(&p.session, locator, &p.operation)?
                 } else if let Some(turn) = p.turn.as_deref() {
-                    client.rewind(&p.session, turn, &p.operation)?
+                    client.rewind(&p.session, turn, &p.operation, None)?
                 } else {
                     anyhow::bail!("Codex rewind requires a native turn or message locator")
                 };
@@ -262,6 +283,12 @@ impl State {
                 let p: ProviderWorkerAnswerRequest = serde_json::from_value(params)?;
                 let key = p.id.to_string();
                 let mut pending = self.pending.lock().unwrap();
+                // Refusing is always safe, even for a request whose turn already
+                // ended: the native side gets an answer instead of waiting.
+                if let (Some(reason), None) = (&p.reason, pending.get(&key)) {
+                    client.rpc.reject(p.id.clone(), reason)?;
+                    return Ok(json!({}));
+                }
                 let native = pending
                     .get(&key)
                     .context("Native request is no longer pending")?;
@@ -280,7 +307,7 @@ impl State {
                 pending.remove(&key);
                 Ok(json!({}))
             }
-            Initialize | ConfigureMcp => anyhow::bail!(Failure::Rejected),
+            Initialize | ConfigureMcp | AccountInspect => anyhow::bail!(Failure::Rejected),
         }
     }
 }
@@ -297,20 +324,28 @@ struct Output {
 impl Output {
     fn emit(&self, value: &Value, semantic: bool) -> Result<()> {
         ensure!(
-            json_budget::encoded_usage(value, FRAME - 1)?.is_some(),
+            json_budget::encoded_usage(value, OUTPUT_FRAME - 1)?.is_some(),
             Failure::ResourceLimit
         );
         let mut bytes = serde_json::to_vec(value)?;
         bytes.push(b'\n');
         if semantic {
-            if self.entries.fetch_add(1, Ordering::SeqCst) >= EVENT_ENTRIES {
+            // A slow reader applies backpressure: wait for the bounded queue to
+            // drain, which in turn stops reading native output. Only a reader
+            // that stays stuck past the deadline fails the session.
+            let deadline = std::time::Instant::now() + SEMANTIC_BACKPRESSURE;
+            loop {
+                if self.entries.fetch_add(1, Ordering::SeqCst) < EVENT_ENTRIES {
+                    if self.bytes.fetch_add(bytes.len(), Ordering::SeqCst) + bytes.len()
+                        <= EVENT_BYTES
+                    {
+                        break;
+                    }
+                    self.bytes.fetch_sub(bytes.len(), Ordering::SeqCst);
+                }
                 self.entries.fetch_sub(1, Ordering::SeqCst);
-                anyhow::bail!(Failure::ResourceLimit);
-            }
-            if self.bytes.fetch_add(bytes.len(), Ordering::SeqCst) + bytes.len() > EVENT_BYTES {
-                self.entries.fetch_sub(1, Ordering::SeqCst);
-                self.bytes.fetch_sub(bytes.len(), Ordering::SeqCst);
-                anyhow::bail!(Failure::ResourceLimit);
+                ensure!(std::time::Instant::now() < deadline, Failure::ResourceLimit);
+                std::thread::sleep(std::time::Duration::from_millis(2));
             }
         }
         let len = bytes.len();
@@ -353,12 +388,37 @@ fn response(id: Value, result: Result<Value>) -> Value {
     }
 }
 
+/// The managed Codex account this worker runs on, from the public account
+/// context every worker on a managed account receives.
+fn execution_account() -> Result<Option<ade_core::model::AccountExecution>> {
+    let Ok(context) = std::env::var(crate::provider::worker::ACCOUNT_CONTEXT) else {
+        return Ok(None);
+    };
+    let context: ProviderWorkerAccountContext =
+        serde_json::from_str(&context).context("Malformed managed account context")?;
+    ensure!(
+        context.provider == "codex",
+        "Managed account context belongs to another provider"
+    );
+    let identity = context
+        .identity
+        .map(|identity| serde_json::from_value(Value::Object(identity)))
+        .transpose()
+        .context("Malformed pinned Codex identity")?;
+    Ok(Some(ade_core::model::AccountExecution {
+        id: context.account_id,
+        provider: context.provider,
+        native_home: context.native_home,
+        generation: context.generation,
+        claude_identity: None,
+        codex_identity: identity,
+        omp_identity: None,
+        worker_identity: None,
+    }))
+}
+
 pub fn run_native_client() -> Result<()> {
-    let account = std::env::var("ADE_CODEX_EXECUTION_ACCOUNT")
-        .ok()
-        .map(|value| serde_json::from_str(&value))
-        .transpose()?
-        .flatten();
+    let account = execution_account()?;
     let (event_send, event_read) = mpsc::sync_channel(4); // Four individually bounded native frames before projection.
     let state = Arc::new(State {
         native: Mutex::new(Native {
@@ -494,12 +554,16 @@ pub fn run_native_client() -> Result<()> {
                 continue;
             }
             let mut line = String::new();
-            let n = reader.by_ref().take(FRAME as u64).read_line(&mut line)?;
+            let n = reader
+                .by_ref()
+                .take(INPUT_FRAME as u64)
+                .read_line(&mut line)?;
             if n == 0 {
                 break;
             }
             ensure!(
-                line.ends_with('\n') && json_budget::within_budget(line.as_bytes(), FRAME),
+                line.ends_with('\n')
+                    && json_budget::within_request_budget(line.as_bytes(), INPUT_FRAME),
                 Failure::ResourceLimit
             );
             let request: ProviderWorkerRequest = serde_json::from_str(&line)?;

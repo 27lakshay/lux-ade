@@ -51,6 +51,7 @@ import { enableRemoteDebugging, startDevStateServer } from './dev'
 import { initializeLogging, logWindowConsole } from './logging'
 import { startCrashReporter } from './diagnostics'
 import { recoverRendererFailures } from './renderer-recovery'
+import { registerPluginUiIpc, servePluginScheme } from './plugin-ui'
 import { loadAppearance, setAppearance, watchAppearance, windowBackground } from './appearance'
 import { isThemePreference, TRAFFIC_LIGHTS } from '../shared/window-chrome'
 import { registerNativeAccessibility } from './native-accessibility'
@@ -92,6 +93,7 @@ listen('ade:window-minimum-size', (event, width: unknown, height: unknown) => {
 })
 registerProfileIpc()
 registerConversationIpc()
+registerPluginUiIpc()
 registerWorkspaceIpc()
 registerLayoutIpc()
 registerWorkspaceActionIpc()
@@ -235,6 +237,7 @@ app
   .then(async () => {
     installAppMenu()
     serveAppScheme(session.defaultSession)
+    servePluginScheme(session.defaultSession)
     lockDownAppSession(session.defaultSession)
     if (process.env.ADE_E2E_HIDE_WINDOW === '1' && process.platform === 'darwin') {
       app.setActivationPolicy('accessory')

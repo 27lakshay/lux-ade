@@ -27,8 +27,9 @@ impl Store {
         }
         Ok(home)
     }
+    /// Records a new managed account. The caller has checked that `provider`
+    /// supports managed accounts.
     pub fn create_account(&self, provider: &str, name: &str) -> Result<Account> {
-        crate::provider::descriptor(provider)?;
         let name = name.trim();
         ensure!(
             !name.is_empty() && name.len() <= 80 && !name.contains(['\0', '\n', '\r']),
@@ -66,6 +67,7 @@ impl Store {
             claude_identity: None,
             codex_identity: None,
             omp_identity: None,
+            worker_identity: None,
         };
         if provider == "codex" {
             use std::io::Write;
@@ -193,6 +195,37 @@ impl Store {
         tx.commit()?;
         self.account(id)
     }
+    /// Pins the identity a provider worker's `account_inspect` reported, for
+    /// a provider without a bundled account probe.
+    pub fn verify_worker_account(
+        &self,
+        id: &str,
+        generation: u64,
+        identity: serde_json::Map<String, Value>,
+    ) -> Result<Account> {
+        let tx = self.transaction()?;
+        let mut account: Account = one(&tx, "accounts", id)?;
+        ensure!(
+            account.generation == generation,
+            "Account changed during verification"
+        );
+        ensure!(
+            account
+                .worker_identity
+                .as_ref()
+                .is_none_or(|pinned| pinned == &identity),
+            "{} account identity changed; disable the account before binding a new identity",
+            account.provider
+        );
+        account.state = "verified".into();
+        account.worker_identity = Some(identity);
+        tx.execute(
+            "UPDATE accounts SET data=?2 WHERE id=?1",
+            params![id, encode(&account)?],
+        )?;
+        tx.commit()?;
+        self.account(id)
+    }
     pub fn disable_account(&self, id: &str) -> Result<Account> {
         let tx = self.transaction()?;
         let mut account: Account = one(&tx, "accounts", id)?;
@@ -204,6 +237,7 @@ impl Store {
         account.claude_identity = None;
         account.codex_identity = None;
         account.omp_identity = None;
+        account.worker_identity = None;
         tx.execute(
             "UPDATE accounts SET data=?2 WHERE id=?1",
             params![id, encode(&account)?],

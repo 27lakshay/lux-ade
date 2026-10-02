@@ -6,7 +6,7 @@
 // first asks the CLI to check the range (resumeDropsTurn on a forking resume).
 // ADE then removes its own messages from that turn on, moves the Conversation
 // to the fork and its history epoch in one transaction, and the search index
-// drops the removed text. The provider mock (providers/claude/fake-sdk.mjs)
+// drops the removed text. The provider mock (providers/claude/worker-test-sdk.mjs)
 // never truncates a transcript on its own, so nothing here relies on
 // undocumented SDK behaviour. Codex conversation rewind is unavailable
 // (context/rewind.spec.ts); file rewind goes through ADE checkpoints.
@@ -22,12 +22,21 @@ import {
   type ScratchProfile,
 } from '../fixtures'
 import { sendAndLoseReply } from '../fixtures/lost-reply'
-import { mockDirectory } from '../fixtures/providers'
+import { claudePrompt, mockDirectory } from '../fixtures/providers'
 
-type Message = { id: string; role: string; text: string; turn_id: string | null; sequence: number }
+type Message = {
+  id: string
+  role: string
+  text: string
+  turn_id: string | null
+  sequence: number
+  native_message?: { message_id: string } | null
+}
+/** Claude reports no turn IDs; a rewind boundary is the prompt's native message. */
+const boundary = (message: Message) => message.native_message!.message_id
 
 async function messages(profile: ScratchProfile, conversationId: string): Promise<Message[]> {
-  return (await profile.call('conversation.get', { conversation_id: conversationId, limit: 200 })).messages
+  return (await profile.call('conversation.get', { conversation_id: conversationId, limit: 32 })).messages
 }
 
 async function texts(profile: ScratchProfile, conversationId: string): Promise<string[]> {
@@ -59,12 +68,10 @@ async function checks(profile: ScratchProfile) {
 /** The prompts a native Claude session file holds, as the mock stored it. */
 async function nativePrompts(profile: ScratchProfile, session: string): Promise<string[]> {
   const lines = (await readFile(join(mockDirectory(profile.root, 'claude'), `${session}.jsonl`), 'utf8')).split('\n')
-  const entries = lines
+  return lines
     .filter(Boolean)
-    .map((line) => JSON.parse(line) as { type: string; message?: { content?: unknown } })
-  return entries
-    .filter((entry) => entry.type === 'user' && typeof entry.message?.content === 'string')
-    .map((entry) => entry.message!.content as string)
+    .map((line) => claudePrompt(JSON.parse(line) as Parameters<typeof claudePrompt>[0]))
+    .filter((prompt) => prompt !== null)
 }
 
 /** A Claude Conversation whose turns' prompts carry unique words. */
@@ -108,13 +115,13 @@ test('F039, F043: a Claude rewind forks the session before the turn, removes lat
   const controls = (await profile.call('conversation.controls', { conversation_id: conversationId })).controls
   expect(controls.find((entry) => entry.control === 'rewind_conversation')).toMatchObject({
     available: true,
-    mechanism: 'claude.fork_session',
+    mechanism: 'worker.rewind',
     reason: null,
   })
   const shown = await preview(profile, conversationId, second)
   expect(shown.history).toMatchObject({
     before_message_id: second.id,
-    turn_id: second.turn_id,
+    turn_id: boundary(second),
     removed_messages: 4,
     removed_turns: 2,
     kept_messages: 2,
@@ -154,7 +161,7 @@ test('F039, F043: a Claude rewind forks the session before the turn, removes lat
   // Claude forked at the first turn's last entry. Two turns went, so no single-turn check ran.
   const [fork] = await forks(profile)
   expect(fork).toMatchObject({ session: original, forked })
-  expect(fork.upToMessageId).not.toBe(second.turn_id)
+  expect(fork.upToMessageId).not.toBe(boundary(second))
   expect(await checks(profile)).toEqual([])
   // The Conversation continues in the fork; the earlier native session is unchanged.
   expect(await thread(profile, conversationId)).toBe(forked)
@@ -223,7 +230,7 @@ test('F039: a fork is rewound again at a prompt it copied, by the ID ADE stored,
   })
   const fork = first.history!.native_session!
   await turn(profile, conversationId, 'five egretfall')
-  // The Agent restarts, so the bridge reads the fork's UUID record from ADE's data, not from memory.
+  // The Agent restarts, so the worker reads the fork's UUID record from ADE's data, not from memory.
   await profile.call('agent.disconnect', { conversation_id: conversationId })
   await profile.call('agent.resume', { conversation_id: conversationId })
   await waitForIdle(profile, conversationId)
@@ -288,7 +295,12 @@ test('F039: removing only the last turn asks Claude to check it drops exactly th
   })
   // The check is a forking resume, so it leaves the session as it was; the fork follows it.
   const [check] = await checks(profile)
-  expect(check).toMatchObject({ resume: original, forkSession: true, resumeDropsTurn: third.turn_id, rejected: false })
+  expect(check).toMatchObject({
+    resume: original,
+    forkSession: true,
+    resumeDropsTurn: boundary(third),
+    rejected: false,
+  })
   const [fork] = await forks(profile)
   expect(fork).toMatchObject({ session: original, upToMessageId: check.resumeSessionAt })
   expect(await thread(profile, conversationId)).toBe(fork.forked)
@@ -517,7 +529,7 @@ test('F039: a rewind Claude refuses at its fork-time check keeps the session and
   expect(refused.reason).toMatch(/Provider rejected the operation/)
   expect(refused.history).toBeUndefined()
   const [check] = await checks(profile)
-  expect(check).toMatchObject({ forkSession: true, resumeDropsTurn: third.turn_id, rejected: true })
+  expect(check).toMatchObject({ forkSession: true, resumeDropsTurn: boundary(third), rejected: true })
   expect(await forks(profile)).toEqual([])
 
   // ADE removed nothing, stayed on its session and did not move the epoch; the refusal replays.

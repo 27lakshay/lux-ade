@@ -55,7 +55,16 @@ export type ConversationSnapshot<
   C extends { id: string } = { id: string },
   M extends SyncMessage = SyncMessage,
   R = unknown,
-> = { conversation: C; messages: M[]; requests: R[]; revision: number; boot_id: string; history_epoch?: number }
+> = {
+  conversation: C
+  messages: M[]
+  requests: R[]
+  /** ADE's durable prompt queue; each change frame carries all of it. */
+  queued?: unknown[]
+  revision: number
+  boot_id: string
+  history_epoch?: number
+}
 
 /** What one frame does to a projection that already holds a snapshot. */
 export type FrameOutcome<S> =
@@ -107,6 +116,7 @@ export function reduceFrame<C extends { id: string }, M extends SyncMessage, R>(
     conversation: changed,
     messages: [...messages.values()].sort((left, right) => left.sequence - right.sequence).slice(-CONVERSATION_WINDOW),
     requests: frame.requests as R[],
+    ...(Array.isArray(frame.queued) ? { queued: frame.queued } : {}),
     revision: frame.revision,
   }
   if (!snapshotWithinBounds(projected)) return { kind: 'degraded', reason: 'resource-limit' }

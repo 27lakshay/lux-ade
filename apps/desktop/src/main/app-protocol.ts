@@ -3,6 +3,7 @@ import { join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { startupAppearance } from './appearance'
 import { contentSecurityPolicy } from '../shared/content-security-policy'
+import { PLUGIN_SCHEME } from './plugin-ui'
 
 // The packaged renderer is served from ade://app/ instead of file://, so it has a real origin, a
 // strict content security policy on every response, and no access to other files on disk.
@@ -18,6 +19,11 @@ export function registerAppScheme(): void {
     {
       scheme: APP_SCHEME,
       privileges: { standard: true, secure: true, supportFetchAPI: true, codeCache: true },
+    },
+    // Enabled plugins' UI entry points, imported as ES modules by the app page (main/plugin-ui.ts).
+    {
+      scheme: PLUGIN_SCHEME,
+      privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },
     },
   ])
 }

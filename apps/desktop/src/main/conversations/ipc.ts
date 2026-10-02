@@ -1,10 +1,11 @@
-import { BrowserWindow } from 'electron'
+import { BrowserWindow, dialog } from 'electron'
 import { handle } from '../ipc'
 import { randomUUID } from 'node:crypto'
 import { isAbsolute } from 'node:path'
 import { dailyUseCommand, type DailyUseCommand, type DailyUseRequest, type DailyUseResponse } from '@ade/client'
 import { SendJournal } from '@ade/client/journals'
 import { CONVERSATION_WINDOW } from '@ade/client/sync'
+import { exportConversation } from '@ade/client/export'
 import {
   getClient,
   getClientGeneration,
@@ -21,6 +22,8 @@ import {
 import type { DraftState } from '../../shared/bridge/conversations'
 import { conversationOperations, isAllowedOperation } from '../../shared/bridge/operations'
 import { validId } from '../validation'
+import type { Attachment } from '@ade/contracts'
+import { chooseAttachments } from './attachments'
 import {
   daemon,
   draftKey,
@@ -161,6 +164,8 @@ export function registerConversationIpc(): void {
       (op === 'draft.get' ||
         op === 'draft.save' ||
         op === 'draft.flush' ||
+        op === 'draft.attach' ||
+        op === 'draft.detach' ||
         op === 'draft.stash.list' ||
         op === 'draft.stash.restore' ||
         op === 'agent.send' ||
@@ -225,6 +230,37 @@ export function registerConversationIpc(): void {
         throw new Error('Profile changed during conversation creation')
       return result
     }
+    if (
+      op === 'mcp.server.list' ||
+      op === 'mcp.server.add' ||
+      op === 'mcp.server.remove' ||
+      op === 'mcp.resolve' ||
+      op === 'plugin.list' ||
+      op === 'plugin.generation.list' ||
+      op === 'plugin.enable' ||
+      op === 'plugin.disable' ||
+      op === 'plugin.command.invoke'
+    ) {
+      // The MCP catalog and installed plugins belong to the profile, not a conversation; the daemon
+      // checks each request against its contract.
+      return dailyUseCommand(endpoint, { ...(args as Record<string, unknown>), op } as unknown as DailyUseRequest<
+        typeof op
+      >)
+    }
+    if (op === 'runtime.recovery') return dailyUseCommand(endpoint, { op, open_only: true })
+    if (op === 'runtime.recovery.release') {
+      // Only a conversation's own provider attempt is released from its view.
+      const key = typeof args.attempt_key === 'string' ? args.attempt_key : ''
+      const subject = key.startsWith('agent:') ? key.slice('agent:'.length) : ''
+      if (!catalog?.conversations.some((item) => item.id === subject) || typeof args.report_id !== 'string')
+        throw new Error('Only a conversation attempt can be released here')
+      return dailyUseCommand(endpoint, { op, report_id: args.report_id, attempt_key: key })
+    }
+    if (op === 'usage.limits') {
+      // Limits belong to a provider and account, not a conversation; the read changes nothing.
+      if (typeof args.provider !== 'string' || !args.provider) throw new Error('Invalid provider')
+      return dailyUseCommand(endpoint, { op, provider: args.provider })
+    }
     if (!validId(args.conversation_id) || !catalog?.conversations.some((item) => item.id === args.conversation_id)) {
       throw new Error('Conversation is unavailable in this profile')
     }
@@ -254,6 +290,39 @@ export function registerConversationIpc(): void {
         entry.unclearedText = ''
       }
       return draftState(entry)
+    }
+    if (op === 'conversation.export.file') {
+      const parent = BrowserWindow.fromWebContents(event.sender)
+      const options: Electron.SaveDialogOptions = {
+        title: 'Export conversation',
+        defaultPath: `conversation-${args.conversation_id as string}.json`,
+        buttonLabel: 'Export',
+      }
+      const chosen = await (parent ? dialog.showSaveDialog(parent, options) : dialog.showSaveDialog(options))
+      if (chosen.canceled || !chosen.filePath) return null
+      const done = await exportConversation(endpoint, args.conversation_id as string, chosen.filePath)
+      return { file: done.file, message_count: done.message_count, format: done.format }
+    }
+    if (op === 'draft.attach' || op === 'draft.detach') {
+      const entry = await loadDraft(event.sender.id, endpoint, args.conversation_id, args.view_id as string)
+      if (entry.unclearedText || entry.send || entry.recoveryPending)
+        throw new Error('Resolve the previous prompt before editing this draft')
+      const current = entry.draft.attachments as Attachment[]
+      const attachments =
+        op === 'draft.attach'
+          ? [...current, ...(await chooseAttachments(event.sender, endpoint, args.conversation_id))]
+          : current.filter((attachment) => attachment.id !== args.attachment_id)
+      if (attachments.length !== current.length) {
+        entry.draft = { ...entry.draft, attachments, revision: entry.draft.revision + 1 }
+        await flushDraft(entry)
+      }
+      return draftState(entry)
+    }
+    if (op === 'context.plan') {
+      return dailyUseCommand(endpoint, { ...(args as Record<string, unknown>), op } as DailyUseRequest<'context.plan'>)
+    }
+    if (op === 'context.get') {
+      return dailyUseCommand(endpoint, { ...(args as Record<string, unknown>), op } as DailyUseRequest<'context.get'>)
     }
     if (op === 'conversation.history') {
       const result = await dailyUseCommand(endpoint, {
@@ -302,8 +371,56 @@ export function registerConversationIpc(): void {
       }
       return result
     }
+    if (op === 'agent.terminate') {
+      const operationId = args.operation_id
+      const sourceAttemptId = args.source_attempt_id
+      if (typeof operationId !== 'string' || !operationId || typeof sourceAttemptId !== 'string' || !sourceAttemptId) {
+        throw new Error('Termination target is missing or invalid; refresh the conversation before retrying')
+      }
+      const result = await dailyUseCommand(endpoint, {
+        op,
+        conversation_id: args.conversation_id as string,
+        source_attempt_id: sourceAttemptId,
+        operation_id: operationId,
+      })
+      if (getClientGeneration() !== generation || getSocket() !== endpoint) {
+        throw new Error('Profile changed during agent request; inspect the original profile before retrying')
+      }
+      return result
+    }
+    if (
+      op === 'queue.enqueue' ||
+      op === 'queue.cancel' ||
+      op === 'queue.pause' ||
+      op === 'conversation.steer' ||
+      op === 'conversation.controls' ||
+      op === 'conversation.settings' ||
+      op === 'conversation.settings.update' ||
+      op === 'conversation.rewind.preview' ||
+      op === 'conversation.rewind' ||
+      op === 'usage.turns' ||
+      op === 'conversation.compact' ||
+      op === 'command.list' ||
+      op === 'command.invoke' ||
+      op === 'agent.child_transcript'
+    ) {
+      // Forwarded as they are: the SDK checks each request against its contract, and the daemon
+      // fences the request, operation and turn identities. Queue and steer never become a send.
+      const result = await dailyUseCommand(endpoint, {
+        ...(args as Record<string, unknown>),
+        op,
+      } as unknown as DailyUseRequest<typeof op>)
+      if (getClientGeneration() !== generation || getSocket() !== endpoint) {
+        throw new Error('Profile changed during conversation request; inspect the original profile before retrying')
+      }
+      return result
+    }
     if (op === 'agent.resume') {
-      const result = await dailyUseCommand(endpoint, { op, conversation_id: args.conversation_id as string })
+      const result = await dailyUseCommand(endpoint, {
+        op,
+        conversation_id: args.conversation_id as string,
+        ...(args.continue_interrupted === true ? { continue_interrupted: true } : {}),
+      } as DailyUseRequest<'agent.resume'>)
       if (getClientGeneration() !== generation || getSocket() !== endpoint) {
         throw new Error('Profile changed during agent request; inspect the original profile before retrying')
       }

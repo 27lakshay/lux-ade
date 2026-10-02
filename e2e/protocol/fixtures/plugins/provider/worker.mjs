@@ -1,11 +1,34 @@
 // Protocol E2E fixture provider worker (docs/provider-worker-protocol.md,
 // version 2). It answers every turn with "Hello plugin" and keeps its
 // transcript in memory. It calls no model.
+//
+// It records what ADE passes it through the public contract, as JSON lines in
+// `calls.jsonl`: the MCP servers `configure_mcp` delivers and, with each
+// call, the managed account context (`ADE_ACCOUNT_CONTEXT`) and whether an
+// ambient credential reached it. On a managed account the file is in the
+// account's native home; otherwise in `ADE_E2E_PLUGIN_RECORD`, when set.
+// `account_inspect` reports the login in `<native home>/identity.json`.
+import { appendFileSync, existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 
 const history = []
 let session = null
 let turns = 0
+const account = process.env.ADE_ACCOUNT_CONTEXT ? JSON.parse(process.env.ADE_ACCOUNT_CONTEXT) : null
+const recordDirectory = account?.native_home ?? process.env.ADE_E2E_PLUGIN_RECORD
+
+function record(method, params) {
+  if (!recordDirectory) return
+  const entry = {
+    method,
+    params,
+    account,
+    home: process.env.HOME ?? null,
+    ambient_credential: process.env.E2E_AMBIENT_TOKEN ?? null,
+  }
+  appendFileSync(join(recordDirectory, 'calls.jsonl'), `${JSON.stringify(entry)}\n`)
+}
 
 function write(message) {
   process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', ...message })}\n`)
@@ -38,6 +61,11 @@ const methods = {
       },
       { method: 'cancel', tier: 'idempotent_command', availability: 'available', reason: '' },
       { method: 'answer', tier: 'effect_command', availability: 'available', reason: '' },
+      // A plugin declares compaction like any worker; ADE offers it from this declaration.
+      { method: 'compact', tier: 'effect_command', availability: 'available', reason: '' },
+      // It receives the profile MCP catalog and inspects managed accounts like a bundled worker.
+      { method: 'configure_mcp', tier: 'idempotent_command', availability: 'available', reason: '' },
+      { method: 'account_inspect', tier: 'query', availability: 'available', reason: '' },
       {
         method: 'history',
         tier: 'query',
@@ -65,7 +93,18 @@ const methods = {
       node_engine: '>=22',
     },
   }),
+  configure_mcp: (params) => {
+    record('configure_mcp', params)
+    return {}
+  },
+  account_inspect: () => {
+    record('account_inspect', {})
+    const file = account && join(account.native_home, 'identity.json')
+    if (!file || !existsSync(file)) return { state: 'signed_out', reason: 'Not signed in to the E2E agent' }
+    return { state: 'ready', reason: '', version: '1.0.0', identity: JSON.parse(readFileSync(file, 'utf8')) }
+  },
   open: (params) => {
+    record('open', { resume: params.resume ?? null })
     session = params.resume ?? `e2e-session-${process.pid}`
     return { session, history }
   },
@@ -108,6 +147,24 @@ const methods = {
   },
   cancel: () => ({}),
   answer: () => ({}),
+  compact: () => {
+    const turn = `compact-${process.pid}-${++turns}`
+    const record = {
+      id: `${turn}-record`,
+      client_id: null,
+      turn,
+      role: 'tool',
+      kind: 'contextCompaction',
+      text: 'Plugin compacted the context.',
+      status: 'completed',
+    }
+    history.push(record)
+    setImmediate(() => {
+      event({ type: 'item', session, submission: null, item: record })
+      event({ type: 'finished', session, submission: null, turn, status: 'completed', error: null })
+    })
+    return {}
+  },
 }
 
 createInterface({ input: process.stdin, crlfDelay: Infinity })

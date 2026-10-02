@@ -95,6 +95,18 @@ test(
         config: { model: null, permission_mode: 'default', setting_sources: [] },
       })
       expect(connected.session).toBeString()
+      // get_state names what is in effect; get_available_models lists the catalogue, and only
+      // the live model lists its thinking levels (get_available_thinking_levels).
+      expect(connected.native_settings).toEqual({
+        model: 'fixture/omp-default',
+        reasoning_effort: 'medium',
+        permission_mode: null,
+      })
+      expect(connected.native_choices.source).toBe('get_available_models')
+      expect(connected.native_choices.models.map((model) => [model.id, model.reasoning_efforts])).toEqual([
+        ['fixture/omp-default', ['off', 'low', 'medium', 'high']],
+        ['fixture/omp-plain', null],
+      ])
       const result = await client.request('send', {
         session: connected.session,
         source_attempt_id: 'attempt-a',
@@ -121,7 +133,7 @@ test(
           (event) =>
             event.type === 'finished' &&
             event.status === 'completed' &&
-            event.submission === null &&
+            event.submission === 'submission-a' &&
             event.turn === null,
         ),
       ).toBe(true)
@@ -256,15 +268,14 @@ test(
       expect(Number.isSafeInteger(cancelled.evidence.observed_at_ms)).toBe(true)
       expect(client.events().some((event) => event.type === 'cancel_result')).toBe(false)
       expect(
-        client
-          .events()
-          .some(
-            (event) =>
-              event.type === 'finished' &&
-              event.submission === null &&
-              event.status === 'interrupted' &&
-              event.native_terminal?.stop_reason === 'aborted',
-          ),
+        client.events().some(
+          (event) =>
+            // Prompts are serialized and OMP was sampled idle, so the abort settles its attempt.
+            event.type === 'finished' &&
+            event.submission === 'submission-c' &&
+            event.status === 'interrupted' &&
+            event.native_terminal?.stop_reason === 'aborted',
+        ),
       ).toBe(true)
       await client.request('send', {
         session: connected.session,

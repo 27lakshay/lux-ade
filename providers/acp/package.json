@@ -1,0 +1,23 @@
+{
+  "name": "ade-acp-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node ../../scripts/test-providers.mjs --provider acp"
+  },
+  "dependencies": {
+    "@ade/provider-sdk": "workspace:*",
+    "@agentclientprotocol/sdk": "1.5.1",
+    "effect": "4.0.0-rc.118",
+    "zod": "4.6.5"
+  },
+  "files": [
+    "worker.mjs",
+    "session.mjs",
+    "normalize.mjs"
+  ]
+}

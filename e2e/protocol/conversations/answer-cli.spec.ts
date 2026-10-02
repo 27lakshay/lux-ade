@@ -36,10 +36,13 @@ test('CLI answers native approvals and questions once through the running daemon
   expect(await answer(approval.id, 'decline')).toMatchObject(acked)
   await expect.poll(async () => (await replies(profile)).length).toBe(1)
   expect((await replies(profile))[0]!.result).toEqual({ decision: 'decline' })
+  // Once the answered request has closed with its turn, any further answer, the same or a
+  // conflicting one, is refused and never reaches the provider again.
+  const resolved = /no longer pending/
   const conflicting = await answer(approval.id, 'accept')
   expect(conflicting.code).not.toBe(0)
-  expect(conflicting.stderr).toMatch(/conflicts with the recorded decision/)
-  expect(await answer(approval.id, 'decline')).toMatchObject(acked)
+  expect(conflicting.stderr).toMatch(resolved)
+  expect((await answer(approval.id, 'decline')).stderr).toMatch(resolved)
   expect(await replies(profile)).toHaveLength(1)
 
   const questions = await requestFor(codexPrompts.richQuestions, 'questions')
@@ -59,7 +62,7 @@ test('CLI answers native approvals and questions once through the running daemon
       secret: { answers: ['fixture answer'] },
     },
   })
-  expect(await answer(questions.id, 'answer', JSON.stringify(answers))).toMatchObject(acked)
+  expect((await answer(questions.id, 'answer', JSON.stringify(answers))).stderr).toMatch(resolved)
   expect(await replies(profile)).toHaveLength(2)
 
   const accepted = await requestFor(codexPrompts.approval, approvalSchema)
@@ -73,12 +76,12 @@ test('CLI answers native approvals and questions once through the running daemon
   expect(cancelOnly.metadata.schema.choices.map((choice) => choice.value)).toEqual(['accept', 'cancel'])
   const unoffered = await answer(cancelOnly.id, 'decline')
   expect(unoffered.code).not.toBe(0)
-  expect(unoffered.stderr).toMatch(/Decision is not offered by Codex/)
+  expect(unoffered.stderr).toMatch(/Choice is not offered by this request/)
   expect(await answer(cancelOnly.id, 'cancel')).toMatchObject(acked)
   await expect.poll(async () => (await replies(profile)).length).toBe(4)
   expect((await replies(profile))[3]!.result).toEqual({ decision: 'cancel' })
-  expect(await answer(cancelOnly.id, 'cancel')).toMatchObject(acked)
-  expect((await answer(cancelOnly.id, 'accept')).stderr).toMatch(/conflicts with the recorded decision/)
+  expect((await answer(cancelOnly.id, 'cancel')).stderr).toMatch(resolved)
+  expect((await answer(cancelOnly.id, 'accept')).stderr).toMatch(resolved)
 
   // Malformed answers are refused and reach nothing.
   expect((await answer(questions.id, 'answer', '{"choice":4}')).stderr).toMatch(/values must be text/)

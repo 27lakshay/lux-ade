@@ -74,3 +74,23 @@ export class Subagents {
     return before?.encoded === encoded ? null : item
   }
 }
+
+/**
+ * Every native background task Claude reports — agents, Bash, MCP and workflow tasks — from its
+ * task lifecycle. `observe` returns the running count when it changed, else null.
+ */
+export class BackgroundTasks {
+  constructor() {
+    this.running = new Set()
+  }
+  observe(message) {
+    if (message.type !== 'system' || !bounded(message.task_id, 4096)) return null
+    const before = this.running.size
+    if (message.subtype === 'task_started') {
+      if (this.running.size >= 1024) return null
+      this.running.add(message.task_id)
+    } else if (message.subtype === 'task_notification') this.running.delete(message.task_id)
+    else return null
+    return this.running.size === before ? null : this.running.size
+  }
+}

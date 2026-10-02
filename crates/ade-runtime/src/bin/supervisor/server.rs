@@ -480,10 +480,28 @@ fn agent_command(host: &Host, request: &Value) -> Result<Value> {
             return Err(runtime::OwnerFenced.into());
         }
         match &op {
-            AgentOp::AccountInspect { account } => {
+            AgentOp::AccountInspect { account, worker } => {
                 let account: ade_core::model::AccountExecution =
                     serde_json::from_value(account.clone())?;
+                let worker: Option<ade_core::contract::providers::ProviderWorker> =
+                    worker.clone().map(serde_json::from_value).transpose()?;
                 drop(data);
+                if let Some(worker) = worker {
+                    use ade_core::contract::providers::ProviderWorkerAccountState as State;
+                    let inspection =
+                        ade_runtime::provider::worker::inspect_account(&worker, &account)?;
+                    return Ok(serde_json::to_value(AgentAccountInspection {
+                        state: match inspection.state {
+                            State::Ready => "ready",
+                            State::SignedOut => "unauthenticated",
+                            State::Unavailable => "unavailable",
+                        }
+                        .into(),
+                        reason: inspection.reason,
+                        version: inspection.version,
+                        identity: inspection.identity.map(serde_json::Value::Object),
+                    })?);
+                }
                 let inspection = if account.provider == "omp" {
                     ade_runtime::provider::omp_probe::inspect(&account)
                 } else if account.provider == "codex" {

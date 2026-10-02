@@ -1,0 +1,10 @@
+{
+  "manifest_version": 1,
+  "id": "ade.opencode",
+  "name": "OpenCode",
+  "version": "0.1.0",
+  "api_version": 1,
+  "data_schema": 1,
+  "description": "Runs OpenCode v2 conversations through ADE's public provider SDK, using the OpenCode installation and sign-in already on this machine.",
+  "entry_points": { "provider": "dist/worker.js" }
+}

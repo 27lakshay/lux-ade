@@ -50,6 +50,8 @@ for await (const line of createInterface({ input: process.stdin })) {
     case 'set_subagent_subscription':
       break
     case 'prompt': {
+      // Native OMP announces each agent run before its messages.
+      send({ type: 'agent_start' })
       active = true
       appendFileSync(
         join(home, 'calls.jsonl'),

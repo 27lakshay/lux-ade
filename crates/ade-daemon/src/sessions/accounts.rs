@@ -27,6 +27,7 @@ impl Sessions {
                 let create: AccountCreateRequest = decode(request)?;
                 let provider = non_empty("provider", &create.provider)?;
                 let name = non_empty("name", &create.name)?;
+                self.ensure_managed_accounts(provider)?;
                 let account = self
                     .data
                     .lock()
@@ -66,7 +67,8 @@ impl Sessions {
                     let provider = match account.provider.as_str() {
                         "claude" => "Claude",
                         "codex" => "Codex",
-                        _ => "Oh My Pi",
+                        "omp" => "Oh My Pi",
+                        other => other,
                     };
                     format!("Missing inspected {provider} identity")
                 })?;
@@ -99,12 +101,19 @@ impl Sessions {
                         serde_json::from_value(identity)
                             .context("Invalid inspected Codex identity")?,
                     )?
-                } else {
+                } else if account.provider == "omp" {
                     d.store.verify_omp_account(
                         id,
                         generation,
                         serde_json::from_value(identity)
                             .context("Invalid inspected Oh My Pi identity")?,
+                    )?
+                } else {
+                    d.store.verify_worker_account(
+                        id,
+                        generation,
+                        serde_json::from_value(identity)
+                            .context("Invalid inspected account identity")?,
                     )?
                 };
                 reply(&AccountAck {
@@ -125,13 +134,45 @@ impl Sessions {
             _ => bail!("Unknown session operation"),
         }
     }
+    /// Refuses unless `provider` supports managed accounts: a bundled
+    /// provider, through its account probe, or a plugin provider whose worker
+    /// declares `account_inspect` available.
+    pub(super) fn ensure_managed_accounts(&self, provider: &str) -> Result<()> {
+        if matches!(provider, "claude" | "codex" | "omp") {
+            return Ok(());
+        }
+        if provider.starts_with("adapter:") {
+            bail!("{provider} uses the agent's own login; ADE manages no accounts for it");
+        }
+        ensure!(
+            provider.starts_with(ade_runtime::provider::registry::PLUGIN_PREFIX),
+            ade_core::error::ProviderNotFound(provider.to_owned())
+        );
+        self.discover_plugin_providers();
+        use ade_core::contract::providers::{ProviderWorkerAvailability, ProviderWorkerMethod};
+        let declared = self.declared_operations(&self.data.lock().unwrap(), provider);
+        let operations = declared.map_err(|reason| anyhow!("{reason}"))?;
+        match operations
+            .iter()
+            .find(|operation| operation.method == ProviderWorkerMethod::AccountInspect)
+        {
+            Some(operation) if operation.availability == ProviderWorkerAvailability::Available => {
+                Ok(())
+            }
+            Some(operation) if !operation.reason.is_empty() => bail!(
+                "{provider} does not support managed accounts: {}",
+                operation.reason
+            ),
+            _ => bail!(
+                "{provider} does not support managed accounts: its worker does not declare account_inspect"
+            ),
+        }
+    }
     /// Loads an account whose provider supports native inspection.
     fn managed_account(&self, id: &str) -> Result<Account> {
         let account = self.data.lock().unwrap().store.account(id)?;
-        ensure!(
-            matches!(account.provider.as_str(), "claude" | "codex" | "omp"),
-            "Managed account inspection is unavailable for this provider"
-        );
+        self.ensure_managed_accounts(&account.provider)
+            .context("Managed account inspection is unavailable for this provider")?;
         Ok(account)
     }
     /// Runs the provider's native status probe against one account snapshot.
@@ -144,10 +185,31 @@ impl Sessions {
             claude_identity: account.claude_identity.clone(),
             codex_identity: account.codex_identity.clone(),
             omp_identity: account.omp_identity.clone(),
+            worker_identity: account.worker_identity.clone(),
+        };
+        // A plugin's own worker reads its account, from the enabled artifact.
+        let worker = if account
+            .provider
+            .starts_with(ade_runtime::provider::registry::PLUGIN_PREFIX)
+        {
+            let (_, worker) = self
+                .live_workers()?
+                .into_iter()
+                .find(|(_, worker)| worker.provider == account.provider)
+                .with_context(|| {
+                    format!(
+                        "No enabled plugin registers provider {}; enable it first",
+                        account.provider
+                    )
+                })?;
+            Some(serde_json::to_value(worker)?)
+        } else {
+            None
         };
         Ok(serde_json::from_value(self.runtime.agent(
             AgentOp::AccountInspect {
                 account: serde_json::to_value(context)?,
+                worker,
             },
         )?)?)
     }

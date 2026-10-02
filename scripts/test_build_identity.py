@@ -15,7 +15,7 @@ class BuildIdentityTests(unittest.TestCase):
             providers.mkdir()
             identity = lambda: build_identity(binary, providers)
             previous = identity()
-            for name in ('bridge.mjs', 'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml'):
+            for name in ('worker.mjs', 'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml'):
                 source = providers / name
                 source.write_text('first')
                 self.assertNotEqual(previous, identity())
@@ -37,10 +37,10 @@ class BuildIdentityTests(unittest.TestCase):
             providers = root / 'providers'
             providers.mkdir()
             before = build_identity(binary, providers)
-            for name in ('node_modules/dependency/index.mjs', 'bridge.test.mjs', 'mock-cli.mjs', 'protocol-fixture.mjs', 'fake-sdk.mjs'):
+            for name in ('node_modules/dependency/index.mjs', 'worker.test.mjs', 'mock-cli.mjs', 'protocol-fixture.mjs', 'worker-test-sdk.mjs'):
                 source = providers / name
                 source.parent.mkdir(parents=True, exist_ok=True)
-                source.write_text('not production bridge source')
+                source.write_text('not production worker source')
             self.assertEqual(before, build_identity(binary, providers))
 
 

@@ -11,7 +11,6 @@ pub mod descendants;
 pub mod foreground;
 pub mod ghostty_colors;
 pub mod omp;
-pub mod opencode;
 pub mod provider;
 pub mod rpc;
 pub mod runtime;

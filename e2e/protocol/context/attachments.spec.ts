@@ -265,3 +265,34 @@ test('F032: missing files and reclaimed attachments are reported and never sent'
   expect((await snapshot(profile, conversationId)).messages).toEqual([])
   expect(await codexInputs(profile)).toEqual([])
 })
+
+test('the CLI sends imported attachments and reports the same refusal as the SDK', async ({ profile }) => {
+  const claude = (await startConversation(profile, 'claude')).conversationId
+  const notes = await importFile(profile, claude, 'cli-notes', 'notes.txt', 'build fails on line 3\n')
+  const large = await importFile(profile, claude, 'cli-large', 'large.png', pngOfSize(7_600_000))
+
+  const refused = await profile.cli('conversation', 'send', claude, 'look', '--attach', notes.id, '--attach', large.id)
+  expect(refused.code).not.toBe(0)
+  expect(refused.stderr).toMatch(/Attachment refused before sending: .*accepts images up to 7500000 bytes/)
+  await expect(
+    profile.call('agent.send', {
+      conversation_id: claude,
+      request_id: 'sdk-large',
+      text: 'look',
+      attachments: [large],
+    }),
+  ).rejects.toThrow(/Attachment refused before sending: .*accepts images up to 7500000 bytes/)
+  expect(await claudeContents(profile)).toEqual([])
+  // Nothing is held for retry: the refusal was settled before dispatch.
+  expect((await profile.cli('conversation', 'pending')).json).toMatchObject({ sends: [] })
+
+  const sent = await profile.cli('conversation', 'send', claude, 'look', '--attach', notes.id)
+  expect(sent.code, sent.stderr).toBe(0)
+  await waitForIdle(profile, claude)
+  const [content] = (await claudeContents(profile)) as Array<Array<{ type: string; text?: string }>>
+  expect(content.map((part) => part.type)).toEqual(['text', 'text'])
+  expect(content[1]!.text).toContain('build fails on line 3')
+  // A flag without its value is a usage error, not a send.
+  expect((await profile.cli('conversation', 'send', claude, 'again', '--attach')).code).not.toBe(0)
+  expect(await claudeContents(profile)).toHaveLength(1)
+})

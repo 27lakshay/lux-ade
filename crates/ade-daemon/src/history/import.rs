@@ -489,6 +489,12 @@ pub fn commit(
             let conversation = Conversation {
                 queue_paused: false,
                 queue_resumed_during: None,
+                stop: None,
+                settings_revision: 0,
+                native_settings: None,
+                execution: None,
+                background: None,
+                autonomous_output_at_ms: None,
                 runtime_run: None,
                 runtime_cursor: 0,
                 runtime_submission: None,

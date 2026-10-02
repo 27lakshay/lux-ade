@@ -1,15 +1,21 @@
 // Fixture plugins for plugin and provider-plugin specs. The sources live in
 // ./plugins/: `backend` is a backend entry with commands, a setting and a
-// lifecycle hook; `provider` is a provider worker. A spec copies one into its
+// lifecycle hook; `provider` is a provider worker; `ui` is a provider worker
+// with a UI entry point (a timeline renderer and a composer transform; the
+// `ui-freeze.mjs` entry hangs its renderer). A spec copies one into its
 // temp root, so it may edit the copy (dev-mode reload) without touching the
 // checked-in source or another test.
 import { access, cp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import type { ScratchProfile } from './profile'
 const repositoryRoot = resolve(__dirname, '../../..')
-export type FixturePlugin = 'backend' | 'provider'
+export type FixturePlugin = 'backend' | 'provider' | 'ui'
 
-export const fixturePluginIds: Record<FixturePlugin, string> = { backend: 'e2e.backend', provider: 'e2e.agent' }
+export const fixturePluginIds: Record<FixturePlugin, string> = {
+  backend: 'e2e.backend',
+  provider: 'e2e.agent',
+  ui: 'e2e.ui',
+}
 
 /** The self-contained, prebuilt Effect diagnostic plugin used by install and inspection tests. */
 export async function providerSdkDiagnosticArtifact(isolatedRoot: string): Promise<string> {
@@ -23,6 +29,39 @@ export async function providerSdkDiagnosticArtifact(isolatedRoot: string): Promi
     access(join(artifact, 'node_modules/effect/package.json')),
   ])
   return realpath(artifact)
+}
+
+/**
+ * A private copy of the packaged OpenCode provider plugin (plugins/opencode/artifact,
+ * built by `pnpm build:sdk`). It is installed through the ordinary `plugin.install`.
+ */
+export async function openCodePluginArtifact(isolatedRoot: string): Promise<string> {
+  const artifact = join(isolatedRoot, 'opencode-plugin')
+  await rm(artifact, { recursive: true, force: true })
+  await cp(join(repositoryRoot, 'plugins/opencode/artifact'), artifact, { recursive: true, dereference: true })
+  await Promise.all([
+    access(join(artifact, 'ade-plugin.json')),
+    access(join(artifact, 'dist/worker.js')),
+    access(join(artifact, 'node_modules/effect/package.json')),
+  ])
+  return realpath(artifact)
+}
+
+/** The deterministic OpenCode v2 server the fixture tier runs in place of the native binary. */
+export const openCodeFixtureServer = join(repositoryRoot, 'plugins/opencode/test/fixtures/mock-opencode.mjs')
+
+/** Environment that points the OpenCode plugin at the fixture server, with its ledger under `root`. */
+export function openCodeFixtureEnvironment(root: string): Record<string, string> {
+  return { ADE_OPENCODE_BIN: openCodeFixtureServer, ADE_MOCK_OPENCODE_DIR: join(root, 'opencode-fixture') }
+}
+
+/** Every request the OpenCode fixture server recorded, oldest first. */
+export async function openCodeFixtureCalls(root: string): Promise<Array<Record<string, unknown>>> {
+  const text = await readFile(join(root, 'opencode-fixture/calls.jsonl'), 'utf8').catch(() => '')
+  return text
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, unknown>)
 }
 
 let copies = 0

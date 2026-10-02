@@ -304,7 +304,7 @@ export const faultClasses: FaultClass[] = [
         tests: [
           t('devplug/plugin-recovery.spec.ts', 'a frozen host is reported unresponsive and replaced by a restart'),
         ],
-        gap: 'A frozen UI plugin recovered from Electron main needs Electron E2E, which is paused until the UI phase.',
+        gap: 'A frozen UI plugin recovered by Electron main into safe mode runs in built-Electron E2E (e2e/desktop/plugin-ui.spec.ts, "a plugin that hangs the renderer"), which this protocol suite cannot list.',
       },
     ],
   },

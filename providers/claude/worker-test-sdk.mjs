@@ -1,337 +1,191 @@
-import { mkdirSync, appendFileSync } from 'node:fs'
-import { join } from 'node:path'
-const directory = process.env.ADE_CLAUDE_WORKER_TEST_DIR
-const record = (value) => {
-  if (!directory) return
-  mkdirSync(directory, { recursive: true })
-  appendFileSync(join(directory, 'calls.jsonl'), JSON.stringify({ pid: process.pid, ...value }) + '\n')
+// Deterministic Claude Agent SDK double for worker unit tests and protocol tests. The
+// worker loads it in place of @anthropic-ai/claude-agent-sdk when ADE_E2E_CLAUDE_SDK names
+// it. Never imports Claude or calls a model. Session storage and the session functions
+// live in worker-test-store.mjs.
+//
+// It keeps the native correlation the worker relies on: the user echo carries the input
+// UUID, output and results name it in user_message_uuid, and a tool's assistant tool_use
+// arrives before its canUseTool callback. The first text block of each input selects a
+// scenario; any other text gets the plain reply "Hello Claude".
+import { randomUUID } from 'node:crypto'
+import { fixtureChild, load, promptText, record, writer } from './worker-test-store.mjs'
+import { scripted } from './worker-test-scenarios.mjs'
+
+export {
+  deleteSession,
+  forkSession,
+  getSessionInfo,
+  getSessionMessages,
+  getSubagentMessages,
+  listSubagents,
+} from './worker-test-store.mjs'
+
+// resumeSessionAt loads the chain only up to that entry. With resumeDropsTurn the
+// discarded range must be exactly that one turn, or the CLI refuses the resume, as
+// sdk.d.ts documents. An entry the session absorbed mid-turn (a task notification) is
+// not from that turn.
+function truncation(history, options) {
+  if (!options.resumeSessionAt) return { rejected: false, context: history }
+  const at = history.findIndex((entry) => entry.uuid === options.resumeSessionAt)
+  const dropped = history.slice(at + 1)
+  const rejected =
+    at < 0 ||
+    (!!options.resumeDropsTurn &&
+      (dropped[0]?.uuid !== options.resumeDropsTurn ||
+        dropped.slice(1).some((entry) => promptText(entry) !== null || entry.absorbed)))
+  return { rejected, context: rejected ? history : history.slice(0, at + 1) }
 }
-const history = JSON.parse(process.env.CLAUDE_WORKER_HISTORY ?? '{}')
-export async function getSessionInfo(sessionId) {
-  return { sessionId, lastModified: 37, fileSize: Buffer.byteLength(JSON.stringify(history[sessionId] ?? [])) }
-}
-export async function getSessionMessages(session, { offset = 0, limit = 32 } = {}) {
-  return (history[session] ?? [])
-    .slice(offset, offset + limit)
-    .map((message) => ({ parent_tool_use_id: null, session_id: session, ...message }))
-}
-export async function listSubagents(session) {
-  return Object.keys(history)
-    .filter((id) => id.startsWith(session + '/'))
-    .map((id) => id.slice(session.length + 1))
-}
-export async function getSubagentMessages(session, child, options) {
-  return getSessionMessages(session + '/' + child, options)
-}
+
+// The ModelInfo rows initializationResult() and supportedModels() list: effort levels
+// differ by model, and one model takes no effort at all.
+export const fixtureModels = [
+  {
+    value: 'default',
+    resolvedModel: 'fixture-sonnet',
+    displayName: 'Default (Fixture Sonnet)',
+    description: 'Fixture default',
+    supportsEffort: true,
+    supportedEffortLevels: ['low', 'medium', 'high', 'xhigh'],
+  },
+  {
+    value: 'fixture-opus',
+    resolvedModel: 'fixture-opus',
+    displayName: 'Fixture Opus',
+    description: 'Fixture model with every effort level',
+    supportsEffort: true,
+    supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+  },
+  {
+    value: 'fixture-haiku',
+    resolvedModel: 'fixture-haiku',
+    displayName: 'Fixture Haiku',
+    description: 'Fixture model without effort',
+    supportsEffort: false,
+  },
+]
+
 export function query({ prompt, options }) {
-  const session = options.resume ?? options.sessionId ?? 'fixture-session'
+  // A forking resume runs under a new session ID and leaves the source unchanged. Its file
+  // is written only with its first new message: nothing may rely on an idle fork.
+  const fork = !!(options.resume && options.forkSession)
+  const session = fork
+    ? (options.sessionId ?? randomUUID())
+    : (options.resume ?? options.sessionId ?? 'fixture-session')
+  const source = options.resume ? (load(options.resume) ?? []) : []
+  const { rejected, context } = truncation(source, options)
+  // A non-forking truncating resume never truncates the file: what the CLI does to it is undocumented.
+  const history = fork ? [...context] : [...source]
+  const servers = Object.keys(options.mcpServers ?? {}).length ? options.mcpServers : null
+  // Recorded only for a catalog, fork or truncating launch, so other call logs stay unchanged.
+  if (servers || options.resumeSessionAt || fork)
+    record({
+      method: 'query',
+      session,
+      resume: options.resume ?? null,
+      ...(servers ? { mcpServers: servers } : {}),
+      ...(fork ? { forkSession: true } : {}),
+      ...(options.resumeSessionAt
+        ? { resumeSessionAt: options.resumeSessionAt, resumeDropsTurn: options.resumeDropsTurn ?? null, rejected }
+        : {}),
+    })
+  const save = writer(session, { source: options.resume ?? null, fork, cwd: options.cwd })
+  if (!fork && !options.resume) save(history)
+
   const messages = []
-  let wake,
+  let wake = null,
     closed = false,
-    inputUuid,
-    permissionController
+    ending = false
   const emit = (message) => {
-    messages.push({ session_id: session, ...message })
+    const entry = { session_id: session, ...message }
+    if (entry.type === 'user' || entry.type === 'assistant') {
+      history.push(entry)
+      save(history)
+    }
+    messages.push(entry)
     wake?.()
     wake = null
   }
-  const emitText = (id, text, uuid = inputUuid) =>
-    emit({
-      type: 'assistant',
-      uuid: 'envelope-' + id,
-      user_message_uuid: uuid,
-      message: { id, content: [{ type: 'text', text }] },
-    })
-  const finish = (uuid = inputUuid, is_error = false) =>
-    emit({
-      type: 'result',
-      subtype: is_error ? 'error_during_execution' : 'success',
-      user_message_uuid: uuid,
-      is_error,
-      ...(is_error
-        ? { errors: ['Native API failure after interrupt'], terminal_reason: 'api_error' }
-        : { result: 'complete' }),
-    })
+  const turn = {
+    session,
+    options,
+    emit,
+    // A session entry the CLI keeps but never reports, such as an absorbed task notification.
+    keep: (entry) => {
+      history.push(entry)
+      save(history)
+    },
+    // Cumulative per query() call, as the SDK reports modelUsage and total_cost_usd.
+    usage: { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, costUSD: 0 },
+    input: null,
+    interrupt: null,
+    child: fixtureChild,
+  }
   const initialized = Promise.resolve().then(() => {
     if (process.env.CLAUDE_WORKER_SCENARIO === 'init-failure') throw new Error('native initialization refused')
+    // Like the SDK subprocess transport, init names the model and permission mode but not effort.
     emit({
       type: 'system',
       subtype: 'init',
       session_id: process.env.CLAUDE_WORKER_SCENARIO === 'resume-mismatch' ? 'foreign-session' : session,
+      model:
+        fixtureModels.find((model) => model.value === (options.model ?? 'default'))?.resolvedModel ?? options.model,
+      permissionMode: options.permissionMode ?? 'default',
     })
-    return { commands: [], agents: [], models: [], account: {}, output_style: 'default', available_output_styles: [] }
+    // Recorded only for an effort launch, so other call logs stay unchanged.
+    if (options.effort) record({ method: 'launch', session, model: options.model ?? null, effort: options.effort })
+    return {
+      commands: [],
+      agents: [],
+      models: fixtureModels,
+      account: {},
+      output_style: 'default',
+      available_output_styles: [],
+    }
   })
   // The reader must consume native init concurrently with the control handshake.
   initialized.catch(() => {})
+  // The CLI refuses a rejected resume at boot, and its stream then ends.
+  if (rejected)
+    queueMicrotask(() => {
+      emit({
+        type: 'result',
+        is_error: true,
+        subtype: 'error_during_execution',
+        errors: [
+          `Resume rejected by --resume-drops-turn: entries after ${options.resumeSessionAt} are not all from ${options.resumeDropsTurn}`,
+        ],
+      })
+      ending = true
+    })
   const instance = {
     initializationResult: () => initialized,
-    interrupt: async () => {
-      if (permissionController) permissionController.abort()
-      else {
-        emitText('native-trailing', 'after interrupt')
-        finish(inputUuid, true)
-      }
-      return { still_queued: [] }
-    },
+    interrupt: async () => (turn.interrupt ? turn.interrupt() : { still_queued: [] }),
     close() {
       closed = true
       wake?.()
     },
     async *[Symbol.asyncIterator]() {
       while (!closed) {
-        if (messages.length) yield messages.shift()
-        else
-          await new Promise((resolve) => {
-            wake = resolve
-          })
+        if (messages.length) {
+          yield messages.shift()
+          continue
+        }
+        if (ending) return
+        await new Promise((resolve) => {
+          wake = resolve
+        })
       }
     },
   }
   queueMicrotask(async () => {
     for await (const input of prompt) {
-      inputUuid = input.uuid
-      const scenario = input.message.content.find((block) => block.type === 'text').text
-      record({ method: 'send', uuid: inputUuid, text: scenario })
-      if (scenario === 'approval' || scenario === 'questions') {
-        const toolName = scenario === 'questions' ? 'AskUserQuestion' : 'Bash'
-        const toolInput =
-          scenario === 'questions'
-            ? { questions: [{ question: 'First?' }, { question: 'Second?' }] }
-            : { command: 'echo fixture' }
-        const toolUseID = 'tool-' + inputUuid
-        emit({ type: 'user', uuid: inputUuid, message: input.message })
-        emit({
-          type: 'assistant',
-          uuid: 'native-request-envelope-' + inputUuid,
-          user_message_uuid: inputUuid,
-          message: {
-            id: 'native-request-api-' + inputUuid,
-            content: [{ type: 'tool_use', id: toolUseID, name: toolName, input: toolInput }],
-          },
-        })
-        await new Promise((resolve) => setImmediate(resolve))
-        record({ method: 'canUseTool', toolName, input: toolInput, toolUseID })
-        const answer = await options.canUseTool(toolName, toolInput, {
-          requestId: 'request-' + inputUuid,
-          toolUseID,
-          suggestions: [],
-          signal: new AbortController().signal,
-        })
-        record({ method: 'answer', answer })
-        emit({
-          type: 'user',
-          uuid: 'native-result-' + inputUuid,
-          message: {
-            role: 'user',
-            content: [{ type: 'tool_result', tool_use_id: toolUseID, content: 'fixture tool outcome' }],
-          },
-        })
-        emitText('native-reply-' + inputUuid, JSON.stringify(answer))
-        finish()
-        continue
-      }
-      if (scenario === 'autonomous-callback-before-echo') {
-        await options.canUseTool(
-          'Bash',
-          { command: 'old autonomous command' },
-          {
-            requestId: 'native-old-request',
-            toolUseID: 'native-old-autonomous',
-            suggestions: [],
-            signal: new AbortController().signal,
-          },
-        )
-        emit({ type: 'user', uuid: inputUuid, message: input.message })
-        finish()
-        continue
-      }
-      if (scenario === 'callback-before-echo') {
-        permissionController = new AbortController()
-        const answer = await options.canUseTool(
-          'Bash',
-          { command: 'echo safe' },
-          {
-            requestId: 'native-request',
-            toolUseID: 'native-tool',
-            suggestions: [],
-            signal: permissionController.signal,
-          },
-        )
-        emit({ type: 'user', uuid: inputUuid, message: input.message })
-        emitText('native-reply', JSON.stringify(answer))
-        if (permissionController.signal.aborted)
-          emit({
-            type: 'result',
-            subtype: 'error_during_execution',
-            user_message_uuid: inputUuid,
-            is_error: true,
-            terminal_reason: 'aborted_tools',
-            errors: ['Tool interrupted'],
-          })
-        else finish()
-        permissionController = null
-        continue
-      }
-      emit({ type: 'user', uuid: inputUuid, message: input.message })
-      if (scenario === 'old-autonomous-source') {
-        emit({
-          type: 'assistant',
-          uuid: 'native-old-envelope',
-          user_message_uuid: 'untracked-old-input',
-          message: {
-            id: 'native-old-api',
-            content: [
-              {
-                type: 'tool_use',
-                id: 'native-old-autonomous',
-                name: 'Bash',
-                input: { command: 'old autonomous command' },
-              },
-            ],
-          },
-        })
-        finish()
-        continue
-      }
-      if (scenario === 'callback-observed-owner') {
-        emit({
-          type: 'assistant',
-          uuid: 'native-owned-envelope',
-          user_message_uuid: inputUuid,
-          message: {
-            id: 'native-owned-api',
-            content: [{ type: 'tool_use', id: 'native-owned-tool', name: 'Bash', input: { command: 'owned command' } }],
-          },
-        })
-        await new Promise((resolve) => setImmediate(resolve))
-        await options.canUseTool(
-          'Bash',
-          { command: 'owned command' },
-          {
-            requestId: 'native-owned-request',
-            toolUseID: 'native-owned-tool',
-            suggestions: [],
-            signal: new AbortController().signal,
-          },
-        )
-        finish()
-        continue
-      }
-      if (scenario === 'stream') {
-        const partial = (event) => emit({ type: 'stream_event', event, parent_tool_use_id: null })
-        emit({
-          type: 'stream_event',
-          user_message_uuid: inputUuid,
-          event: { type: 'message_start', message: { id: 'native-text', content: [] } },
-        })
-        partial({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } })
-        partial({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Hello ' } })
-        partial({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'world' } })
-        partial({ type: 'content_block_stop', index: 0 })
-        partial({ type: 'message_stop' })
-        emitText('native-text', 'Hello world')
-        finish()
-      } else if (scenario === 'foreign') {
-        emitText('native-foreign', 'autonomous output', 'foreign-input')
-        finish('foreign-input')
-        emitText('native-current', 'current output')
-        finish()
-      } else if (scenario === 'rows') {
-        emitText('native-answer', 'Distinct answer')
-        emit({
-          type: 'assistant',
-          user_message_uuid: inputUuid,
-          message: {
-            id: 'native-tools',
-            content: [{ type: 'tool_use', id: 'native-call', name: 'Read', input: { file_path: 'a.txt' } }],
-          },
-        })
-        emit({
-          type: 'user',
-          uuid: 'native-result-envelope',
-          message: { content: [{ type: 'tool_result', tool_use_id: 'native-call', content: 'file contents' }] },
-        })
-        finish()
-      } else if (scenario === 'child-lifecycle') {
-        emit({
-          type: 'assistant',
-          uuid: 'native-agent-envelope',
-          user_message_uuid: inputUuid,
-          message: {
-            id: 'native-agent-api',
-            content: [
-              {
-                type: 'tool_use',
-                id: 'native-agent-tool',
-                name: 'Agent',
-                input: { description: 'Inspect', prompt: 'Inspect', run_in_background: true },
-              },
-            ],
-          },
-        })
-        emit({
-          type: 'system',
-          subtype: 'task_started',
-          task_type: 'local_agent',
-          task_id: 'native-child',
-          tool_use_id: 'native-agent-tool',
-          description: 'Inspect',
-        })
-        emit({
-          type: 'assistant',
-          parent_tool_use_id: 'native-agent-tool',
-          uuid: 'child-private-envelope',
-          message: { id: 'child-api', content: [{ type: 'text', text: 'Child transcript stays separate' }] },
-        })
-        emit({
-          type: 'system',
-          subtype: 'task_progress',
-          task_id: 'native-child',
-          tool_use_id: 'native-agent-tool',
-          summary: 'Inspecting',
-        })
-        emit({
-          type: 'system',
-          subtype: 'task_notification',
-          task_id: 'native-child',
-          tool_use_id: 'stale-tool',
-          status: 'failed',
-          summary: 'stale',
-        })
-        emit({
-          type: 'system',
-          subtype: 'task_notification',
-          task_id: 'native-child',
-          tool_use_id: 'native-agent-tool',
-          status: 'completed',
-          summary: 'Complete',
-        })
-        finish()
-      } else if (scenario.startsWith('callback')) {
-        const controller = new AbortController()
-        if (scenario === 'callback-already-aborted') controller.abort()
-        const answer = options.canUseTool(
-          'Bash',
-          { command: 'echo safe' },
-          { requestId: 'native-request', toolUseID: 'native-tool', suggestions: [], signal: controller.signal },
-        )
-        if (scenario === 'callback-withdraw') setImmediate(() => controller.abort())
-        const reply = await answer
-        if (scenario === 'callback-answer-abort') controller.abort()
-        emitText('native-reply', JSON.stringify(reply))
-        finish()
-      } else if (scenario === 'overflow') {
-        emitText('native-overflow', 'x'.repeat(8192))
-        finish()
-      } else if (scenario === 'mcp') {
-        emitText('native-mcp', JSON.stringify(options.mcpServers))
-        finish()
-      } else if (scenario === 'interrupt') {
-        /* Wait for native interrupt. */
-      } else {
-        emitText('native-default', 'ok')
-        finish()
-      }
+      if (closed || ending) break
+      turn.input = input
+      turn.interrupt = null
+      const content = input.message.content
+      const text = typeof content === 'string' ? content : (content.find((block) => block.type === 'text')?.text ?? '')
+      record({ method: 'send', uuid: input.uuid, text, content })
+      await scripted(turn, text)
     }
   })
   return instance

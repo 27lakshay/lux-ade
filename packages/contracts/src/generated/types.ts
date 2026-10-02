@@ -22,7 +22,6 @@ export type ContractDefinition =
   | AccountVerifyRequest
   | AccountsReply
   | Ack
-  | AcpHandshake
   | Activity
   | ActivityChanged
   | ActivityKind
@@ -62,6 +61,8 @@ export type ContractDefinition =
   | AgentRun
   | AgentRunSpec
   | AgentSendRequest
+  | AgentTerminateOutcome
+  | AgentTerminateRequest
   | AppCommand
   | Appearance
   | AppearanceDiagnostic
@@ -80,6 +81,7 @@ export type ContractDefinition =
   | AttachmentReply
   | Attention
   | BackendCompatibility
+  | BackgroundActivity
   | BoldColor
   | BoldColorMode
   | BranchPolicy
@@ -196,6 +198,7 @@ export type ContractDefinition =
   | ChildWait
   | ChildWaitRequest
   | ChildrenRequest
+  | ChoicesSource
   | ClaimMode
   | ClaimPhase
   | ClaimPurpose
@@ -248,6 +251,9 @@ export type ContractDefinition =
   | ConversationDeleted
   | ConversationDeletedFrame
   | ConversationDeletion
+  | ConversationExecution
+  | ConversationExport
+  | ConversationExportRequest
   | ConversationGetRequest
   | ConversationHistory
   | ConversationHistoryRequest
@@ -257,6 +263,10 @@ export type ContractDefinition =
   | ConversationRewindPreview
   | ConversationRewindPreviewRequest
   | ConversationRewindRequest
+  | ConversationSettings
+  | ConversationSettingsRequest
+  | ConversationSettingsUpdateRequest
+  | ConversationSettingsUpdated
   | ConversationSnapshot
   | ConversationSnooze
   | ConversationSnoozeList
@@ -264,6 +274,7 @@ export type ContractDefinition =
   | ConversationSnoozeReply
   | ConversationSnoozeRequest
   | ConversationSteerRequest
+  | ConversationStop
   | ConversationUnsnoozeRequest
   | CostBasis
   | CredentialReference
@@ -331,6 +342,7 @@ export type ContractDefinition =
   | DiagnosticsExportRequest
   | DiagnosticsStatus
   | DiagnosticsStatusRequest
+  | DiscoveredModel
   | Draft
   | DraftContextNode
   | DraftGetRequest
@@ -369,6 +381,9 @@ export type ContractDefinition =
   | ExecutionHostEntry
   | ExecutionHosts
   | ExecutionState
+  | ExportContinuity
+  | ExportedAttachment
+  | ExportedMessage
   | Failure
   | FileEntry
   | FileKind
@@ -478,7 +493,10 @@ export type ContractDefinition =
   | MessageDirection
   | ModelCapabilities
   | ModelFormat
+  | NativeChoices
   | NativeMessageLocator
+  | NativeModel
+  | NativeSettings
   | NativeTerminalEvidence
   | NotificationDeliveries
   | NotificationDelivery
@@ -533,6 +551,7 @@ export type ContractDefinition =
   | PluginCommandInvokeRequest
   | PluginCommandOutcome
   | PluginCommandResult
+  | PluginComposerContribution
   | PluginContributions
   | PluginDataRecord
   | PluginDetail
@@ -581,6 +600,8 @@ export type ContractDefinition =
   | PluginSourcePin
   | PluginStatus
   | PluginSummary
+  | PluginTimelineAction
+  | PluginTimelineContribution
   | PluginUninstallRequest
   | PluginUninstalled
   | PortAssignment
@@ -627,6 +648,10 @@ export type ContractDefinition =
   | ProviderSelection
   | ProviderSupport
   | ProviderWorker
+  | ProviderWorkerAccountContext
+  | ProviderWorkerAccountInspectRequest
+  | ProviderWorkerAccountInspection
+  | ProviderWorkerAccountState
   | ProviderWorkerAck
   | ProviderWorkerAnswerRequest
   | ProviderWorkerAvailability
@@ -649,6 +674,7 @@ export type ContractDefinition =
   | ProviderWorkerJsonRpcVersion
   | ProviderWorkerLimits
   | ProviderWorkerMethod
+  | ProviderWorkerNativePeer
   | ProviderWorkerOpenRequest
   | ProviderWorkerOperation
   | ProviderWorkerPin
@@ -871,10 +897,13 @@ export type ContractDefinition =
   | ServiceStartRequest
   | ServiceStopRequest
   | SessionSubscribeRequest
+  | SettingSource
+  | SettingState
   | SettingValue
   | Settings
   | SettingsAppearanceRequest
   | SettingsChanged
+  | SettingsDiscovery1
   | SettingsGetRequest
   | SettingsPalettesRequest
   | SettingsResetAppearanceRequest
@@ -915,6 +944,10 @@ export type ContractDefinition =
   | SplitNode
   | StartOutcome
   | StepStatus
+  | StopConfirmation
+  | StopDelivery
+  | StopEscalation
+  | StopOutcome
   | SubmissionDelivery
   | SubmissionDispatch
   | SubmissionNativeOutcome
@@ -1163,14 +1196,15 @@ export type AdapterKind = 'acp' | 'executable'
 export type ProbeOutcome =
   | {
       /**
-       * Present for ACP adapters.
-       */
-      acp?: AcpHandshake | null
-      /**
        * ADE capability names, in the vocabulary of provider descriptors.
        */
       capabilities: string[]
       status: 'ready'
+      /**
+       * For an ACP adapter, the bundled ACP worker's `initialize` reply,
+       * including what the agent itself negotiated (`native_peer`).
+       */
+      worker?: ProviderWorkerInitialize | null
       [k: string]: unknown
     }
   | {
@@ -1181,6 +1215,39 @@ export type ProbeOutcome =
       status: 'failed'
       [k: string]: unknown
     }
+export type ProviderWorkerCapabilityName =
+  | 'streaming'
+  | 'images'
+  | 'text_attachments'
+  | 'resume'
+  | 'cancel'
+  | 'steering'
+  | 'tool_approval'
+  | 'questions'
+  | 'child_transcript'
+export type ProviderWorkerAvailability = 'available' | 'unavailable' | 'unsupported'
+/**
+ * An operation handled by the current worker protocol. Unknown methods cannot be declared supported.
+ */
+export type ProviderWorkerMethod =
+  | (
+      | 'initialize'
+      | 'open'
+      | 'send'
+      | 'steer'
+      | 'cancel'
+      | 'answer'
+      | 'history'
+      | 'configure_mcp'
+      | 'compact'
+      | 'rewind'
+      | 'child_transcript'
+    )
+  | 'account_inspect'
+/**
+ * The durability tier of an operation (proposed architecture, section 4).
+ */
+export type Tier = 'query' | 'idempotent_command' | 'effect_command'
 /**
  * Whether an adapter may be trusted to have the probed capabilities now.
  */
@@ -1205,6 +1272,10 @@ export type RequestAnswer =
       strict_auto_review?: boolean | null
     }
 export type RequestScope = 'once' | 'turn' | 'session' | 'persistent'
+/**
+ * Whether the provider answered the cancellation request.
+ */
+export type StopDelivery = 'pending' | 'acknowledged' | 'refused' | 'unknown'
 /**
  * What the adapter can prove after requesting a native interruption.
  */
@@ -1325,7 +1396,7 @@ export type CapabilityChange = 'unchanged' | 'revised' | 'drifted' | 'downgraded
 /**
  * The shape a provider expects a model ID in.
  */
-export type ModelFormat = 'native_id' | 'provider_qualified'
+export type ModelFormat = 'native_id'
 /**
  * Why a carry cannot run as asked.
  */
@@ -1342,6 +1413,18 @@ export type CarryBlocker =
  * How a path differs from `HEAD` in the source tree.
  */
 export type CarryChange = ('added' | 'modified' | 'deleted' | 'type_changed' | 'untracked') | 'unmerged'
+/**
+ * Evidence that confirmed a Stop.
+ */
+export type StopConfirmation = 'native_terminal' | 'process_exit'
+/**
+ * A declared step ADE offers when a Stop is unresolved.
+ */
+export type StopEscalation = 'terminate_process'
+/**
+ * Where a Stop stands.
+ */
+export type StopOutcome = 'requested' | 'confirmed' | 'unresolved'
 /**
  * What a project is.
  */
@@ -1469,6 +1552,10 @@ export type Outcome = ('completed' | 'failed' | 'interrupted') | 'unknown'
  */
 export type PendingPhase = ('starting' | 'running' | 'cancelling') | 'queued'
 /**
+ * Where a setting's choices come from.
+ */
+export type ChoicesSource = 'native_reported' | 'static' | 'unavailable'
+/**
  * Shared use admits other shared use; an exclusive lifecycle claim admits nothing.
  */
 export type ClaimMode = 'shared' | 'exclusive'
@@ -1560,6 +1647,11 @@ export type Content2 =
       agents: Child[]
       operation: string
       type: 'subagents'
+      [k: string]: unknown
+    }
+  | {
+      data: unknown
+      type: 'extension'
       [k: string]: unknown
     }
 export type StepStatus = 'pending' | 'inProgress' | 'completed' | 'blocked' | 'abandoned'
@@ -1695,6 +1787,10 @@ export type ProviderHistoryConsistency = 'snapshot' | 'best_effort'
  * What a rewind returns to an earlier point.
  */
 export type RewindScope = 'conversation' | 'files'
+/**
+ * Where an effective value comes from.
+ */
+export type SettingSource = 'native_reported' | 'requested_only' | 'provider_default'
 /**
  * Where a cost figure came from.
  */
@@ -1952,11 +2048,30 @@ export type Event =
       [k: string]: unknown
     }
   | {
+      active: boolean | null
+      running: number | null
+      session: string
+      source: string
+      type: 'background'
+      [k: string]: unknown
+    }
+  | {
+      session: string
+      settings: NativeSettings
+      type: 'settings'
+      [k: string]: unknown
+    }
+  | {
       report: {
         [k: string]: unknown
       }
       session: string
       source: string
+      /**
+       * The submission the report belongs to, for a provider that names no
+       * turn; ADE then keys the turn's usage by it.
+       */
+      submission?: string | null
       turn: string | null
       type: 'usage'
       [k: string]: unknown
@@ -2410,7 +2525,7 @@ export type PlacementSource = 'local_state' | 'recorded'
 /**
  * A registration kind in the activation registry.
  */
-export type PluginRegistrationKind = 'command' | 'panel'
+export type PluginRegistrationKind = 'command' | 'panel' | 'timeline' | 'composer'
 /**
  * What a command handler did.
  */
@@ -2486,36 +2601,6 @@ export type PluginSource =
 export type ReducedMotion = 'system' | 'on' | 'off'
 export type TerminalCursorShape = 'block' | 'bar' | 'underline'
 export type TerminalFontKerning = 'auto' | 'normal' | 'none'
-export type ProviderWorkerCapabilityName =
-  | 'streaming'
-  | 'images'
-  | 'text_attachments'
-  | 'resume'
-  | 'cancel'
-  | 'steering'
-  | 'tool_approval'
-  | 'questions'
-  | 'child_transcript'
-export type ProviderWorkerAvailability = 'available' | 'unavailable' | 'unsupported'
-/**
- * An operation handled by the current worker protocol. Unknown methods cannot be declared supported.
- */
-export type ProviderWorkerMethod =
-  | 'initialize'
-  | 'open'
-  | 'send'
-  | 'steer'
-  | 'cancel'
-  | 'answer'
-  | 'history'
-  | 'configure_mcp'
-  | 'compact'
-  | 'rewind'
-  | 'child_transcript'
-/**
- * The durability tier of an operation (proposed architecture, section 4).
- */
-export type Tier = 'query' | 'idempotent_command' | 'effect_command'
 /**
  * The overall readiness verdict.
  */
@@ -2549,6 +2634,10 @@ export type ProviderOrigin =
     }
 export type QuotaState = 'reported' | 'not_reported' | 'unavailable'
 export type RegistrationState = 'registered' | 'refused'
+/**
+ * Whether a managed account's native login can run.
+ */
+export type ProviderWorkerAccountState = 'ready' | 'signed_out' | 'unavailable'
 export type ProviderWorkerCancelTag = 'cancel_result'
 export type ProviderWorkerResponseId = string | number | null
 export type ProviderWorkerJsonRpcVersion = '2.0'
@@ -2780,6 +2869,13 @@ export interface Account {
   omp_identity?: OmpIdentity | null
   provider: string
   state: string
+  /**
+   * The identity a provider worker's `account_inspect` reported, pinned for
+   * a provider without a bundled account probe, such as a plugin's.
+   */
+  worker_identity?: {
+    [k: string]: unknown
+  } | null
   [k: string]: unknown
 }
 export interface ClaudeIdentity {
@@ -3072,28 +3168,6 @@ export interface Ack {
   [k: string]: unknown
 }
 /**
- * What an ACP agent declared in its `initialize` response.
- */
-export interface AcpHandshake {
-  agent_name?: string | null
-  agent_version?: string | null
-  /**
-   * IDs of the authentication methods the agent offers. ADE runs none of
-   * them; sign in with the agent's own CLI.
-   */
-  auth_methods: string[]
-  list_sessions: boolean
-  load_session: boolean
-  mcp_http: boolean
-  mcp_sse: boolean
-  prompt_audio: boolean
-  prompt_embedded_context: boolean
-  prompt_image: boolean
-  protocol_version: number
-  resume_session: boolean
-  [k: string]: unknown
-}
-/**
  * One durable activity record.
  */
 export interface Activity {
@@ -3316,6 +3390,155 @@ export interface ExecutableIdentity {
   [k: string]: unknown
 }
 /**
+ * Exact JSON-RPC initialize reply; every field except `native_peer` is
+ * required and unknown fields are rejected.
+ */
+export interface ProviderWorkerInitialize {
+  capabilities: ProviderWorkerCapability[]
+  compatible_protocol_versions: number[]
+  limits: ProviderWorkerLimits
+  name: string
+  /**
+   * What the native peer reported when the worker negotiated with it
+   * before answering `initialize`. Absent when the worker starts its
+   * native peer lazily or bridges no negotiated protocol.
+   */
+  native_peer?: ProviderWorkerNativePeer | null
+  operations: ProviderWorkerOperation[]
+  permission_modes: string[]
+  protocol_version: number
+  requirements: ProviderWorkerRequirements
+}
+/**
+ * A capability advertised by a provider worker. Support and current availability are independent.
+ */
+export interface ProviderWorkerCapability {
+  available: boolean
+  name: ProviderWorkerCapabilityName
+  reason: string
+  support: Support
+}
+export interface ProviderWorkerLimits {
+  max_cleanup_ms: number
+  max_concurrency: number
+  /**
+   * Maximum visible transcript items returned by open, history or child transcript.
+   */
+  max_history_page_items: number
+  max_initialize_ms: number
+  /**
+   * Maximum immediate child values in any input JSON object or array.
+   */
+  max_input_entries: number
+  max_input_frame_bytes: number
+  max_operation_ms: number
+  /**
+   * Maximum immediate child values in any output JSON object or array.
+   */
+  max_output_entries: number
+  /**
+   * Output frames may exceed input frames: a stored message is up to
+   * 1 MiB, and an item carries it with its tool output and envelope.
+   */
+  max_output_frame_bytes: number
+  max_partial_frame_ms: number
+}
+/**
+ * A native peer's negotiation report, as the worker observed it. It is
+ * evidence for diagnostics and readiness, never a grant: operations and
+ * capabilities remain authoritative.
+ */
+export interface ProviderWorkerNativePeer {
+  /**
+   * IDs of sign-in methods the peer offers. ADE runs none of them.
+   *
+   * @maxItems 16
+   */
+  auth_methods:
+    | []
+    | [string]
+    | [string, string]
+    | [string, string, string]
+    | [string, string, string, string]
+    | [string, string, string, string, string]
+    | [string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string, string, string, string, string]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string
+      ]
+  /**
+   * Native features the peer declared, as lowercase snake_case names.
+   *
+   * @maxItems 32
+   */
+  features: string[]
+  name?: string | null
+  /**
+   * The native protocol's short name, such as `acp`.
+   */
+  protocol: string
+  /**
+   * The protocol version the peer stated, even when the worker refused it.
+   */
+  protocol_version?: number | null
+  version?: string | null
+}
+export interface ProviderWorkerOperation {
+  availability: ProviderWorkerAvailability
+  method: ProviderWorkerMethod
+  reason: string
+  tier: Tier
+}
+/**
+ * Version metadata declared by the packaged SDK worker.
+ */
+export interface ProviderWorkerRequirements {
+  effect_version: string
+  node_engine: string
+  platform_node_version: string
+  sdk_api_version: number
+  sdk_version: string
+}
+/**
  * `adapter.list`: every adapter this profile defines, by ID.
  */
 export interface AdapterListRequest {
@@ -3407,6 +3630,11 @@ export interface AgentAccountInspectRequest {
   account: unknown
   op: 'agent.account_inspect'
   token: string
+  /**
+   * For a plugin provider, the pinned `ProviderWorker` whose
+   * `account_inspect` reads the account. Absent for a bundled provider.
+   */
+  worker?: unknown
 }
 /**
  * The `agent.account_inspect` reply: an untagged account inspection.
@@ -3450,11 +3678,17 @@ export interface AgentAnswerRequest {
   source_attempt_id?: string | null
 }
 /**
- * Native interruption evidence attached to the durable agent.cancel operation receipt.
+ * The `agent.cancel` reply. It reports what the provider acknowledged within
+ * a short bounded wait, never a confirmed stop: the Conversation's `stop`
+ * record follows the same operation to its confirmed or unresolved outcome.
  */
 export interface AgentCancelOutcome {
   conversation_id: string
-  evidence: ProviderCancelEvidence
+  delivery: StopDelivery
+  /**
+   * The provider's interruption evidence; null while delivery is pending.
+   */
+  evidence: ProviderCancelEvidence | null
   operation_id: string
   source_attempt_id: string
   submission_id: string
@@ -3659,6 +3893,12 @@ export interface AgentListRequest {
  * `agent.resume`: reconnect the Conversation's Agent.
  */
 export interface AgentResumeRequest {
+  /**
+   * Required when the newest prompt's native outcome is unknown: reopening
+   * its native session may continue that interrupted work. ADE never
+   * resends the prompt either way.
+   */
+  continue_interrupted?: boolean
   conversation_id: string
   op: 'agent.resume'
   /**
@@ -3684,6 +3924,44 @@ export interface Attachment {
   name: string
   size: number
   [k: string]: unknown
+}
+/**
+ * What terminating the provider process proved.
+ */
+export interface AgentTerminateOutcome {
+  conversation_id: string
+  /**
+   * What termination cannot prove, in plain words.
+   */
+  limits: string[]
+  operation_id: string
+  /**
+   * Whether the runtime confirmed the provider process exited.
+   */
+  process_exited: boolean
+  source_attempt_id: string
+  /**
+   * The `agent_terminate_outcome` type tag.
+   */
+  type: 'agent_terminate_outcome'
+  [k: string]: unknown
+}
+/**
+ * `agent.terminate`: end the provider process the runtime owns for this
+ * attempt. Unlike `agent.cancel` it does not depend on the provider's
+ * cooperation, and unlike `agent.disconnect` it may interrupt a running
+ * turn. It never reaches a later attempt.
+ */
+export interface AgentTerminateRequest {
+  conversation_id: string
+  op: 'agent.terminate'
+  /**
+   * The caller's operation ID. The daemon keeps a receipt under it: a
+   * retry with the same ID and payload returns the recorded outcome, and
+   * the same ID with another payload is a conflict.
+   */
+  operation_id: string
+  source_attempt_id: string
 }
 export interface AppearanceDiagnostic {
   code: AppearanceDiagnosticCode
@@ -3851,6 +4129,22 @@ export interface BackendCompatibility {
    */
   missing: string[]
   runtime_protocol: string | null
+  [k: string]: unknown
+}
+/**
+ * Background work in a provider session, with its evidence. A provider
+ * that stops reporting, or whose process ended, leaves `active` unknown:
+ * silence and a closed transport are not evidence that work settled.
+ */
+export interface BackgroundActivity {
+  active: boolean | null
+  observed_at_ms: number
+  running: number | null
+  /**
+   * The native evidence, such as `task_lifecycle`, or `provider_exited`.
+   */
+  source: string
+  source_attempt_id: string
   [k: string]: unknown
 }
 export interface Rgb {
@@ -5131,7 +5425,21 @@ export interface Conversation {
    * (`crate::workspaces::attention`). Set on every reply, never stored.
    */
   attention: 'idle' | 'running' | 'needs_you' | 'error'
+  /**
+   * When output last arrived that no submission of this Conversation
+   * owns: autonomous work in the native session, never shown as a prompt.
+   */
+  autonomous_output_at_ms: number | null
+  /**
+   * Background work the provider last reported for the open session.
+   * Null when it has reported none; `active: null` when it is unknown.
+   */
+  background: BackgroundActivity | null
   error: string | null
+  /**
+   * What the open provider session was bound to; null before one opens.
+   */
+  execution: ConversationExecution | null
   /**
    * The ADE placement of this Conversation; filled from the profile placement record for each reply.
    */
@@ -5150,6 +5458,11 @@ export interface Conversation {
   group_id: string | null
   id: string
   /**
+   * What the provider reported in effect when its session opened or later
+   * (Claude `system/init`); null when it reported nothing or has not opened.
+   */
+  native_settings: NativeSettings | null
+  /**
    * The Conversation that delegated this one, when it is an
    * orchestration child. Set on every reply, never stored.
    */
@@ -5167,7 +5480,15 @@ export interface Conversation {
   runtime_cursor: number
   runtime_run: string | null
   runtime_submission: string | null
+  /**
+   * Rises with each change to `provider_config`; guards the next change.
+   */
+  settings_revision: number
   status: string
+  /**
+   * The latest Stop and how far it got; null when none was requested.
+   */
+  stop: ConversationStop | null
   title: string
   /**
    * Whether the Conversation has a message the person did not write
@@ -5178,6 +5499,73 @@ export interface Conversation {
   unread: boolean
   updated_at: number
   workspace_id: string
+  [k: string]: unknown
+}
+/**
+ * What a Conversation's open provider session was bound to when it opened:
+ * the ADE attempt, the account context and generation it was checked
+ * against, the native session it opened and the settings revision it used.
+ * A later account change, settings change or reattach records a new one.
+ */
+export interface ConversationExecution {
+  /**
+   * Which login a Conversation's Agent runs under.
+   */
+  account_context: 'managed' | 'ambient'
+  /**
+   * The managed account generation verified before the session opened.
+   */
+  account_generation: number | null
+  account_id: string | null
+  native_session: string
+  opened_at_ms: number
+  /**
+   * Whether the runtime reattached to a session that survived a daemon restart.
+   */
+  reattached: boolean
+  settings_revision: number
+  source_attempt_id: string
+  [k: string]: unknown
+}
+/**
+ * Settings the provider itself reported for an opened session; each value
+ * is null when the provider did not report it.
+ */
+export interface NativeSettings {
+  model: string | null
+  permission_mode: string | null
+  reasoning_effort: string | null
+  [k: string]: unknown
+}
+/**
+ * The latest Stop on a Conversation, keyed by its operation. It is bound
+ * to one attempt and submission: a successor never settles it.
+ */
+export interface ConversationStop {
+  confirmation: StopConfirmation | null
+  delivery: StopDelivery
+  escalation: StopEscalation | null
+  /**
+   * The provider's latest interruption evidence: scope, remaining
+   * foreground, queued and background work.
+   */
+  evidence: ProviderCancelEvidence | null
+  /**
+   * The native terminal status that settled it, such as `interrupted`
+   * or `completed` when the turn ended before the interruption took hold.
+   */
+  native_status: string | null
+  operation_id: string
+  outcome: StopOutcome
+  /**
+   * Why the outcome is unresolved, in plain words.
+   */
+  reason: string | null
+  requested_at_ms: number
+  settled_at_ms: number | null
+  source_attempt_id: string
+  submission_id: string
+  turn_id: string | null
   [k: string]: unknown
 }
 /**
@@ -6095,10 +6483,23 @@ export interface Hook {
 export interface Config2 {
   model: string | null
   permission_mode: string
+  /**
+   * A reasoning level from [`reasoning_efforts`]; absent means the provider's default.
+   */
+  reasoning_effort?: string | null
   setting_sources: string[]
 }
 export interface Connected {
   history: Item[]
+  /**
+   * The models, with their dependent settings, the provider listed for
+   * this session; null when it listed none or discovery failed.
+   */
+  native_choices?: NativeChoices | null
+  /**
+   * What the provider reported in effect when the session opened.
+   */
+  native_settings?: NativeSettings | null
   /**
    * Set when a rewind forked `session` from this one after the Agent
    * opened (F039): a daemon that reattaches may still hold it.
@@ -6132,6 +6533,47 @@ export interface NativeMessageLocator {
   message_id: string
   provider: string
   session: string
+  [k: string]: unknown
+}
+/**
+ * The models a provider listed when its session opened.
+ */
+export interface NativeChoices {
+  models: NativeModel[]
+  /**
+   * The native call that listed them, such as `model/list`.
+   */
+  source: string
+  [k: string]: unknown
+}
+/**
+ * One model a provider listed for its open session (Codex `model/list`,
+ * Claude `supportedModels()`, Oh My Pi `get_available_models`), with the
+ * dependent settings it reported for that model. A null list was not reported.
+ */
+export interface NativeModel {
+  /**
+   * Other names the provider resolves to this model.
+   */
+  aliases: string[]
+  default_reasoning_effort: string | null
+  display_name: string | null
+  /**
+   * The value a launch passes as the model.
+   */
+  id: string
+  /**
+   * The provider's default model.
+   */
+  is_default: boolean
+  /**
+   * Permission modes the provider listed for this model.
+   */
+  permission_modes: string[] | null
+  /**
+   * Reasoning levels the provider listed for this model.
+   */
+  reasoning_efforts: string[] | null
   [k: string]: unknown
 }
 export interface Content {
@@ -6713,6 +7155,89 @@ export interface ConversationDeletedFrame {
   [k: string]: unknown
 }
 /**
+ * The `conversation.export` reply.
+ */
+export interface ConversationExport {
+  /**
+   * The daemon boot and feed revision this page was read at; a reader that
+   * sees either change between pages is reading a history that changed.
+   */
+  boot_id: string
+  continuity: ExportContinuity
+  conversation: Conversation
+  history_epoch: number
+  messages: ExportedMessage[]
+  /**
+   * Pass as `after_sequence` for the next page; null on the last.
+   */
+  next_after_sequence: number | null
+  /**
+   * What this export does not contain: provider-native history that ADE
+   * never retained, and private reasoning a provider withheld.
+   */
+  not_included: string[]
+  revision: number
+  /**
+   * The `conversation_export` type tag.
+   */
+  type: 'conversation_export'
+  [k: string]: unknown
+}
+/**
+ * Whether the provider that ran a conversation can continue it natively.
+ */
+export interface ExportContinuity {
+  /**
+   * True only when both hold. Readability never implies it.
+   */
+  native_resume_possible: boolean
+  /**
+   * The conversation names a native session a provider could resume.
+   */
+  native_session: string | null
+  /**
+   * The provider is installed and registered in this profile now.
+   */
+  provider_available: boolean
+  reason: string
+  [k: string]: unknown
+}
+/**
+ * One retained message, with its attachments' availability.
+ */
+export interface ExportedMessage {
+  attachments: ExportedAttachment[]
+  message: Message
+  [k: string]: unknown
+}
+/**
+ * One attachment of an exported message and whether its payload remains.
+ */
+export interface ExportedAttachment {
+  attachment: Attachment
+  /**
+   * `live`, or why the payload is gone (such as `reclaimed`).
+   */
+  state: string
+  [k: string]: unknown
+}
+/**
+ * `conversation.export`: one page of a conversation's retained messages in
+ * order, readable without its provider, its credentials or any renderer.
+ */
+export interface ConversationExportRequest {
+  /**
+   * Export messages after this sequence; from the first when absent.
+   */
+  after_sequence?: number | null
+  conversation_id: string
+  /**
+   * At most 32, the bounded read window; 32 when absent.
+   */
+  limit?: number | null
+  op: 'conversation.export'
+}
+/**
  * `conversation.get`: one page of a conversation's messages, newest first.
  */
 export interface ConversationGetRequest {
@@ -6900,6 +7425,137 @@ export interface ConversationRewindRequest {
   op: 'conversation.rewind'
   operation_id: string
   scope: RewindScope
+}
+export interface ConversationSettings {
+  /**
+   * Whether an Agent is connected; a change relaunches an idle Agent so it applies.
+   */
+  agent_connected: boolean
+  conversation_id: string
+  discovery: SettingsDiscovery
+  model: SettingState
+  permission_mode: SettingState
+  provider: string
+  reasoning_effort: SettingState
+  /**
+   * Guards `conversation.settings.update`; rises with every change.
+   */
+  revision: number
+  /**
+   * A change is refused while a turn runs.
+   */
+  turn_running: boolean
+  /**
+   * The `conversation_settings` type tag.
+   */
+  type: 'conversation_settings'
+  [k: string]: unknown
+}
+/**
+ * What the open provider session listed; choices are rediscovered from it.
+ */
+export interface SettingsDiscovery {
+  available: boolean
+  models: DiscoveredModel[]
+  /**
+   * Why discovery is unavailable.
+   */
+  reason: string | null
+  /**
+   * The native call that listed the models, such as `model/list`.
+   */
+  source: string | null
+  /**
+   * The Agent run whose session listed them.
+   */
+  source_attempt_id: string | null
+  [k: string]: unknown
+}
+/**
+ * One listed model, as the provider reported it, with what ADE would offer
+ * for the settings that depend on it were it selected.
+ */
+export interface DiscoveredModel {
+  native: NativeModel
+  permission_choices: string[]
+  permission_choices_source: ChoicesSource
+  reasoning_choices: string[]
+  reasoning_choices_source: ChoicesSource
+  [k: string]: unknown
+}
+/**
+ * One setting: what ADE asked for, what is known to be in effect, and why.
+ */
+export interface SettingState {
+  /**
+   * Values ADE can request now, for the requested model (or the model in
+   * effect); empty when unsupported or when `choices_source` is `unavailable`.
+   */
+  choices: string[]
+  choices_source: ChoicesSource
+  /**
+   * Null when nothing reports the value in effect.
+   */
+  effective: string | null
+  /**
+   * Why the setting is unsupported or limited.
+   */
+  reason: string | null
+  requested: string | null
+  source: SettingSource
+  /**
+   * Whether ADE can change this setting for the provider at all.
+   */
+  supported: boolean
+  [k: string]: unknown
+}
+/**
+ * `conversation.settings`: the requested provider settings, what the provider
+ * reported in effect, and the choices offered now.
+ */
+export interface ConversationSettingsRequest {
+  conversation_id: string
+  op: 'conversation.settings'
+}
+/**
+ * `conversation.settings.update`: change requested settings at a known revision.
+ * An absent field keeps its value; an empty `model` or `reasoning_effort`
+ * returns it to the provider's default. The model is applied before the
+ * settings that depend on it, and those (the new values and the ones kept)
+ * are checked against the choices the provider listed for the new model; a
+ * value it does not offer refuses the whole change, so nothing is applied.
+ * Nothing is widened or substituted implicitly.
+ */
+export interface ConversationSettingsUpdateRequest {
+  conversation_id: string
+  expected_revision: number
+  model?: string | null
+  op: 'conversation.settings.update'
+  operation_id: string
+  permission_mode?: string | null
+  reasoning_effort?: string | null
+}
+export interface ConversationSettingsUpdated {
+  /**
+   * Settings whose requested value changed.
+   */
+  changed: string[]
+  conversation_id: string
+  /**
+   * Set when the stored change could not be applied natively. The stored
+   * revision stays; it is not rolled back, and the Conversation reports the error.
+   */
+  native_error: string | null
+  /**
+   * Whether the idle Agent was relaunched under the new settings.
+   */
+  relaunched: boolean
+  settings: ConversationSettings
+  /**
+   * The `conversation_settings_updated` type tag.
+   */
+  type: 'conversation_settings_updated'
+  [k: string]: unknown
 }
 /**
  * The `conversation.get` reply.
@@ -10019,14 +10675,16 @@ export interface McpResolution {
    */
   delivery: string
   /**
-   * The provider's native configuration document; null when the provider has no projection.
+   * The provider's native configuration document.
    */
   document: unknown
   excluded: Excluded[]
   /**
-   * `claude_mcp_json`, `codex_config_toml` (the TOML tables as JSON) or `omp_mcp_json`.
+   * `claude_mcp_json`, `codex_config_toml` (the TOML tables as JSON),
+   * `omp_mcp_json`, or `worker_mcp_json`: the provider-neutral projection a
+   * worker without a native one receives (`docs/provider-authoring.md`).
    */
-  format: string | null
+  format: string
   protocol_versions: string[]
   provider: string
   servers: Projected[]
@@ -10035,8 +10693,9 @@ export interface McpResolution {
    */
   type: 'mcp_resolution'
   /**
-   * True only when the provider's adapter passes `document` at launch. When
-   * false, this is what ADE would pass; the provider does not see it.
+   * True only when the provider's worker declares `configure_mcp`
+   * available, so `document` reaches it at launch and resume. When false,
+   * this is what ADE would pass; the provider does not see it.
    */
   wired: boolean
   workspace_id: string
@@ -10150,7 +10809,7 @@ export interface ProviderSupport {
    */
   unsupported_reason: string | null
   /**
-   * True only when the provider's adapter passes the catalog at launch.
+   * True only when the provider's worker declares `configure_mcp` available.
    */
   wired: boolean
   [k: string]: unknown
@@ -10777,10 +11436,32 @@ export interface PluginCommandResult {
   [k: string]: unknown
 }
 /**
+ * A composer contribution: context nodes of one kind in a draft, and a
+ * side-effect-free transform that prepares the prompt before it is sent. Its
+ * ID and `node_kind` start with the plugin ID and a dot. A node of that kind
+ * keeps a plain-text fallback in `data.text`.
+ */
+export interface PluginComposerContribution {
+  id: string
+  /**
+   * The draft context node `kind` this contribution owns.
+   */
+  node_kind: string
+  title: string
+  /**
+   * The node and transform version, from 1.
+   */
+  version: number
+}
+/**
  * Static contributions the registry records for each activation.
  */
 export interface PluginContributions {
   commands: PluginCommandContribution[]
+  /**
+   * Composer contributions the UI entry point registers, one per context node kind.
+   */
+  composer?: PluginComposerContribution[]
   /**
    * Lifecycle events delivered to the backend entry point after they commit (F058).
    */
@@ -10791,6 +11472,10 @@ export interface PluginContributions {
    * Static, validated declarative theme definitions contributed by this plugin.
    */
   themes?: ThemeDefinition[]
+  /**
+   * Timeline renderers the UI entry point registers, one per message kind.
+   */
+  timeline?: PluginTimelineContribution[]
 }
 /**
  * A panel for the UI host. Its ID starts with the plugin ID and a dot.
@@ -10809,6 +11494,45 @@ export interface PluginSettingContribution {
   default?: unknown
   key: string
   kind: PluginSettingKind
+  title: string
+}
+/**
+ * A renderer for timeline messages of one kind. Its ID and `item_kind` start
+ * with the plugin ID and a dot. A message of that kind keeps its canonical
+ * text, which every client shows when the renderer is missing or fails.
+ */
+export interface PluginTimelineContribution {
+  /**
+   * Actions offered on an item of this kind, shown whether or not the
+   * renderer is available. Each runs a command this plugin declares, through
+   * `plugin.command.invoke` (an effect command with a receipt), with
+   * `{conversation_id, message_id}` as its arguments.
+   */
+  actions?: PluginTimelineAction[]
+  id: string
+  /**
+   * The message `kind` this renders.
+   */
+  item_kind: string
+  /**
+   * Top-level payload fields the renderer needs. A payload without them is
+   * not passed to the renderer; the canonical text shows instead.
+   */
+  required_fields?: string[]
+  title: string
+  /**
+   * The renderer's payload version, from 1.
+   */
+  version: number
+}
+/**
+ * One action on a timeline item: a readable title and a declared command.
+ */
+export interface PluginTimelineAction {
+  /**
+   * A command ID from this plugin's `contributes.commands`.
+   */
+  command: string
   title: string
 }
 /**
@@ -10913,6 +11637,10 @@ export interface PluginManifest {
 export interface PluginContributions1 {
   commands: PluginCommandContribution[]
   /**
+   * Composer contributions the UI entry point registers, one per context node kind.
+   */
+  composer?: PluginComposerContribution[]
+  /**
    * Lifecycle events delivered to the backend entry point after they commit (F058).
    */
   hooks?: HookEvent[]
@@ -10922,6 +11650,10 @@ export interface PluginContributions1 {
    * Static, validated declarative theme definitions contributed by this plugin.
    */
   themes?: ThemeDefinition[]
+  /**
+   * Timeline renderers the UI entry point registers, one per message kind.
+   */
+  timeline?: PluginTimelineContribution[]
 }
 /**
  * At least one entry point, each a relative path inside the artifact.
@@ -11603,65 +12335,6 @@ export interface ProviderInspect {
   [k: string]: unknown
 }
 /**
- * Exact JSON-RPC initialize reply; every field is required and unknown fields are rejected.
- */
-export interface ProviderWorkerInitialize {
-  capabilities: ProviderWorkerCapability[]
-  compatible_protocol_versions: number[]
-  limits: ProviderWorkerLimits
-  name: string
-  operations: ProviderWorkerOperation[]
-  permission_modes: string[]
-  protocol_version: number
-  requirements: ProviderWorkerRequirements
-}
-/**
- * A capability advertised by a provider worker. Support and current availability are independent.
- */
-export interface ProviderWorkerCapability {
-  available: boolean
-  name: ProviderWorkerCapabilityName
-  reason: string
-  support: Support
-}
-export interface ProviderWorkerLimits {
-  max_cleanup_ms: number
-  max_concurrency: number
-  /**
-   * Maximum visible transcript items returned by open, history or child transcript.
-   */
-  max_history_page_items: number
-  max_initialize_ms: number
-  /**
-   * Maximum immediate child values in any input JSON object or array.
-   */
-  max_input_entries: number
-  max_input_frame_bytes: number
-  max_operation_ms: number
-  /**
-   * Maximum immediate child values in any output JSON object or array.
-   */
-  max_output_entries: number
-  max_output_frame_bytes: number
-  max_partial_frame_ms: number
-}
-export interface ProviderWorkerOperation {
-  availability: ProviderWorkerAvailability
-  method: ProviderWorkerMethod
-  reason: string
-  tier: Tier
-}
-/**
- * Version metadata declared by the packaged SDK worker.
- */
-export interface ProviderWorkerRequirements {
-  effect_version: string
-  node_engine: string
-  platform_node_version: string
-  sdk_api_version: number
-  sdk_version: string
-}
-/**
  * Inspect one enabled plugin worker without opening a session or submitting input.
  */
 export interface ProviderInspectRequest {
@@ -11855,6 +12528,63 @@ export interface ProviderRegistrations {
  */
 export interface ProviderRegistrationsRequest {
   op: 'provider.registrations'
+}
+/**
+ * The managed account a worker runs on. A worker launched on a managed
+ * account receives it as JSON in the `ADE_ACCOUNT_CONTEXT` environment
+ * variable, in an environment ADE has cleared of everything except a few
+ * locale and path variables, so no ambient credential reaches it. Every
+ * worker receives the same fields, bundled or installed. Without a managed
+ * account the variable is absent and the worker uses the agent's own login.
+ */
+export interface ProviderWorkerAccountContext {
+  account_id: string
+  /**
+   * Increases whenever the account is verified again or disabled.
+   */
+  generation: number
+  /**
+   * The identity ADE pinned when it verified the account, in the shape the
+   * provider's inspection reported it.
+   */
+  identity?: {
+    [k: string]: unknown
+  } | null
+  /**
+   * The account's own directory, private to this user. The worker keeps the
+   * agent's login, configuration and sessions for this account here, and
+   * nowhere else.
+   */
+  native_home: string
+  provider: string
+}
+/**
+ * `account_inspect` takes no parameters: the account is the worker's launch
+ * context ([`ProviderWorkerAccountContext`]).
+ */
+export interface ProviderWorkerAccountInspectRequest {}
+/**
+ * The `account_inspect` result. ADE pins `identity` when the account is
+ * verified and compares it again before each launch on the account, so a
+ * login that changed underneath ADE is refused rather than used.
+ */
+export interface ProviderWorkerAccountInspection {
+  /**
+   * What identifies the signed-in login, such as an email and an
+   * organization. Never a credential. Required when `state` is `ready`.
+   */
+  identity?: {
+    [k: string]: unknown
+  } | null
+  /**
+   * Why the account is not ready; empty when it is.
+   */
+  reason: string
+  state: ProviderWorkerAccountState
+  /**
+   * The native executable's version, when the worker read it.
+   */
+  version?: string | null
 }
 export interface ProviderWorkerAck {}
 export interface ProviderWorkerAnswerRequest {
@@ -14625,6 +15355,28 @@ export interface SettingsChanged {
   [k: string]: unknown
 }
 /**
+ * The models a connected provider session listed when it opened. Discovery
+ * belongs to that session's installation and account: with no Agent
+ * connected, or a provider that lists nothing, it is unavailable and says why.
+ */
+export interface SettingsDiscovery1 {
+  available: boolean
+  models: DiscoveredModel[]
+  /**
+   * Why discovery is unavailable.
+   */
+  reason: string | null
+  /**
+   * The native call that listed the models, such as `model/list`.
+   */
+  source: string | null
+  /**
+   * The Agent run whose session listed them.
+   */
+  source_attempt_id: string | null
+  [k: string]: unknown
+}
+/**
  * `settings.get`: read every profile setting.
  */
 export interface SettingsGetRequest {
@@ -16885,7 +17637,7 @@ export interface WorktreeSwitchRequest {
   target: string
 }
 
-export type Operation = "catalog.get" | "workspace.open" | "workspace.rename" | "workspace.remove" | "workspace.create_worktree" | "workspace.delete_worktree" | "rebind.list" | "workspace.rebind" | "repository.rebind" | "conversation.get" | "conversation.history" | "agent.send" | "agent.answer" | "conversation.create" | "conversation.mark_seen" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "conversation.controls" | "conversation.steer" | "conversation.compact" | "conversation.rewind.preview" | "conversation.rewind" | "conversation.snooze" | "conversation.unsnooze" | "conversation.snooze.list" | "conversation.delete" | "draft.history.list" | "draft.history.restore" | "draft.stash.save" | "draft.stash.list" | "draft.stash.restore" | "draft.stash.drop" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "account.switch.preview" | "account.switch" | "account.switch.list" | "terminal.appearance.get" | "terminal.appearance.set" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "terminal.close" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.branch" | "review.stash" | "review.merge" | "review.fetch" | "review.pull" | "review.push" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "review.feedback.send" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "worktree.carry.preview" | "worktree.carry" | "worktree.resources.apply" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "runtime.recovery" | "runtime.recovery.release" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "notification.preferences.get" | "notification.preferences.set" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.place" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "plugin.command.invoke" | "plugin.host.status" | "plugin.host.restart" | "plugin.dev.enter" | "plugin.dev.leave" | "plugin.generation.list" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.child.answer" | "orchestration.parent.send" | "orchestration.child.messages" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "resources.device.hold" | "resources.device.release" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "remote.host.install" | "retention.preview" | "retention.apply" | "retention.policy.get" | "retention.policy.set" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get" | "browser.partition.list" | "browser.partition.create" | "browser.import.preview" | "browser.import.run" | "browser.import.get" | "browser.context.capture" | "browser.click" | "browser.type" | "browser.evaluate" | "browser.wait" | "browser.screenshot" | "repository.coverage" | "repository.clone" | "repository.publish.preview" | "repository.publish" | "hook.subscription.list" | "hook.delivery.list" | "hook.delivery.inspect" | "hook.delivery.retry" | "hook.delivery.abandon" | "provider.capabilities" | "provider.readiness" | "provider.quota" | "provider.inspect" | "provider.registrations" | "preset.list" | "preset.get" | "preset.save" | "preset.delete" | "adapter.list" | "adapter.put" | "adapter.remove" | "adapter.probe" | "device.list" | "device.screenshot" | "device.boot" | "device.app.install" | "device.app.launch" | "device.input" | "placement.hosts" | "placement.check" | "placement.record" | "placement.resolve" | "placement.list" | "placement.release" | "command.list" | "command.invoke" | "context.capture" | "context.get" | "context.plan" | "window.list" | "window.create" | "window.close" | "window.reopen" | "window.claim" | "window.set_bounds" | "window.show_workspace" | "window.set_view_state" | "layout.get" | "layout.apply" | "tab.close" | "pane.close" | "settings.appearance.observe" | "settings.palettes" | "settings.appearance.reset" | "settings.appearance" | "settings.get" | "settings.set" | "themes.ghostty.export" | "themes.ghostty.validate" | "themes.warp.validate" | "themes.file.validate" | "themes.pack.export" | "themes.validate" | "themes.list" | "themes.inspect" | "themes.install" | "themes.rename" | "themes.export" | "themes.preview" | "themes.draft.preview" | "themes.removal" | "themes.remove"
+export type Operation = "catalog.get" | "workspace.open" | "workspace.rename" | "workspace.remove" | "workspace.create_worktree" | "workspace.delete_worktree" | "rebind.list" | "workspace.rebind" | "repository.rebind" | "conversation.get" | "conversation.history" | "conversation.export" | "agent.send" | "agent.answer" | "conversation.create" | "conversation.mark_seen" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "conversation.controls" | "conversation.settings" | "conversation.settings.update" | "conversation.steer" | "conversation.compact" | "conversation.rewind.preview" | "conversation.rewind" | "conversation.snooze" | "conversation.unsnooze" | "conversation.snooze.list" | "conversation.delete" | "draft.history.list" | "draft.history.restore" | "draft.stash.save" | "draft.stash.list" | "draft.stash.restore" | "draft.stash.drop" | "agent.cancel" | "agent.terminate" | "agent.resume" | "agent.disconnect" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "account.switch.preview" | "account.switch" | "account.switch.list" | "terminal.appearance.get" | "terminal.appearance.set" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "terminal.close" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.branch" | "review.stash" | "review.merge" | "review.fetch" | "review.pull" | "review.push" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "review.feedback.send" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "worktree.carry.preview" | "worktree.carry" | "worktree.resources.apply" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "runtime.recovery" | "runtime.recovery.release" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "notification.preferences.get" | "notification.preferences.set" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.place" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "plugin.command.invoke" | "plugin.host.status" | "plugin.host.restart" | "plugin.dev.enter" | "plugin.dev.leave" | "plugin.generation.list" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.child.answer" | "orchestration.parent.send" | "orchestration.child.messages" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "resources.device.hold" | "resources.device.release" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "remote.host.install" | "retention.preview" | "retention.apply" | "retention.policy.get" | "retention.policy.set" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get" | "browser.partition.list" | "browser.partition.create" | "browser.import.preview" | "browser.import.run" | "browser.import.get" | "browser.context.capture" | "browser.click" | "browser.type" | "browser.evaluate" | "browser.wait" | "browser.screenshot" | "repository.coverage" | "repository.clone" | "repository.publish.preview" | "repository.publish" | "hook.subscription.list" | "hook.delivery.list" | "hook.delivery.inspect" | "hook.delivery.retry" | "hook.delivery.abandon" | "provider.capabilities" | "provider.readiness" | "provider.quota" | "provider.inspect" | "provider.registrations" | "preset.list" | "preset.get" | "preset.save" | "preset.delete" | "adapter.list" | "adapter.put" | "adapter.remove" | "adapter.probe" | "device.list" | "device.screenshot" | "device.boot" | "device.app.install" | "device.app.launch" | "device.input" | "placement.hosts" | "placement.check" | "placement.record" | "placement.resolve" | "placement.list" | "placement.release" | "command.list" | "command.invoke" | "context.capture" | "context.get" | "context.plan" | "window.list" | "window.create" | "window.close" | "window.reopen" | "window.claim" | "window.set_bounds" | "window.show_workspace" | "window.set_view_state" | "layout.get" | "layout.apply" | "tab.close" | "pane.close" | "settings.appearance.observe" | "settings.palettes" | "settings.appearance.reset" | "settings.appearance" | "settings.get" | "settings.set" | "themes.ghostty.export" | "themes.ghostty.validate" | "themes.warp.validate" | "themes.file.validate" | "themes.pack.export" | "themes.validate" | "themes.list" | "themes.inspect" | "themes.install" | "themes.rename" | "themes.export" | "themes.preview" | "themes.draft.preview" | "themes.removal" | "themes.remove"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
@@ -16899,6 +17651,7 @@ export interface RequestByOperation {
   "repository.rebind": RepositoryRebindRequest
   "conversation.get": ConversationGetRequest
   "conversation.history": ConversationHistoryRequest
+  "conversation.export": ConversationExportRequest
   "agent.send": AgentSendRequest
   "agent.answer": AgentAnswerRequest
   "conversation.create": ConversationCreateRequest
@@ -16920,6 +17673,8 @@ export interface RequestByOperation {
   "attachment.reclaim.preview": AttachmentReclaimPreviewRequest
   "attachment.reclaim.apply": AttachmentReclaimApplyRequest
   "conversation.controls": ConversationControlsRequest
+  "conversation.settings": ConversationSettingsRequest
+  "conversation.settings.update": ConversationSettingsUpdateRequest
   "conversation.steer": ConversationSteerRequest
   "conversation.compact": ConversationCompactRequest
   "conversation.rewind.preview": ConversationRewindPreviewRequest
@@ -16935,6 +17690,7 @@ export interface RequestByOperation {
   "draft.stash.restore": DraftStashRestoreRequest
   "draft.stash.drop": DraftStashDropRequest
   "agent.cancel": AgentCancelRequest
+  "agent.terminate": AgentTerminateRequest
   "agent.resume": AgentResumeRequest
   "agent.disconnect": AgentDisconnectRequest
   "agent.child_transcript": AgentChildTranscriptRequest
@@ -17219,6 +17975,7 @@ export interface ResponseByOperation {
   "repository.rebind": RepositoryAck
   "conversation.get": ConversationSnapshot
   "conversation.history": ConversationHistory
+  "conversation.export": ConversationExport
   "agent.send": Ack
   "agent.answer": AgentAnswerOutcome
   "conversation.create": ConversationCreated
@@ -17240,6 +17997,8 @@ export interface ResponseByOperation {
   "attachment.reclaim.preview": AttachmentReclaimPreviewReply
   "attachment.reclaim.apply": AttachmentReclaim
   "conversation.controls": ConversationControls
+  "conversation.settings": ConversationSettings
+  "conversation.settings.update": ConversationSettingsUpdated
   "conversation.steer": ConversationControlReply
   "conversation.compact": ConversationControlReply
   "conversation.rewind.preview": ConversationRewindPreview
@@ -17255,6 +18014,7 @@ export interface ResponseByOperation {
   "draft.stash.restore": DraftRestored
   "draft.stash.drop": DraftStashDropped
   "agent.cancel": AgentCancelOutcome
+  "agent.terminate": AgentTerminateOutcome
   "agent.resume": Ack
   "agent.disconnect": Ack
   "agent.child_transcript": ChildTranscriptPage

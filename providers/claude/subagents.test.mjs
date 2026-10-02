@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { Subagents } from './subagents.mjs'
-import { Bridge } from './bridge.mjs'
+import { BackgroundTasks, Subagents } from './subagents.mjs'
+import { Transcript } from './transcript.mjs'
 const start = {
   type: 'system',
   subtype: 'task_started',
@@ -43,64 +43,19 @@ test('non-agent tasks and unknown notifications cannot become child agents', () 
 })
 
 test('child messages cannot overwrite parent plans or enter its pending tool registry', () => {
-  const bridge = new Bridge({}, () => {})
-  assert.deepEqual(
-    bridge.content(
-      {
-        type: 'assistant',
-        parent_tool_use_id: 'spawn',
-        message: {
-          content: [
-            { type: 'text', text: 'Child response' },
-            { type: 'tool_use', id: 'child-call', name: 'TodoWrite', input: { todos: [] } },
-          ],
-        },
-      },
-      'parent',
-    ),
-    [],
-  )
-  assert.equal(bridge.toolCalls.size, 0)
-  assert.equal(bridge.todoCalls.size, 0)
-})
-
-test('child reader is paginated, parent scoped and excludes private thinking and image bytes', async () => {
-  const calls = []
-  const sdk = {
-    listSubagents: async (session) => {
-      assert.equal(session, 'parent')
-      return ['child']
-    },
-    getSubagentMessages: async (session, child, options) => {
-      calls.push({ session, child, options })
-      return Array.from({ length: 51 }, (_, i) => ({
-        uuid: `m${i}`,
-        type: 'assistant',
-        message: {
-          content: [
-            { type: 'text', text: `answer ${i}` },
-            { type: 'thinking', thinking: 'PRIVATE' },
-            { type: 'image', source: { data: 'SECRET' } },
-          ],
-        },
-      }))
+  const transcript = new Transcript('parent')
+  const message = {
+    type: 'assistant',
+    parent_tool_use_id: 'spawn',
+    message: {
+      content: [
+        { type: 'text', text: 'Child response' },
+        { type: 'tool_use', id: 'child-call', name: 'TodoWrite', input: { todos: [] } },
+      ],
     },
   }
-  const bridge = new Bridge(sdk, () => {})
-  bridge.session = 'parent'
-  bridge.query = {}
-  const page = await bridge.child_transcript({ session: 'parent', child: 'child', offset: 50 })
-  assert.equal(page.next_offset, 100)
-  assert.equal(page.items.length, 100)
-  assert.equal(calls[0].options.limit, 51)
-  assert.equal(calls[0].options.offset, 50)
-  assert.ok(!JSON.stringify(page).includes('PRIVATE'))
-  assert.ok(!JSON.stringify(page).includes('SECRET'))
-  assert.equal(bridge.toolCalls.size, 0)
-  await assert.rejects(bridge.child_transcript({ session: 'other', child: 'child' }), /parent/)
-  await assert.rejects(bridge.child_transcript({ session: 'parent', child: '../child' }), /selector/)
-  await assert.rejects(bridge.child_transcript({ session: 'parent', child: 'unknown' }), /not available/)
-  assert.equal(calls.length, 1)
+  assert.deepEqual([...transcript.project(message)], [])
+  assert.equal(transcript.calls.size, 0)
 })
 
 test('resumed Claude child keeps its identity and accepts the new invocation lifecycle', () => {
@@ -140,4 +95,16 @@ test('unrelated or unowned starts cannot reopen a completed Claude child', () =>
     )
   }
   assert.equal(tasks.consume({ ...start, tool_use_id: 'new-call' }, null), null)
+})
+
+test('background tasks count every native task type and report only changes', () => {
+  const tasks = new BackgroundTasks()
+  const system = (subtype, task_id, extra = {}) => ({ type: 'system', subtype, task_id, ...extra })
+  assert.equal(tasks.observe(system('task_started', 'bash-1', { task_type: 'local_bash' })), 1)
+  assert.equal(tasks.observe(system('task_started', 'agent-1', { task_type: 'local_agent' })), 2)
+  assert.equal(tasks.observe(system('task_progress', 'bash-1')), null)
+  assert.equal(tasks.observe(system('task_started', 'bash-1')), null)
+  assert.equal(tasks.observe(system('task_notification', 'bash-1', { status: 'completed' })), 1)
+  assert.equal(tasks.observe(system('task_notification', 'agent-1', { status: 'failed' })), 0)
+  assert.equal(tasks.observe({ type: 'assistant' }), null)
 })

@@ -1,7 +1,7 @@
 import { afterEach, expect, test, vi } from 'vitest'
 import { userEvent } from 'vitest/browser'
 import { createStore } from 'zustand/vanilla'
-import type { AgentCancelOutcome, PendingRequest } from '@ade/contracts'
+import type { AgentCancelOutcome, AgentTerminateOutcome, ConversationStop, PendingRequest } from '@ade/contracts'
 
 import type { DaemonState } from '../../../state/daemon-store'
 import type { ProfileState } from '../../../../../shared/bridge/types'
@@ -82,46 +82,61 @@ test('stale conversation projections disable native request effects', async () =
   reload.resolve(reply)
 })
 
-test('Stop targets the live attempt and submission without a turn wildcard, and reports returned evidence', async () => {
+function stopRecord(overrides: Partial<ConversationStop> = {}): ConversationStop {
+  return {
+    operation_id: 'stop-op-1',
+    source_attempt_id: 'attempt-live-7',
+    submission_id: 'submission-live-19',
+    turn_id: null,
+    requested_at_ms: 1730000000000,
+    delivery: 'pending',
+    outcome: 'requested',
+    confirmation: null,
+    native_status: null,
+    evidence: null,
+    reason: null,
+    escalation: null,
+    settled_at_ms: null,
+    ...overrides,
+  }
+}
+
+test('Stop targets the live attempt and submission without a turn wildcard and offers termination when unresolved', async () => {
   previousHost = window.adeHost
   const id = 'conversation-stop-exact-target'
   const base = emptySnapshot(id)
-  const reply = {
-    ...base,
-    conversation: {
-      ...base.conversation,
-      status: 'running',
-      runtime_run: 'attempt-live-7',
-      runtime_submission: 'submission-live-19',
-      active_turn_id: null,
-    },
+  const running = {
+    ...base.conversation,
+    status: 'running',
+    runtime_run: 'attempt-live-7',
+    runtime_submission: 'submission-live-19',
+    active_turn_id: null,
   }
+  const reply = { ...base, conversation: running }
   const fake = createFakeHost(async (op, fields) => {
     if (op === 'conversation.get') return reply
     if (op === 'agent.cancel') {
-      const request = fields as {
-        operation_id: string
-        source_attempt_id: string
-        submission_id: string
-        turn_id?: string
-      }
-      const outcome: AgentCancelOutcome = {
+      const request = fields as { operation_id: string; source_attempt_id: string; submission_id: string }
+      return {
         type: 'agent_cancel_outcome',
         conversation_id: id,
         operation_id: request.operation_id,
         source_attempt_id: request.source_attempt_id,
         submission_id: request.submission_id,
-        evidence: {
-          scope: 'submission',
-          interruption_requested: true,
-          termination: 'requested',
-          active_work_remaining: true,
-          queued_work_count: 2,
-          background_work_remaining: null,
-          observed_at_ms: 1730000000000,
-        },
-      }
-      return outcome
+        delivery: 'pending',
+        evidence: null,
+      } satisfies AgentCancelOutcome
+    }
+    if (op === 'agent.terminate') {
+      const request = fields as { operation_id: string; source_attempt_id: string }
+      return {
+        type: 'agent_terminate_outcome',
+        conversation_id: id,
+        operation_id: request.operation_id,
+        source_attempt_id: request.source_attempt_id,
+        process_exited: true,
+        limits: ['Child or background processes the provider started may survive the provider process'],
+      } satisfies AgentTerminateOutcome
     }
     return {}
   })
@@ -136,27 +151,78 @@ test('Stop targets the live attempt and submission without a turn wildcard, and 
     submission_id: 'submission-live-19',
   })
   expect(cancelRequest).not.toHaveProperty('turn_id')
-  const evidence = screen.getByRole('status', { name: 'Cancellation evidence' })
-  expect(evidence.element().textContent).toContain(
-    'Scope: submission; interruption requested: yes; termination: requested; active work remaining: yes; queued work count: 2; background work remaining: unknown; observed at (ms): 1730000000000.',
+
+  // The daemon reports the acknowledgement, then that queued native input can still run.
+  const push = (revision: number, stop: ConversationStop) =>
+    fake.pushFrame({
+      type: 'conversation_changed',
+      boot_id: 'boot-1',
+      revision,
+      conversation: { ...running, status: 'cancelling', stop },
+      messages: reply.messages,
+      requests: reply.requests,
+    })
+  push(2, stopRecord({ delivery: 'acknowledged' }))
+  const status = screen.getByRole('status', { name: 'Stop status' })
+  await expect
+    .poll(() => status.element().textContent)
+    .toContain('The provider acknowledged the stop. Waiting for the turn to end.')
+  await expect.element(screen.getByRole('button', { name: 'Stopping…' })).toBeDisabled()
+  expect(document.body.textContent).not.toMatch(/\bstopped\b/i)
+  push(
+    3,
+    stopRecord({
+      delivery: 'acknowledged',
+      outcome: 'unresolved',
+      reason: '2 queued inputs can still run after this stop',
+      escalation: 'terminate_process',
+      evidence: {
+        scope: 'submission',
+        interruption_requested: true,
+        termination: 'requested',
+        active_work_remaining: true,
+        queued_work_count: 2,
+        background_work_remaining: null,
+        observed_at_ms: 1730000000000,
+      },
+    }),
   )
-  expect(evidence.element().textContent).not.toMatch(/\bstopped\b/i)
+  await expect.element(status).toHaveAttribute('data-stop-outcome', 'unresolved')
+  await expect.poll(() => status.element().textContent).toContain('2 queued inputs can still run after this stop')
+  await expect.poll(() => status.element().textContent).toContain('Queued inputs: 2.')
+  await screen.getByRole('button', { name: 'Terminate provider process' }).click()
+  await expect.poll(() => fake.requests.filter(({ op }) => op === 'agent.terminate').length).toBe(1)
+  expect(fake.requests.find(({ op }) => op === 'agent.terminate')!.fields).toMatchObject({
+    conversation_id: id,
+    source_attempt_id: 'attempt-live-7',
+  })
+  // The window shows the terminate request; the daemon's Stop record then reports the exit.
+  push(
+    4,
+    stopRecord({
+      delivery: 'acknowledged',
+      outcome: 'confirmed',
+      confirmation: 'process_exit',
+      settled_at_ms: 1730000001000,
+    }),
+  )
+  await expect
+    .poll(() => status.element().textContent)
+    .toContain('The provider process ended. Child or background processes it started may still be running.')
 })
 
-test('Stop forwards the live turn identity when the projection has one', async () => {
+test('Stop forwards the live turn identity and shows confirmation only from native terminal evidence', async () => {
   previousHost = window.adeHost
   const id = 'conversation-stop-with-turn'
   const base = emptySnapshot(id)
-  const reply = {
-    ...base,
-    conversation: {
-      ...base.conversation,
-      status: 'running',
-      runtime_run: 'attempt-live-8',
-      runtime_submission: 'submission-live-20',
-      active_turn_id: 'turn-live-3',
-    },
+  const running = {
+    ...base.conversation,
+    status: 'running',
+    runtime_run: 'attempt-live-8',
+    runtime_submission: 'submission-live-20',
+    active_turn_id: 'turn-live-3',
   }
+  const reply = { ...base, conversation: running }
   const fake = createFakeHost(async (op, fields) => {
     if (op === 'conversation.get') return reply
     if (op === 'agent.cancel') {
@@ -173,15 +239,8 @@ test('Stop forwards the live turn identity when the projection has one', async (
         source_attempt_id: request.source_attempt_id,
         submission_id: request.submission_id,
         turn_id: request.turn_id,
-        evidence: {
-          scope: 'turn',
-          interruption_requested: false,
-          termination: 'unknown',
-          active_work_remaining: null,
-          queued_work_count: null,
-          background_work_remaining: null,
-          observed_at_ms: null,
-        },
+        delivery: 'acknowledged',
+        evidence: null,
       } satisfies AgentCancelOutcome
     }
     return {}
@@ -195,10 +254,53 @@ test('Stop forwards the live turn identity when the projection has one', async (
     submission_id: 'submission-live-20',
     turn_id: 'turn-live-3',
   })
-  expect(screen.getByRole('status', { name: 'Cancellation evidence' }).element().textContent).toContain(
-    'termination: unknown',
-  )
-  expect(document.body.textContent).not.toMatch(/\bstopped\b/i)
+  fake.pushFrame({
+    type: 'conversation_changed',
+    boot_id: 'boot-1',
+    revision: 2,
+    conversation: {
+      ...running,
+      status: 'interrupted',
+      active_turn_id: null,
+      stop: stopRecord({
+        source_attempt_id: 'attempt-live-8',
+        submission_id: 'submission-live-20',
+        turn_id: 'turn-live-3',
+        delivery: 'acknowledged',
+        outcome: 'confirmed',
+        confirmation: 'native_terminal',
+        native_status: 'interrupted',
+        settled_at_ms: 1730000000500,
+      }),
+    },
+    messages: reply.messages,
+    requests: reply.requests,
+  })
+  const status = screen.getByRole('status', { name: 'Stop status' })
+  await expect.element(status).toHaveAttribute('data-stop-outcome', 'confirmed')
+  await expect.poll(() => status.element().textContent).toContain('The provider reported the turn ended (interrupted).')
+  await expect.element(screen.getByRole('button', { name: 'Terminate provider process' })).not.toBeInTheDocument()
+  await expect.element(screen.getByRole('button', { name: 'Stop current turn' })).not.toBeInTheDocument()
+})
+
+test('Stop is hidden once the submission has ended, even though its identity is retained', async () => {
+  previousHost = window.adeHost
+  const id = 'conversation-stop-idle'
+  const base = emptySnapshot(id)
+  const reply = {
+    ...base,
+    conversation: {
+      ...base.conversation,
+      status: 'ready',
+      runtime_run: 'attempt-idle',
+      runtime_submission: 'submission-finished',
+      active_turn_id: null,
+    },
+  }
+  const fake = createFakeHost(async (op) => (op === 'conversation.get' ? reply : {}))
+  const screen = await mount(fake, id, 'tab-stop-idle')
+  await expect.element(screen.getByRole('button', { name: 'Open in another tab' })).toBeVisible()
+  await expect.element(screen.getByRole('button', { name: 'Stop current turn' })).not.toBeInTheDocument()
 })
 
 test('a rejected delivery after daemon acknowledgement leaves the prompt actionable', async () => {
@@ -237,6 +339,10 @@ test('a rejected delivery after daemon acknowledgement leaves the prompt actiona
   expect(prompt.element().textContent ?? '').toContain(first.text)
   await screen.getByRole('button', { name: 'Edit or retry prompt' }).click()
   await expect.element(screen.getByRole('button', { name: 'Send prompt' })).toBeEnabled()
+  // Unlocking makes the editor editable and moves focus to its end in an effect; filling
+  // before that settles appends to the old text instead of replacing it.
+  await expect.poll(() => prompt.element().getAttribute('contenteditable')).toBe('true')
+  await expect.poll(() => document.activeElement === prompt.element()).toBe(true)
   await prompt.fill('Keep this prompt revised')
   await expect.poll(() => prompt.element().textContent).toContain('Keep this prompt revised')
   await userEvent.keyboard('{Enter}')
@@ -285,6 +391,28 @@ test('unknown delivery retains and reconciles the same request ID', async () => 
   expect((retry.fields as { request_id: string }).request_id).toBe(requestId)
   expect(fake.requests.filter(({ op }) => op === 'agent.send')).toHaveLength(0)
   await expect.element(screen.getByText('Request ID: ' + requestId)).toBeVisible()
+  expect(screen.getByRole('textbox', { name: 'Prompt' }).element().textContent ?? '').toContain(text)
+})
+
+test('a send the daemon refused before admission is editable, never an unknown delivery', async () => {
+  previousHost = window.adeHost
+  const id = 'conversation-refused'
+  const text = 'Look at this image'
+  const fake = createFakeHost(async (op) => {
+    if (op === 'conversation.get') return emptySnapshot(id)
+    if (op === 'agent.send') throw new Error('Attachment refused before sending: large.png is too large')
+    return {}
+  })
+  // Main released the refused intent, so the draft has no pending send.
+  const screen = await mount(fake, id, 'tab-refused', draftState(text))
+  await expect.element(screen.getByText('No retained messages yet.')).toBeVisible()
+  await screen.getByRole('button', { name: 'Send prompt' }).click()
+  await expect
+    .element(screen.getByText('This prompt was not sent. Attachment refused before sending: large.png is too large'))
+    .toBeVisible()
+  await expect.element(screen.getByRole('button', { name: 'Edit or retry prompt' })).toBeVisible()
+  await expect.element(screen.getByRole('button', { name: 'Reconcile delivery' })).not.toBeInTheDocument()
+  expect(fake.requests.filter(({ op }) => op === 'agent.send')).toHaveLength(1)
   expect(screen.getByRole('textbox', { name: 'Prompt' }).element().textContent ?? '').toContain(text)
 })
 
@@ -617,9 +745,10 @@ test('closing a view flushes its draft when the profile and account context stil
   await prompt.click()
   await userEvent.keyboard('Persist this draft on close')
   await screen.unmount()
-  await expect.poll(() => fake.requests.filter(({ op }) => op === 'draft.save').length).toBe(1)
-  const save = fake.requests.find(({ op }) => op === 'draft.save')!
-  expect((save.fields as { text: string }).text).toBe('Persist this draft on close')
+  // Edits are written as they happen; closing must still save the last of them.
+  const saves = () =>
+    fake.requests.filter(({ op }) => op === 'draft.save').map(({ fields }) => (fields as { text: string }).text)
+  await expect.poll(() => saves().at(-1)).toBe('Persist this draft on close')
 })
 
 test('an account switch while a draft save settles prevents a waiting prompt from being sent', async () => {

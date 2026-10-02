@@ -63,6 +63,23 @@
   },
   "overrides": [
     {
+      // Provider and backend execution stays headless: UI contributions load only in the desktop renderer.
+      "files": ["packages/provider-sdk/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["react", "react/*", "react-dom", "react-dom/*", "electron", "electron/*"],
+                "message": "The provider SDK runs headlessly. UI contributions belong to a plugin's ui entry point."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
       "files": ["**/*.test.*", "**/*.spec.*"],
       "rules": {
         // node:test's test() returns a promise that is meant to float.

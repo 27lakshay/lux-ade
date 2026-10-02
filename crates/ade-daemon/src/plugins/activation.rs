@@ -75,6 +75,8 @@ impl std::fmt::Display for RegistryError {
                 let kind = match kind {
                     PluginRegistrationKind::Command => "command",
                     PluginRegistrationKind::Panel => "panel",
+                    PluginRegistrationKind::Timeline => "timeline renderer",
+                    PluginRegistrationKind::Composer => "composer contribution",
                 };
                 write!(f, "The {kind} {id} is already registered by plugin {owner}")
             }

@@ -83,30 +83,64 @@ fn write_server(connection: &Connection, server: &Server) -> Result<()> {
     Ok(())
 }
 
-fn provider_ids() -> Vec<&'static str> {
-    provider::descriptors()
-        .iter()
-        .map(|descriptor| descriptor.id.as_str())
-        .collect()
+/// A provider the catalog can target, and whether its worker receives the
+/// catalog: it declares `configure_mcp` available.
+pub(super) struct McpProvider {
+    id: String,
+    wired: bool,
 }
 
 impl Sessions {
     pub(super) fn mcp_command(self: &Arc<Self>, request: &Value) -> Result<Value> {
+        // A plugin's wiring comes from its worker's handshake; gather it outside the lock.
+        self.discover_plugin_providers();
         let data = self.data.lock().unwrap();
-        persistence_result(mcp_command(&data.store, request))
+        let providers = self.mcp_providers(&data);
+        persistence_result(mcp_command(&data.store, request, &providers))
+    }
+
+    /// Whether `provider`'s worker declares `configure_mcp` available, so it
+    /// receives the resolved catalog at launch and resume.
+    pub(super) fn mcp_wired(&self, d: &Data, provider: &str) -> bool {
+        use ade_core::contract::providers::{ProviderWorkerAvailability, ProviderWorkerMethod};
+        self.declared_operations(d, provider)
+            .is_ok_and(|operations| {
+                operations.iter().any(|operation| {
+                    operation.method == ProviderWorkerMethod::ConfigureMcp
+                        && operation.availability == ProviderWorkerAvailability::Available
+                })
+            })
+    }
+
+    /// The bundled providers and every live plugin provider, in catalogue order.
+    fn mcp_providers(&self, d: &Data) -> Vec<McpProvider> {
+        let mut ids: Vec<String> = provider::descriptors()
+            .iter()
+            .map(|descriptor| descriptor.id.clone())
+            .collect();
+        if let Ok(workers) = self.live_workers() {
+            ids.extend(workers.into_iter().map(|(_, worker)| worker.provider));
+        }
+        ids.into_iter()
+            .map(|id| McpProvider {
+                wired: self.mcp_wired(d, &id),
+                id,
+            })
+            .collect()
     }
 }
 
 /// The provider-native server map a new Agent launches with: the same
-/// resolution `mcp.resolve` reports, for a provider whose adapter passes it.
-/// `None` when the provider is not wired or no server applies, so a launch
-/// without catalog entries is unchanged.
+/// resolution `mcp.resolve` reports, for a provider whose worker receives it
+/// (`wired`). `None` when the provider is not wired or no server applies, so
+/// a launch without catalog entries is unchanged.
 pub(super) fn launch_servers(
     store: &Store,
     workspace: &WorkspaceRecord,
     provider: &str,
+    wired: bool,
 ) -> Result<Option<Value>> {
-    if !catalog::WIRED_PROVIDERS.contains(&provider) {
+    if !wired {
         return Ok(None);
     }
     ensure(&store.connection)?;
@@ -123,14 +157,14 @@ pub(super) fn launch_servers(
     if resolution.servers.is_empty() {
         return Ok(None);
     }
-    Ok(resolution.document.and_then(|document| {
-        document
-            .as_object()
-            .and_then(|object| object.values().next().cloned())
-    }))
+    Ok(resolution
+        .document
+        .as_object()
+        .and_then(|object| object.values().next().cloned()))
 }
 
-fn mcp_command(store: &Store, request: &Value) -> Result<Value> {
+fn mcp_command(store: &Store, request: &Value, providers: &[McpProvider]) -> Result<Value> {
+    let provider_ids: Vec<&str> = providers.iter().map(|p| p.id.as_str()).collect();
     let connection = &store.connection;
     match request["op"].as_str().unwrap_or("") {
         "mcp.server.list" => {
@@ -146,15 +180,15 @@ fn mcp_command(store: &Store, request: &Value) -> Result<Value> {
             ensure(connection)?;
             let server = read_server(connection, &inspect.name)?
                 .with_context(|| format!("Unknown MCP server {}", inspect.name))?;
-            let providers = catalog::PROJECTED_PROVIDERS
+            let providers = providers
                 .iter()
                 .map(|provider| {
-                    let projection = catalog::project(&server.definition.transport, provider);
+                    let projection = catalog::project(&server.definition.transport, &provider.id);
                     ProviderSupport {
-                        provider: (*provider).to_owned(),
+                        provider: provider.id.clone(),
                         unsupported_reason: projection.as_ref().err().cloned(),
                         native: projection.ok(),
-                        wired: catalog::WIRED_PROVIDERS.contains(provider),
+                        wired: provider.wired,
                     }
                 })
                 .collect();
@@ -168,7 +202,7 @@ fn mcp_command(store: &Store, request: &Value) -> Result<Value> {
         "mcp.server.add" => {
             let add: McpServerAddRequest = decode(request)?;
             catalog::validate_name(&add.name)?;
-            catalog::validate(&add.definition, &provider_ids())?;
+            catalog::validate(&add.definition, &provider_ids)?;
             check_scope(store, &add.definition, None)?;
             let tx = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)?;
             ensure(&tx)?;
@@ -199,7 +233,7 @@ fn mcp_command(store: &Store, request: &Value) -> Result<Value> {
         "mcp.server.update" => {
             let update: McpServerUpdateRequest = decode(request)?;
             catalog::validate_name(&update.name)?;
-            catalog::validate(&update.definition, &provider_ids())?;
+            catalog::validate(&update.definition, &provider_ids)?;
             let tx = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)?;
             ensure(&tx)?;
             let current = read_server(&tx, &update.name)?
@@ -262,10 +296,10 @@ fn mcp_command(store: &Store, request: &Value) -> Result<Value> {
             let resolve: McpResolveRequest = decode(request)?;
             let workspace_id = non_empty("workspace_id", &resolve.workspace_id)?;
             let provider = non_empty("provider", &resolve.provider)?;
-            ensure!(
-                provider_ids().contains(&provider),
-                ade_core::error::ProviderNotFound(provider.to_owned())
-            );
+            let known = providers
+                .iter()
+                .find(|known| known.id == provider)
+                .ok_or_else(|| ade_core::error::ProviderNotFound(provider.to_owned()))?;
             let workspace = store.workspace(workspace_id)?;
             ensure(connection)?;
             let servers = read_all(connection)?;
@@ -283,7 +317,7 @@ fn mcp_command(store: &Store, request: &Value) -> Result<Value> {
                 workspace_id: workspace.id,
                 provider: provider.to_owned(),
                 delivery: "direct".into(),
-                wired: catalog::WIRED_PROVIDERS.contains(&provider),
+                wired: known.wired,
                 servers: resolution.servers,
                 excluded: resolution.excluded,
                 document: resolution.document,

@@ -39,6 +39,10 @@
     "./journals": {
       "types": "./dist/journals.d.ts",
       "default": "./dist/journals.js"
+    },
+    "./export": {
+      "types": "./dist/export.d.ts",
+      "default": "./dist/export.js"
     }
   },
   "nx": {

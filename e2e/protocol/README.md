@@ -88,9 +88,10 @@ test('a Codex turn reaches the transcript', async ({ profile, repo }) => {
 | `fixtures/browser-owner`: `startBrowserOwner` | A scripted browser owner on a private socket; `register()` registers it again, as the desktop owner does after a new daemon `boot_id`. |
 | `fixtures/faulty-plugin`: `stageFaultyPlugin`, `breakActivation`, `healActivation` | A backend plugin whose activation throws, exits or hangs while a switch file exists, with commands that freeze its host and flood its log. |
 
-The provider mocks are `scripts/fixtures/codex_mock.py` and
-`scripts/fixtures/claude_mock.mjs`, which serves `providers/claude/fake-sdk.mjs`.
-Read them for the complete list of scripted prompts. Neither mock calls a model.
+The provider mocks are `scripts/fixtures/codex_mock.py` and the Claude worker's SDK double
+`providers/claude/worker-test-sdk.mjs` (named by `ADE_E2E_CLAUDE_SDK`; scripted turns in
+`worker-test-scenarios.mjs`). Read them for the complete list of scripted prompts. Neither mock
+calls a model.
 
 ## Rules
 

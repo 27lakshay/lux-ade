@@ -243,8 +243,15 @@ pub struct AgentRequest {
 #[serde(tag = "op")]
 pub enum AgentOp {
     /// Probe an account; `account` is an `ade_core::model::AccountExecution`.
+    /// For a plugin provider, `worker` is the `ProviderWorker` whose
+    /// `account_inspect` reads the account; a bundled provider's account probe
+    /// needs none.
     #[serde(rename = "agent.account_inspect")]
-    AccountInspect { account: Value },
+    AccountInspect {
+        account: Value,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        worker: Option<Value>,
+    },
     /// Read-only initialize/descriptor inspection for an installed provider artifact.
     #[serde(rename = "agent.provider_inspect")]
     ProviderInspect { worker: Value },
@@ -635,6 +642,7 @@ mod tests {
             (
                 AgentOp::AccountInspect {
                     account: json!({"provider": "codex"}),
+                    worker: None,
                 },
                 json!({"op": "agent.account_inspect", "account": {"provider": "codex"}}),
             ),

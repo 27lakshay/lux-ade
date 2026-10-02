@@ -162,10 +162,19 @@ test('a cancellation whose provider reply fails after the turn ended does not fa
   const { conversationId } = await startConversation(profile, 'codex')
   await runningTurn(profile, conversationId)
   await profile.releaseMock('codex', 'hold-interrupt-reply')
-  await cancelActiveSubmission(profile, conversationId)
-  // The provider interrupted the turn, but its reply to the cancel is held.
+  // The provider interrupted the turn, but its reply to the cancel is held:
+  // the daemon answers within its bound instead of waiting on the provider.
+  const started = Date.now()
+  const pending = await cancelActiveSubmission(profile, conversationId)
+  expect(Date.now() - started).toBeLessThan(15_000)
+  expect(pending).toMatchObject({ delivery: 'pending', evidence: null })
   await expect.poll(() => exists(join(directory, 'interrupt-held'))).toBe(true)
   await waitForStatus(profile, conversationId, 'interrupted')
+  expect((await conversation(profile, conversationId)).stop).toMatchObject({
+    operation_id: pending.operation_id,
+    outcome: 'confirmed',
+    confirmation: 'native_terminal',
+  })
 
   const second = await runningTurn(profile, conversationId)
   const provider = (await profile.mockCalls('codex')).at(-1)!.pid
@@ -221,4 +230,25 @@ test('a late provider reply to a finished turn neither fails nor replaces its su
     expect((await conversation(profile, conversationId)).error ?? null).toBeNull()
     await profile.call('queue.pause', { conversation_id: conversationId, paused: false })
   }
+})
+
+test('a delivered cancellation stays cancelling across a daemon crash until the native turn ends', async ({
+  profile,
+}) => {
+  const { conversationId } = await startConversation(profile, 'codex')
+  const turn = await runningTurn(profile, conversationId)
+  // The provider acknowledges the interrupt but has not yet ended the turn.
+  await profile.releaseMock('codex', 'defer-interrupt')
+  await cancelActiveSubmission(profile, conversationId)
+  expect(await interruptedTurns(profile)).toEqual([turn])
+  expect(await conversation(profile, conversationId)).toMatchObject({ status: 'cancelling', active_turn_id: turn })
+
+  await profile.restartDaemon('kill')
+  const recovered = await conversation(profile, conversationId)
+  expect(recovered).toMatchObject({ status: 'cancelling', active_turn_id: turn })
+  expect(recovered.error ?? null).toBeNull()
+
+  await profile.releaseMock('codex', 'finish-interrupt')
+  await waitForStatus(profile, conversationId, 'interrupted')
+  expect(await interruptedTurns(profile)).toEqual([turn])
 })

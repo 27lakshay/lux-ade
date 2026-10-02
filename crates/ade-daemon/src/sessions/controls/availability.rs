@@ -1,78 +1,74 @@
 //! Which conversation controls may run, decided from facts alone (D04).
 //!
-//! A control is available only when the Conversation's provider adapter
-//! performs it through a native method, or, for file rewind, when ADE's
-//! checkpoints do. The table below records what each adapter in
-//! `crates/ade-runtime` actually calls today, checked against the pinned
-//! provider protocols: Codex 0.157.0 app-server, Claude Agent SDK 0.3.281,
-//! Oh My Pi 18.3.0 RPC and ADE's OpenCode v2 bridge. A protocol method that
-//! the adapter does not call is unavailable, and the reason says so.
+//! A control other than file rewind is available only when the
+//! Conversation's provider worker declares the operation that performs it
+//! (`steer`, `compact`, `rewind`) available; otherwise it is unavailable with
+//! the worker's own reason. Every worker-backed provider is decided the same
+//! way, bundled or installed: Codex, Claude and Oh My Pi by the descriptor
+//! their workers answer `initialize` with, a plugin by the operations its
+//! worker declared at its last handshake, and a generic ACP adapter by the
+//! descriptor its probe recorded. No provider is decided by its name. File
+//! rewind runs through ADE's checkpoints for every provider.
+//!
+//! The mechanism reported for a worker control is the worker operation the
+//! daemon calls (`worker.steer`, `worker.compact`, `worker.rewind`). Which
+//! native method a worker uses for it is the worker's own business.
 use ade_core::contract::conversations::{ControlAvailability, ConversationControl};
+use ade_core::contract::providers::{
+    ProviderWorkerAvailability, ProviderWorkerMethod, ProviderWorkerOperation,
+};
 
 /// The mechanism that performs file rewind for every provider.
 pub const CHECKPOINTS: &str = "ade.checkpoints";
 
+/// What a provider's worker declares, or why nothing is declared.
+pub type Declared<'a> = Result<&'a [ProviderWorkerOperation], &'a str>;
+
 /// What the daemon knows about a Conversation when it decides.
 #[derive(Clone, Copy, Debug)]
 pub struct Facts<'a> {
-    pub provider: &'a str,
     pub status: &'a str,
     pub active_turn: Option<&'a str>,
     /// The daemon holds a live runtime connection to the Conversation's Agent.
     pub connected: bool,
+    /// The operations the provider's worker declares, which decide its
+    /// controls; or why the provider has no declaration, such as a plugin
+    /// whose worker has not completed a handshake.
+    pub declared: Declared<'a>,
 }
 
-/// The native method an adapter calls for `control`, or why it has none.
-pub fn native(provider: &str, control: ConversationControl) -> Result<&'static str, String> {
+/// The worker operation that performs `control`, and the mechanism name the
+/// daemon reports for it.
+fn operation(control: ConversationControl) -> Option<(ProviderWorkerMethod, &'static str)> {
     use ConversationControl::*;
-    let missing = |text: &str| Err(text.to_owned());
-    match (provider, control) {
-        (_, RewindFiles) => Ok(CHECKPOINTS),
-        ("codex", Steer) => Ok("turn/steer"),
-        ("codex", Compact) => Ok("thread/compact/start"),
-        // thread/fork with lastTurnId, which also forks legacy threads;
-        // thread/revert rewrites only paginated ones and thread/rollback was removed.
-        ("codex", RewindConversation) => Ok("codex.thread_fork"),
-        ("claude", Steer) => {
-            missing("ADE's Claude adapter admits one turn at a time and has no native steer path")
+    match control {
+        Steer => Some((ProviderWorkerMethod::Steer, "worker.steer")),
+        Compact => Some((ProviderWorkerMethod::Compact, "worker.compact")),
+        RewindConversation => Some((ProviderWorkerMethod::Rewind, "worker.rewind")),
+        RewindFiles => None,
+    }
+}
+
+/// The mechanism that performs `control` for this provider, or why it has none.
+pub fn native(
+    declared: Declared<'_>,
+    control: ConversationControl,
+) -> Result<&'static str, String> {
+    let Some((method, mechanism)) = operation(control) else {
+        return Ok(CHECKPOINTS);
+    };
+    let operations = declared.map_err(str::to_owned)?;
+    match operations
+        .iter()
+        .find(|operation| operation.method == method)
+    {
+        Some(operation) if operation.availability == ProviderWorkerAvailability::Available => {
+            Ok(mechanism)
         }
-        ("claude", Compact) => {
-            missing("ADE's Claude adapter does not issue Claude Code's compaction command yet")
-        }
-        ("claude", RewindConversation) => Ok("claude.fork_session"),
-        ("omp", Steer) => missing(
-            "Oh My Pi RPC has steer, but ADE's adapter cannot yet bind a steered entry to its submission ledger",
-        ),
-        ("omp", Compact) => {
-            missing("Oh My Pi RPC has compact, but ADE's adapter does not call it yet")
-        }
-        ("omp", RewindConversation) => {
-            missing("Oh My Pi RPC has branch, but ADE's adapter does not call it yet")
-        }
-        ("opencode", Steer) => missing("ADE's OpenCode adapter has no native steer path"),
-        ("opencode", Compact) => {
-            missing("ADE's OpenCode adapter does not call OpenCode's compaction yet")
-        }
-        ("opencode", RewindConversation) => {
-            missing("ADE's OpenCode adapter does not call OpenCode's revert yet")
-        }
-        (adapter, control) if adapter.starts_with("adapter:") => match control {
-            Steer => missing(
-                "Generic ACP and custom executable adapters have no native steer path; ACP v1 has no steer method",
-            ),
-            Compact => missing(
-                "Generic adapters cannot compact: ACP v1 has no compaction method, and a custom executable has none",
-            ),
-            _ => missing("Generic adapters cannot resume at an earlier message"),
-        },
-        (plugin, control) if plugin.starts_with("plugin:") => match control {
-            Steer => missing(
-                "ADE does not admit steering for provider plugin workers yet; their handshake is not checked before admission",
-            ),
-            Compact => missing("The provider worker protocol v1 has no compaction method"),
-            _ => missing("The provider worker protocol v1 cannot resume at an earlier message"),
-        },
-        (other, _) => Err(format!("Unknown provider {other}")),
+        Some(operation) if !operation.reason.is_empty() => Err(operation.reason.clone()),
+        _ => Err(format!(
+            "The provider's worker does not declare {mechanism}"
+        )),
     }
 }
 
@@ -105,7 +101,7 @@ fn state_refusal(facts: &Facts, control: ConversationControl) -> Option<&'static
 /// Whether `control` may run now. Provider support is checked first, so an
 /// unsupported control always reports its limitation.
 pub fn decide(facts: &Facts, control: ConversationControl) -> ControlAvailability {
-    let (mechanism, reason) = match native(facts.provider, control) {
+    let (mechanism, reason) = match native(facts.declared, control) {
         Err(reason) => (None, Some(reason)),
         Ok(mechanism) => (
             Some(mechanism.to_owned()),
@@ -133,24 +129,116 @@ mod tests {
     use super::*;
     use ConversationControl::*;
 
-    fn facts(provider: &'static str, status: &'static str) -> Facts<'static> {
+    /// A bundled provider's declaration: the descriptor its worker answers
+    /// `initialize` with.
+    fn bundled(provider: &str) -> &'static [ProviderWorkerOperation] {
+        use ade_runtime::provider::registry::bundled;
+        let descriptor = bundled()
+            .get(provider)
+            .and_then(|registered| registered.entry.worker_descriptor())
+            .expect("a bundled worker descriptor");
+        Box::leak(descriptor.operations.into_boxed_slice())
+    }
+
+    fn facts(provider: &str, status: &'static str) -> Facts<'static> {
         Facts {
-            provider,
             status,
             active_turn: matches!(status, "running" | "waiting" | "cancelling").then_some("turn_1"),
             connected: true,
+            declared: Ok(bundled(provider)),
         }
     }
 
     #[test]
-    fn codex_steers_a_running_turn_and_compacts_when_idle() {
-        let steer = decide(&facts("codex", "running"), Steer);
+    fn a_plugin_worker_gets_the_controls_it_declares_with_its_own_reasons() {
+        let operation = |method, availability, reason: &str| ProviderWorkerOperation {
+            method,
+            tier: ade_core::contract::Tier::EffectCommand,
+            availability,
+            reason: reason.into(),
+        };
+        let declared = [
+            operation(
+                ProviderWorkerMethod::Steer,
+                ProviderWorkerAvailability::Available,
+                "",
+            ),
+            operation(
+                ProviderWorkerMethod::Compact,
+                ProviderWorkerAvailability::Unsupported,
+                "This agent has no compaction",
+            ),
+        ];
+        let plugin = |status| Facts {
+            declared: Ok(&declared),
+            ..facts("codex", status)
+        };
+        let steer = decide(&plugin("running"), Steer);
         assert!(steer.available);
-        assert_eq!(steer.mechanism.as_deref(), Some("turn/steer"));
-        assert!(decide(&facts("codex", "waiting"), Steer).available);
-        let compact = decide(&facts("codex", "ready"), Compact);
-        assert!(compact.available);
-        assert_eq!(compact.mechanism.as_deref(), Some("thread/compact/start"));
+        assert_eq!(steer.mechanism.as_deref(), Some("worker.steer"));
+        assert_eq!(
+            decide(&plugin("ready"), Compact).reason.as_deref(),
+            Some("This agent has no compaction")
+        );
+        assert!(
+            decide(&plugin("ready"), RewindConversation)
+                .reason
+                .unwrap()
+                .contains("does not declare worker.rewind")
+        );
+        // Without a declaration nothing is claimed, and the reason says why.
+        let unknown = Facts {
+            declared: Err("The worker has not completed its handshake"),
+            ..facts("codex", "ready")
+        };
+        assert_eq!(
+            decide(&unknown, Compact).reason.as_deref(),
+            Some("The worker has not completed its handshake")
+        );
+        assert!(decide(&unknown, RewindFiles).available);
+    }
+
+    #[test]
+    fn bundled_controls_are_exactly_what_their_workers_declare() {
+        for provider in ["codex", "claude", "omp"] {
+            let operations = bundled(provider);
+            for control in [Steer, Compact, RewindConversation] {
+                let (method, mechanism) = operation(control).unwrap();
+                let declared = operations
+                    .iter()
+                    .find(|operation| operation.method == method)
+                    .unwrap();
+                let status = if control == Steer { "running" } else { "ready" };
+                let decided = decide(&facts(provider, status), control);
+                if declared.availability == ProviderWorkerAvailability::Available {
+                    assert!(decided.available, "{provider} {control:?}");
+                    assert_eq!(decided.mechanism.as_deref(), Some(mechanism));
+                } else {
+                    assert!(!decided.available, "{provider} {control:?}");
+                    assert!(decided.mechanism.is_none());
+                    // Every bundled worker names why it does not perform a control.
+                    assert!(!declared.reason.is_empty(), "{provider} {control:?}");
+                    assert_eq!(decided.reason.as_deref(), Some(declared.reason.as_str()));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn bundled_workers_declare_the_controls_they_implement() {
+        let available = |provider, control| {
+            let status = if control == Steer { "running" } else { "ready" };
+            decide(&facts(provider, status), control).available
+        };
+        assert!(available("codex", Steer));
+        assert!(available("codex", Compact));
+        assert!(available("codex", RewindConversation));
+        assert!(!available("claude", Steer));
+        assert!(!available("claude", Compact));
+        assert!(available("claude", RewindConversation));
+        assert!(!available("omp", Steer));
+        assert!(available("omp", Compact));
+        assert!(!available("omp", RewindConversation));
     }
 
     #[test]
@@ -176,45 +264,11 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_providers_report_their_limitation_whatever_the_state() {
-        for provider in ["claude", "omp", "opencode"] {
-            for status in ["running", "ready"] {
-                for control in [Steer, Compact, RewindConversation] {
-                    if provider == "claude" && control == RewindConversation {
-                        continue;
-                    }
-                    let decided = decide(&facts(provider, status), control);
-                    assert!(!decided.available, "{provider} {status} {control:?}");
-                    assert!(decided.mechanism.is_none());
-                    assert!(decided.reason.unwrap().contains("adapter"));
-                }
-            }
-        }
-        let unknown = decide(&facts("gemini", "running"), Steer);
-        assert_eq!(unknown.reason.as_deref(), Some("Unknown provider gemini"));
-        // Adapters and plugin workers name their own limitation, not an unknown provider.
-        for provider in ["adapter:my-agent", "plugin:e2e.agent"] {
-            for control in [Steer, Compact, RewindConversation] {
-                let decided = decide(&facts(provider, "running"), control);
-                assert!(!decided.available);
-                assert!(!decided.reason.unwrap().starts_with("Unknown provider"));
-            }
-            assert!(decide(&facts(provider, "ready"), RewindFiles).available);
-        }
-    }
-
-    #[test]
-    fn conversation_rewind_runs_only_on_an_idle_connected_claude_or_codex_agent() {
-        for provider in ["omp", "opencode"] {
-            assert!(!decide(&facts(provider, "ready"), RewindConversation).available);
-        }
-        for (provider, mechanism) in [
-            ("claude", "claude.fork_session"),
-            ("codex", "codex.thread_fork"),
-        ] {
+    fn conversation_rewind_runs_only_on_an_idle_connected_agent() {
+        for provider in ["claude", "codex"] {
             let decided = decide(&facts(provider, "ready"), RewindConversation);
             assert!(decided.available);
-            assert_eq!(decided.mechanism.as_deref(), Some(mechanism));
+            assert_eq!(decided.mechanism.as_deref(), Some("worker.rewind"));
             for status in ["running", "waiting", "starting", "cancelling"] {
                 let busy = decide(&facts(provider, status), RewindConversation);
                 assert!(!busy.available, "{status}");
@@ -235,7 +289,7 @@ mod tests {
 
     #[test]
     fn file_rewind_uses_checkpoints_only_while_no_turn_runs() {
-        for provider in ["codex", "claude", "omp", "opencode"] {
+        for provider in ["codex", "claude", "omp"] {
             let idle = decide(&facts(provider, "ready"), RewindFiles);
             assert!(idle.available, "{provider}");
             assert_eq!(idle.mechanism.as_deref(), Some(CHECKPOINTS));

@@ -15,6 +15,9 @@ import {
   decodeProviderWorkerRewindResult,
   decodeProviderWorkerConfigureMcpRequest,
   decodeProviderWorkerChildTranscriptRequest,
+  decodeProviderWorkerAccountInspectRequest,
+  decodeProviderWorkerAccountInspection,
+  decodeProviderWorkerAccountContext,
   decodeProviderWorkerAck,
   decodeProviderWorkerCancelResult,
   decodeProviderWorkerHistoryPage,
@@ -22,10 +25,16 @@ import {
   decodeProviderWorkerSendResult,
   decodeResponse,
 } from '@ade/contracts'
-import type { ProviderWorkerRequest } from '@ade/contracts'
+import type {
+  ProviderWorkerAccountContext,
+  ProviderWorkerRequest,
+  ProviderWorkerSendRequest,
+  ProviderWorkerSendResult,
+} from '@ade/contracts'
 import { NodeSink } from '@effect/platform-node'
-import { Cause, Context, Effect, Fiber, Layer, Logger, ManagedRuntime, Option, Queue, Stream } from 'effect'
+import { Cause, Context, Deferred, Effect, Fiber, Layer, Logger, ManagedRuntime, Option, Queue, Stream } from 'effect'
 import type { Scope } from 'effect'
+import { createHash } from 'node:crypto'
 import { performance } from 'node:perf_hooks'
 import type { Readable } from 'node:stream'
 import type {
@@ -36,7 +45,7 @@ import type {
   WorkerInput,
   WorkerMethod,
 } from './provider.js'
-import { MAX_FRAME_BYTES, PROTOCOL_VERSION } from './provider.js'
+import { MAX_INPUT_FRAME_BYTES, MAX_OUTPUT_FRAME_BYTES, PROTOCOL_VERSION } from './provider.js'
 
 const MAX_DIAGNOSTIC_MESSAGE_BYTES = 4 * 1024
 const MAX_DIAGNOSTIC_TOTAL_BYTES = 32 * 1024
@@ -194,7 +203,7 @@ const boundedValue = (root: unknown, maxEntries: number, maxBytes: number): bool
 }
 
 const encodeFrame = (value: unknown, maxBytes: number, maxEntries: number, method?: WorkerMethod): EncodedFrame => {
-  const maxJsonBytes = Math.min(MAX_FRAME_BYTES, maxBytes) - 1
+  const maxJsonBytes = Math.min(MAX_OUTPUT_FRAME_BYTES, maxBytes) - 1
   if (maxJsonBytes < 0 || !boundedValue(value, maxEntries, maxJsonBytes)) {
     return {
       ok: false,
@@ -232,6 +241,9 @@ const encodeFrame = (value: unknown, maxBytes: number, maxEntries: number, metho
           case 'child_transcript':
             decodeResponse('agent.child_transcript', response.result)
             break
+          case 'account_inspect':
+            decodeProviderWorkerAccountInspection(response.result)
+            break
         }
       }
     }
@@ -244,7 +256,7 @@ const encodeFrame = (value: unknown, maxBytes: number, maxEntries: number, metho
   }
   if (json === undefined)
     return { ok: false, failure: failure('integration_bug', 'Provider worker response could not be encoded') }
-  if (Buffer.byteLength(json) + 1 > Math.min(MAX_FRAME_BYTES, maxBytes)) {
+  if (Buffer.byteLength(json) + 1 > Math.min(MAX_OUTPUT_FRAME_BYTES, maxBytes)) {
     return { ok: false, failure: failure('resource_limit', 'Provider worker response exceeds its declared byte limit') }
   }
   return { ok: true, frame: Buffer.from(json + '\n') }
@@ -316,6 +328,66 @@ const failProcess = (message: string) => {
 }
 
 /** One ManagedRuntime owns the provider worker, dependencies, and cleanup. */
+/**
+ * The managed account this worker runs on, or null when it runs on the agent's own login. ADE
+ * passes it in `ADE_ACCOUNT_CONTEXT` to every worker launched on a managed account, bundled or
+ * installed, in an environment cleared of ambient credentials. Keep the agent's login,
+ * configuration and sessions under `native_home`; a malformed context throws rather than falling
+ * back to the agent's own login.
+ */
+export const accountContext = (env: NodeJS.ProcessEnv = process.env): ProviderWorkerAccountContext | null => {
+  const raw = env.ADE_ACCOUNT_CONTEXT
+  if (raw === undefined) return null
+  return decodeProviderWorkerAccountContext(JSON.parse(raw))
+}
+
+// The sends a worker remembers, so a retried submission is recognised.
+const SEND_LEDGER_ENTRIES = 256
+
+/**
+ * A retried send names the same session and submission. The worker answers it with the first
+ * send's reply, without asking the native agent again, while that send is pending or after it
+ * succeeded; the same submission with a different prompt is refused. A send that failed is
+ * forgotten, so a deliberate retry reaches the native agent. The worker remembers the most
+ * recent 256 submissions.
+ */
+const withSendLedger = <R>(worker: ProviderWorker<R>): ProviderWorker<R> => {
+  const send = worker.send
+  if (!send) return worker
+  const ledger = new Map<
+    string,
+    { readonly fingerprint: string; readonly outcome: Deferred.Deferred<ProviderWorkerSendResult, WorkerFailure> }
+  >()
+  return {
+    ...worker,
+    send: (params: ProviderWorkerSendRequest) =>
+      Effect.gen(function* () {
+        const key = JSON.stringify([params.session, params.submission])
+        const fingerprint = createHash('sha256').update(JSON.stringify(params)).digest('hex')
+        const prior = ledger.get(key)
+        if (prior) {
+          if (prior.fingerprint !== fingerprint)
+            return yield* Effect.fail(
+              failure('invalid_request', 'This submission was already sent with a different prompt'),
+            )
+          return yield* Deferred.await(prior.outcome)
+        }
+        const outcome = yield* Deferred.make<ProviderWorkerSendResult, WorkerFailure>()
+        const entry = { fingerprint, outcome }
+        ledger.set(key, entry)
+        if (ledger.size > SEND_LEDGER_ENTRIES) ledger.delete(ledger.keys().next().value!)
+        return yield* send(params).pipe(
+          Effect.onExit((exit) =>
+            Effect.suspend(() => {
+              if (exit._tag === 'Failure' && ledger.get(key) === entry) ledger.delete(key)
+              return Deferred.done(outcome, exit)
+            }),
+          ),
+        )
+      }),
+  }
+}
+
 export const runProviderWorker = <R>(factory: ProviderFactory<R>, input: Readable = process.stdin): void => {
   try {
     decodeProviderWorkerInitialize({ ...factory.descriptor, protocol_version: PROTOCOL_VERSION })
@@ -374,7 +446,7 @@ export const runProviderWorker = <R>(factory: ProviderFactory<R>, input: Readabl
     clearTimeout(startupTimer)
   }
   const program = Effect.gen(function* () {
-    const worker = yield* WorkerInstance
+    const worker = withSendLedger(yield* WorkerInstance)
     return yield* Effect.scoped(processInput(input, factory.descriptor, worker, markInitialized, beginShutdown))
   })
   const dispose = () => {
@@ -428,6 +500,9 @@ export const runProviderWorker = <R>(factory: ProviderFactory<R>, input: Readabl
     .catch(() => failProcess('Provider worker runtime failed (integration_bug)'))
 }
 
+/** The reserved control lanes beside ordinary requests. */
+type Controls = { steering: Queue.Queue<DispatchMessage>; cancel: Queue.Queue<DispatchMessage> }
+
 const processInput = <R>(
   input: Readable,
   descriptor: WorkerDescriptor,
@@ -439,8 +514,15 @@ const processInput = <R>(
     const concurrency = descriptor.limits.max_concurrency
     const normalConcurrency = concurrency - 1
     const requests = yield* Queue.dropping<DispatchMessage>(normalConcurrency)
-    const controls = yield* Queue.dropping<DispatchMessage>(1)
-    const outputCapacity = Math.min(descriptor.limits.max_output_entries, concurrency * 2)
+    // Steer and answer share one control lane; cancellation has its own, so a
+    // slow answer or steer never holds a Stop behind it.
+    const controls: Controls = {
+      steering: yield* Queue.dropping<DispatchMessage>(1),
+      cancel: yield* Queue.dropping<DispatchMessage>(1),
+    }
+    // Every dispatcher, including the dedicated cancel lane, keeps a reply slot.
+    const replyReserve = concurrency + 1
+    const outputCapacity = Math.min(descriptor.limits.max_output_entries, replyReserve * 2)
     const output = yield* Queue.dropping<OutputMessage, Cause.Done>(outputCapacity)
     const capacityChanged = yield* Queue.dropping<void>(1)
     const fatal = yield* Queue.dropping<WorkerFailure>(1)
@@ -471,7 +553,7 @@ const processInput = <R>(
               )
               if (!encoded.ok) return Effect.fail(encoded.failure)
               return Effect.gen(function* () {
-                const eventCapacity = outputCapacity - concurrency
+                const eventCapacity = outputCapacity - replyReserve
                 if (eventCapacity <= 0)
                   return yield* Effect.fail(
                     failure('resource_limit', 'Provider worker has no reserved event output capacity'),
@@ -489,7 +571,8 @@ const processInput = <R>(
         )
       : undefined
     const dispatchers = [
-      yield* Effect.forkScoped(supervise(dispatchLoop(controls, output, descriptor, worker, generation))),
+      yield* Effect.forkScoped(supervise(dispatchLoop(controls.steering, output, descriptor, worker, generation))),
+      yield* Effect.forkScoped(supervise(dispatchLoop(controls.cancel, output, descriptor, worker, generation))),
     ]
     for (let index = 0; index < normalConcurrency; index++) {
       dispatchers.push(
@@ -551,13 +634,13 @@ const readInput = (
   iterator: AsyncIterator<unknown>,
   descriptor: WorkerDescriptor,
   requests: Queue.Queue<DispatchMessage>,
-  controls: Queue.Queue<DispatchMessage>,
+  controls: Controls,
   output: Queue.Queue<OutputMessage, Cause.Done>,
   onInitialized: () => void,
   generation: { active: boolean },
 ): Effect.Effect<void, WorkerFailure> =>
   Effect.gen(function* () {
-    const maxBytes = Math.min(MAX_FRAME_BYTES, descriptor.limits.max_input_frame_bytes)
+    const maxBytes = Math.min(MAX_INPUT_FRAME_BYTES, descriptor.limits.max_input_frame_bytes)
     let carry = Buffer.allocUnsafe(Math.min(1024, maxBytes))
     let used = 0
     let partialStarted: number | undefined
@@ -627,6 +710,7 @@ const PROVIDER_WORKER_METHODS = new Set([
   'rewind',
   'configure_mcp',
   'child_transcript',
+  'account_inspect',
 ])
 
 // Count the complete wire shape before parsing, including unknown fields.
@@ -659,7 +743,7 @@ const withinJsonBudget = (frame: Buffer): boolean => {
       nodes++
       primitive = true
     }
-    if (nodes > 4096 || depth > 64 || frame.length * 4 + nodes * 512 > 8 * 1024 * 1024) return false
+    if (nodes > 4096 || depth > 64 || frame.length * 2 + nodes * 512 > 4 * MAX_INPUT_FRAME_BYTES) return false
   }
   return true
 }
@@ -687,7 +771,7 @@ const handleFrame = (
   frame: Buffer,
   descriptor: WorkerDescriptor,
   requests: Queue.Queue<DispatchMessage>,
-  controls: Queue.Queue<DispatchMessage>,
+  controls: Controls,
   output: Queue.Queue<OutputMessage, Cause.Done>,
   onInitialized: () => void,
   generation: { active: boolean },
@@ -823,7 +907,8 @@ const handleFrame = (
       yield* enqueueResponse(output, errorResponse(request.id, detail), descriptor.limits, request.id, generation)
       return
     }
-    const queue = method === 'steer' || method === 'cancel' || method === 'answer' ? controls : requests
+    const queue =
+      method === 'cancel' ? controls.cancel : method === 'steer' || method === 'answer' ? controls.steering : requests
     const accepted = yield* Queue.offer(queue, {
       id: request.id,
       method,
@@ -928,6 +1013,10 @@ const operationResponse = <R>(
           case 'child_transcript':
             return decodeParameters(decodeProviderWorkerChildTranscriptRequest, job.params).pipe(
               Effect.flatMap((params) => worker.child_transcript!(params)),
+            )
+          case 'account_inspect':
+            return decodeParameters(decodeProviderWorkerAccountInspectRequest, job.params).pipe(
+              Effect.flatMap((params) => worker.account_inspect!(params)),
             )
         }
       }).pipe(

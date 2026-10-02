@@ -27,6 +27,8 @@ export const cliExemptions = {
   'draft.send.list': 'Desktop window send-intent recovery',
   'draft.send.acknowledge': 'Desktop window send-intent recovery',
   'attachment.put': 'Carries base64 bytes for clients on another host; the local CLI uses `attachment import`',
+  'conversation.export':
+    '`conversation export ID FILE` reads it page by page through the SDK writer (@ade/client/export), shared with the desktop',
   'agent.list': 'Runtime socket only, with the daemon owner token; not served on the profile command socket',
   'agent.account_inspect': 'Runtime socket only, with the daemon owner token; not served on the profile command socket',
   'service.proxy.target': 'Asked by the runtime proxy before it forwards one connection',

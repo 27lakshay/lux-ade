@@ -1,6 +1,6 @@
 # 07 — Run Oh My Pi through the public provider SDK
 
-Status: ready-for-agent
+Status: complete
 Type: implementation ticket
 
 **Parent:** [TypeScript provider SDK and conversation UI](../../provider-sdk-conversation-ui.md)
@@ -13,12 +13,12 @@ Type: implementation ticket
 
 ## Acceptance criteria
 
-- [ ] Select OMP, send a native turn and display text/tools through the public worker contract and the shared UI.
-- [ ] Negotiate or inspect exact native protocol/version support. The inspected old pin does not inherit newer upstream settlement semantics automatically.
-- [ ] Prompt acceptance, local command completion, yielded execution and supported background settlement remain independent facts. Missing settlement evidence is unknown or unavailable.
-- [ ] Map supported requests, cancellation, queued input and child observations with stable native correlation; stale or autonomous events cannot invent a user submission.
-- [ ] Record OMP’s capability matrix and fixture/installed/live evidence separately, preserving native fidelity without core provider-name branches.
-- [ ] Record commands, native reports, observable outcomes and explicit failed, skipped or prerequisite-blocked coverage. Pass the required static gate and this slice’s real-process/built-desktop acceptance before claiming completion.
+- [x] Select OMP, send a native turn and display text/tools through the public worker contract and the shared UI.
+- [x] Negotiate or inspect exact native protocol/version support. The inspected old pin does not inherit newer upstream settlement semantics automatically.
+- [x] Prompt acceptance, local command completion, yielded execution and supported background settlement remain independent facts. Missing settlement evidence is unknown or unavailable.
+- [x] Map supported requests, cancellation, queued input and child observations with stable native correlation; stale or autonomous events cannot invent a user submission.
+- [x] Record OMP’s capability matrix and fixture/installed/live evidence separately, preserving native fidelity without core provider-name branches.
+- [x] Record commands, native reports, observable outcomes and explicit failed, skipped or prerequisite-blocked coverage. Pass the required static gate and this slice’s real-process/built-desktop acceptance before claiming completion.
 
 ## Testing decisions
 
@@ -36,3 +36,22 @@ Read the [shared delivery rules](README.md#delivery-rules) before implementation
 2026-10-02: `ADE_OMP_LOOPBACK=1 bun test providers/omp/loopback.test.mjs` passed (1 test / 12 assertions) against installed OMP 18.3.0 with its account/config environment isolated and a local deterministic model endpoint. This exercises native protocol execution, two response turns and history resume; it is not a live credentialed provider run or public SDK worker acceptance.
 2026-10-02: `bun test providers/omp/worker-peer.test.mjs` passed (1 test / 27 assertions) after the method-result cancellation contract update. The subprocess test covers native request metadata/answers, history paging, tool and child projections, local-only completion, late failure correlation, post-abort evidence (including wrong-session nulls), and no cancel event. The worker now ignores uncorrelated `agent_end` for attempt ownership and only clears stale attempts after verified idle state or RPC-correlated local completion. Helper tests passed (30 / 103 assertions); the isolated installed OMP loopback passed (1 / 12). Shared UI, built-desktop, and live credentialed acceptance remain unverified.
 2026-10-02: Fixed the question schema/answer mismatch: published question ID and answer parser both use `input`, with no `value` compatibility alias. The schema-derived peer regression failed before the fix with `invalid_request`; malformed answers leave the pending native question intact. `ADE_OMP_LOOPBACK=1 bun test providers/omp/worker-peer.test.mjs` passed 2 tests / 39 assertions. The installed-native-only command `ADE_OMP_LOOPBACK=1 bun test providers/omp/worker-peer.test.mjs --test-name-pattern "installed OMP public worker"` passed 1 test / 11 assertions (one fixture test filtered). It runs the actual public SDK worker and installed OMP 18.3.0: a native `before_agent_start` extension asks `ctx.ui.input`, the published-schema answer resumes that hook, computes budget 42 from answer 21, and changes the actual local model request before streamed completion; malformed and stale answers are rejected. Native hook source uses `systemPrompt: string[]`; the shipped `pirate.ts` example incorrectly documents `systemPromptAppend`, which this regression does not use. This proves public-worker open/send/question-answer/text/native completion, not Stop/tools/children/Desktop/live. The separate legacy Bridge loopback only proves two-turn stream/context/history/resume/no-resubmission. Ticket status and checkboxes remain unchanged.
+
+2026-10-02: Production wiring and acceptance (decisions taken under the user's standing instruction to decide unattended).
+
+Decisions and fixes:
+- OMP conversations now run through the public worker: `launch_omp` calls `Worker::spawn_omp`, which runs `providers/omp/worker.mjs` under Bun (the worker imports OMP's TypeScript RPC frame sources, which Node cannot load from node_modules) with the `omp::worker_descriptor()` metadata (steer and rewind unsupported). Managed accounts keep `--no-env-file`, the pinned identity and `ADE_OMP_EXPECTED_PROVIDER`; identity and workspace credential sources are re-checked before every open and send through a worker preflight hook. The old Bun bridge adapter (`omp.rs::Adapter`, `bridge.mjs`) is no longer launched; its removal is left to the D19 cleanup with the Claude bridge.
+- Completion attribution: OMP's `agent_end` carries no RPC correlation. The worker now records the attempt current at each run's `agent_start` and settles exactly that attempt at its `agent_end`; a late end from an older run cannot settle a newer prompt, and a run with no observed start stays unattributed. Before this, every OMP turn stayed `running` in the daemon. The peer expectations that finishes stay unattributed were updated accordingly, and the deterministic peers (`mock-cli.mjs`, `e2e/fixtures/omp_account_cli.mjs`) now emit `agent_start` as native OMP does; `hold*` prompts are held.
+- Prompt echo: the first user entry with the exact admitted text after a serialized send is linked to the admitted native message ID (in the live stream and in history reconciliation), so it merges into the ADE message instead of becoming a second user message.
+- MCP: a launch with no catalog servers removes the ADE extension package, as the bridge did.
+- Capability matrix with fixture/installed/live evidence kinds: `providers/omp/README.md`.
+
+Evidence (deterministic RPC peers; not installed or live provider evidence):
+- `pnpm check:static`: passed (`test-results/runs/static-63db502a-7eca-4904-b776-e596a33a8930`).
+- `cd providers/omp && bun test worker-peer.test.mjs`: 1 pass, 1 installed-only skip (from the repository root the peer test cannot initialize the worker because of the working directory; it is outside the gate catalog).
+- Protocol (`test-results/runs/protocol-f0ab575f-9f65-42b3-a5eb-3d951d132e6f`): OMP MCP launch/resume (2), managed OMP accounts with drift and `.env` refusal, OMP capabilities and quota pass. The listed failures are Claude rewind/usage (tickets 19, 27) and cases that also fail on commit 48949704.
+- Built Electron `e2e/desktop/omp.spec.ts` (`test-results/runs/desktop-bfbcfcba-9fb9-4ba0-ad6b-ebb4f54aac17`): an OMP turn renders "Hello Oh My Pi" with one attributed user message; Stop on a held run is confirmed by OMP's own interrupted end; screenshot `omp-stopped.png`.
+
+Prerequisite-blocked: installed-OMP daemon acceptance and live credentialed OMP. The earlier installed loopback (`ADE_OMP_LOOPBACK=1`) remains the installed evidence for the native protocol.
+
+2026-10-02 (PC02 parity): D19 cleanup done. The old Bun bridge adapter is deleted: `omp.rs::Adapter`, `providers/omp/bridge.mjs` and its tests, and the bridge-only `submissions.mjs`, `admit` and `ChildTranscripts`. The installed-OMP check is now the worker's loopback case in `worker-peer.test.mjs` (`ADE_OMP_LOOPBACK=1`).

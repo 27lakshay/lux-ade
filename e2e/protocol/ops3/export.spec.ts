@@ -18,7 +18,11 @@ type Exported = {
   boot_id: string
   revision: number
   conversation: { id: string }
-  messages: Array<{ id: string; sequence: number; role: string; text: string; conversation_id: string }>
+  continuity: { provider_available: boolean; native_resume_possible: boolean; reason: string }
+  messages: Array<{
+    message: { id: string; sequence: number; role: string; text: string; conversation_id: string }
+    attachments: unknown[]
+  }>
 }
 
 /** Seed stored history after a bounded native import; bulk import limits are a separate contract. */
@@ -80,29 +84,39 @@ test('F050: an export writes the complete readable history across pages into a n
     type: 'conversation_export',
     conversation_id: conversationId,
     file,
-    format: 'ade-conversation-history-v1',
+    format: 'ade-conversation-export-v1',
     message_count: 260,
   })
   expect((await stat(file)).mode & 0o777).toBe(0o600)
 
   const exported = JSON.parse(await readFile(file, 'utf8')) as Exported
   expect(exported).toMatchObject({
-    format: 'ade-conversation-history-v1',
+    format: 'ade-conversation-export-v1',
     scope: 'conversation-history',
-    message_order: 'newest_first',
+    message_order: 'oldest_first',
     conversation: { id: conversationId },
   })
   expect(exported.messages).toHaveLength(260)
-  // Every message once, newest first, and readable as the transcript said it.
-  const sequences = exported.messages.map((message) => message.sequence)
+  // Every message once, oldest first, and readable as the transcript said it.
+  const sequences = exported.messages.map((entry) => entry.message.sequence)
   expect(new Set(sequences).size).toBe(260)
-  expect([...sequences].sort((a, b) => b - a)).toEqual(sequences)
-  expect(exported.messages.at(-1)).toMatchObject({ role: 'user', text: 'Question 0', conversation_id: conversationId })
-  expect(exported.messages[0]).toMatchObject({ role: 'assistant', text: 'Answer 259' })
-  // The export equals what the public read returns page by page.
+  expect([...sequences].sort((a, b) => a - b)).toEqual(sequences)
+  expect(exported.messages[0]!.message).toMatchObject({
+    role: 'user',
+    text: 'Question 0',
+    conversation_id: conversationId,
+  })
+  expect(exported.messages.at(-1)!.message).toMatchObject({ role: 'assistant', text: 'Answer 259' })
+  // An imported history is readable, and the header says that nothing continues it natively.
+  expect(exported.continuity).toMatchObject({
+    provider_available: true,
+    native_resume_possible: false,
+    reason: expect.stringContaining('Imported native history is read-only'),
+  })
+  // The export equals what the public read returns.
   const newest = await profile.call('conversation.get', { conversation_id: conversationId, limit: 32 })
-  expect(exported.messages.slice(0, newest.messages.length).map((message) => message.id)).toEqual(
-    [...newest.messages].reverse().map((message) => (message as { id: string }).id),
+  expect(exported.messages.slice(-newest.messages.length).map((entry) => entry.message.id)).toEqual(
+    newest.messages.map((message) => (message as { id: string }).id),
   )
 
   // A second export never replaces the first, and leaves no temporary file.
@@ -132,7 +146,7 @@ test('F050: an export writes the complete readable history across pages into a n
   const afterCrash = await profile.cli('conversation', 'export', conversationId, join(directory, 'after-crash.json'))
   expect(afterCrash.code, afterCrash.stderr).toBe(0)
   const replayed = JSON.parse(await readFile(join(directory, 'after-crash.json'), 'utf8')) as Exported
-  expect(replayed.messages.map((message) => message.id)).toEqual(exported.messages.map((message) => message.id))
+  expect(replayed.messages.map((entry) => entry.message.id)).toEqual(exported.messages.map((entry) => entry.message.id))
   expect(replayed.boot_id).not.toBe(exported.boot_id)
 })
 

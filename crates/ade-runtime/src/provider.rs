@@ -45,8 +45,8 @@ pub trait Provider: Send + Sync {
         None
     }
     /// Receives the provider-native MCP server map (F131) before `open`. Only
-    /// adapters in `ade_core::mcp::WIRED_PROVIDERS` accept it; any other
-    /// adapter refuses rather than launch without servers it was given.
+    /// a worker that declares `configure_mcp` available accepts it; any other
+    /// provider refuses rather than launch without servers it was given.
     fn configure_mcp(&self, _servers: Value) -> Result<()> {
         bail!("This provider adapter does not pass MCP servers at launch")
     }
@@ -120,7 +120,17 @@ pub trait Provider: Send + Sync {
     /// the request so a retry is not delivered twice. Returns the native
     /// session the Conversation continues in when the provider rewinds by
     /// forking into a new one; the earlier session stays unchanged.
-    fn rewind(&self, _session: &str, _turn: &str, _operation: &str) -> Result<Option<String>> {
+    ///
+    /// `turn` names the boundary: the provider's turn ID, or for a provider
+    /// that reports none, the native message ID of the prompt, which
+    /// `native_message` then locates.
+    fn rewind(
+        &self,
+        _session: &str,
+        _turn: &str,
+        _operation: &str,
+        _native_message: Option<&ade_core::provider::NativeMessageLocator>,
+    ) -> Result<Option<String>> {
         bail!("This provider adapter does not support rewinding the conversation")
     }
     fn prepare_submission(&self) -> Option<String> {
@@ -228,6 +238,11 @@ pub(crate) fn response_session(
 /// Error surfaces are operational metadata; tool result content remains unchanged.
 pub(crate) fn sanitize_event(mut event: Event) -> Event {
     use ade_core::error::Failure;
+    // An item larger than one stored message is cut with its marker here, before
+    // it crosses a bounded worker frame (F031); the daemon bounds it again.
+    if let Event::Item { item, .. } = &mut event {
+        ade_core::transcript::bound_message(&mut item.text, &mut item.content);
+    }
     let (error, fallback) = match &mut event {
         Event::Error { error, .. } | Event::OperationFailed { error, .. } => {
             (Some(error), Failure::Rejected)

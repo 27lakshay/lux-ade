@@ -17,7 +17,7 @@ class LiveProfileTests(unittest.TestCase):
                       'ADE_SOCKET': '/real/socket', 'ADE_RUNTIME_SOCKET': '/real/runtime',
                       'ADE_PROFILES_HOME': '/real/profiles', 'ADE_SECRET_FILE': '/real/secrets',
                       'ADE_SECRET_KEY': 'inherited-secret', 'ADE_SECRET_STORE': 'keychain',
-                      'ADE_MOCK_CODEX': '1', 'ADE_CLAUDE_BRIDGE_BIN': '/mock/bridge',
+                      'ADE_MOCK_CODEX': '1', 'ADE_E2E_CLAUDE_SDK': '/mock/sdk.mjs',
                       'ADE_CODEX_BIN': '/installed/codex'}
             env = profile_environment(directory, source)
             for name in ['ADE_SOCKET', 'ADE_RUNTIME_SOCKET', 'ADE_PROFILES_HOME', 'ADE_DATA_DIR', 'ADE_ROOT', 'ADE_SECRET_FILE']:
@@ -29,7 +29,7 @@ class LiveProfileTests(unittest.TestCase):
             self.assertEqual(env['CODEX_HOME'], source['CODEX_HOME'])
             self.assertEqual(env['ADE_CODEX_BIN'], '/installed/codex')
             self.assertNotIn('ADE_MOCK_CODEX', env)
-            self.assertNotIn('ADE_CLAUDE_BRIDGE_BIN', env)
+            self.assertNotIn('ADE_E2E_CLAUDE_SDK', env)
             self.assertEqual(source['ADE_SOCKET'], '/real/socket')
 
     def test_missing_prerequisites_do_not_launch_binaries(self):

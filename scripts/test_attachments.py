@@ -17,7 +17,7 @@ with tempfile.TemporaryDirectory(prefix='ade-attachments-',dir='/tmp') as tmp:
     root=Path(tmp);endpoint=root/'app.sock';daemon=None
     env={**os.environ,'ADE_SOCKET':str(endpoint),'ADE_DATA_DIR':str(root/'data'),'ADE_ROOT':str(root),'SHELL':'/bin/sh',
          'ADE_CODEX_BIN':str(PROJECT/'scripts/fixtures/codex_mock.py'),'ADE_CODEX_TRANSPORT':'stdio','ADE_MOCK_DIR':str(root/'codex'),
-         'ADE_CLAUDE_BRIDGE_BIN':str(PROJECT/'scripts/fixtures/claude_mock.mjs'),'ADE_MOCK_CLAUDE_DIR':str(root/'claude')}
+         'ADE_E2E_CLAUDE_SDK':str(PROJECT/'providers/claude/worker-test-sdk.mjs'),'ADE_CLAUDE_WORKER_TEST_DIR':str(root/'claude')}
     log=(root/'daemon.log').open('ab')
     def call(op,**fields):return rpc(endpoint,{'op':op,**fields})
     def wait(fn):

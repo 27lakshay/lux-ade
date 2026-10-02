@@ -46,6 +46,18 @@ test('applies a contiguous conversation_changed by merging, sorting and replacin
   assert.deepEqual(outcome.snapshot.requests, [{ id: 'r' }])
 })
 
+test('replaces the prompt queue from each change frame and keeps it across unrelated frames', () => {
+  const base = { ...snapshot(4), queued: [{ id: 'q1', text: 'first', status: 'queued' }] }
+  const next = { ...changed(5, []), queued: [{ id: 'q2', text: 'second', status: 'queued' }] }
+  const outcome = reduceFrame(base, next, 'c1')
+  assert.equal(outcome.kind, 'changed')
+  assert.deepEqual(outcome.snapshot.queued, [{ id: 'q2', text: 'second', status: 'queued' }])
+  const emptied = reduceFrame(outcome.snapshot, { ...changed(6, []), queued: [] }, 'c1')
+  assert.deepEqual(emptied.snapshot.queued, [])
+  const unrelated = reduceFrame(outcome.snapshot, { type: 'catalog_changed', boot_id: 'b1', revision: 6 }, 'c1')
+  assert.deepEqual(unrelated.snapshot.queued, [{ id: 'q2', text: 'second', status: 'queued' }])
+})
+
 test('keeps only the newest window of messages', () => {
   const many = Array.from({ length: CONVERSATION_WINDOW + 5 }, (_, index) => message(`m${index}`, index))
   const outcome = reduceFrame(snapshot(0), changed(1, many), 'c1')

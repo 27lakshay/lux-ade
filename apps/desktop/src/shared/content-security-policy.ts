@@ -1,11 +1,13 @@
 // The app window's content security policy: sent as a header by the ade:// scheme and written into
-// index.html by the build (electron.vite.config.ts). Scripts come only from the app;
+// index.html by the build (electron.vite.config.ts). Scripts come only from the app and the
+// enabled plugins' UI entry points;
 // `wasm-unsafe-eval` lets them compile WebAssembly (the terminal's Ghostty), not evaluate strings.
 // Styles allow inline style attributes, which React and Motion set. Nothing is framed, embedded or
 // fetched from the network. `frame-ancestors` only works as a header, so the meta copy drops it.
 const DIRECTIVES = {
   'default-src': ["'self'"],
-  'script-src': ["'self'", "'wasm-unsafe-eval'"],
+  // `ade-plugin:` serves enabled plugins' UI entry points (src/main/plugin-ui.ts).
+  'script-src': ["'self'", "'wasm-unsafe-eval'", 'ade-plugin:'],
   'style-src': ["'self'", "'unsafe-inline'"],
   'img-src': ["'self'", 'data:', 'blob:'],
   'font-src': ["'self'", 'data:'],

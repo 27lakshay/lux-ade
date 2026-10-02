@@ -1,7 +1,7 @@
 // R020, headless part: the installed CLI drives daily-use turns on a profile
 // it cold-starts, with PATH=/usr/bin:/bin and a scratch HOME. The provider
 // fixtures stand in for the user's Codex CLI and the Claude SDK only; the
-// bridge and relay code, and the Node and Bun that run them, are the bundle's.
+// workers and relay code, and the Node and Bun that run them, are the bundle's.
 import { mkdir, readFile, realpath } from 'node:fs/promises'
 import { join } from 'node:path'
 import { prompts, send, startConversation, turnReply, waitForMessage, type MockProvider } from '../fixtures'
@@ -73,7 +73,7 @@ test('the installed CLI cold-starts a profile and runs Codex and Claude turns th
   const codex = await launches(work, 'codex')
   expect(codex).toHaveLength(1)
   expect(String(codex[0].parent)).toBe(`${bundle.bun} ${join(bundle.resources, 'providers/codex/shared-server.mjs')}`)
-  // Claude's bridge ran under the bundle's Electron as Node.
+  // Claude's worker ran under the bundle's Electron as Node.
   const claude = await launches(work, 'claude')
   expect(claude).toHaveLength(1)
   expect(claude[0]).toMatchObject({ execPath: bundle.electron, electronRunAsNode: '1' })

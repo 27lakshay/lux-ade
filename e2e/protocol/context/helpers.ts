@@ -16,9 +16,17 @@ export async function codexInputs(profile: ScratchProfile): Promise<Array<Array<
     .map((call) => (call.params as { input: Array<Record<string, string>> }).input)
 }
 
-/** What the Claude SDK mock received as each user message's content, oldest first. */
+/**
+ * What the Claude SDK mock received as each user message's native content, oldest first.
+ * A prompt that is a single text block is given as its text.
+ */
 export async function claudeContents(profile: ScratchProfile): Promise<unknown[]> {
-  return (await profile.mockCalls('claude')).filter((call) => call.method === 'send').map((call) => call.text)
+  return (await profile.mockCalls('claude'))
+    .filter((call) => call.method === 'send')
+    .map((call) => {
+      const content = call.content as Array<{ type: string; text?: string }>
+      return content.length === 1 && content[0].type === 'text' ? content[0].text : content
+    })
 }
 
 /** Wait for `count` native prompts on `provider` and return them. */

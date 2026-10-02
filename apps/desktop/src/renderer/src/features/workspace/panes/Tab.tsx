@@ -1,7 +1,8 @@
 import { draggable } from '@atlaskit/pragmatic-drag-and-drop/element/adapter'
 import * as m from 'motion/react-m'
 import { useEffect, useRef, useState } from 'react'
-import { IconButton } from '@/components/IconButton'
+import { buttonVariants } from '@/components/ui/button'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { interactive } from '@/components/interactive'
 import { Caption } from '@/components/Typography'
 import { cn } from '@/lib/utils'
@@ -87,7 +88,12 @@ export function Tab({
       data-active={active || undefined}
       onClick={activate}
       onAuxClick={(event) => event.button === 1 && void closeTab(tab.id)}
-      onKeyDown={(event) => (event.key === 'Enter' || event.key === ' ') && activate()}
+      aria-keyshortcuts="Delete"
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') activate()
+        // Closable tabs: Delete closes the focused tab. The close mark below is pointer-only.
+        else if (event.key === 'Delete') void closeTab(tab.id)
+      }}
       className={cn(
         interactive,
         'in-data-[pane-focused]:data-[active]:bg-accent',
@@ -119,7 +125,26 @@ export function Tab({
         {title}
       </Caption>
       <span className={cn('relative flex', active ? 'visible' : 'invisible group-hover/tab:visible')}>
-        <IconButton icon="close" label="Close tab" size="xs" onClick={() => void closeTab(tab.id)} />
+        {/* Not a button: a focusable control inside a tab is unreachable for assistive technology,
+            and a tablist may hold only tabs. It keeps the kit's ghost icon-button look. */}
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span
+                aria-hidden
+                data-tab-close
+                className={buttonVariants({ variant: 'ghost', size: 'icon-xs' })}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  void closeTab(tab.id)
+                }}
+              />
+            }
+          >
+            <Icon name="close" />
+          </TooltipTrigger>
+          <TooltipContent side="bottom">Close tab (Delete)</TooltipContent>
+        </Tooltip>
       </span>
     </m.div>
   )

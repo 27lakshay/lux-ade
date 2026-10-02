@@ -427,7 +427,6 @@ export class SendPipeline<E extends SendEntry = SendEntry> {
    * journal. They must agree; a conflict is refused so both records survive for review.
    * `extra` is merged into the entry, for the client's own fields.
    */
-  // fallow-ignore-next-line unused-class-member
   async open(owner: SendOwner, extra: Omit<E, keyof SendEntry>): Promise<E> {
     const sharedState = this.sharedState(owner)
     const { endpoint, profileId, windowId, conversationId } = owner

@@ -12,7 +12,7 @@ type Message = { id: string; role: string; text: string; sequence: number; turn_
 const removedWords = ['quokkaflux', 'lemurmint']
 
 async function messages(profile: ScratchProfile, conversationId: string): Promise<Message[]> {
-  return (await profile.call('conversation.get', { conversation_id: conversationId, limit: 200 })).messages
+  return (await profile.call('conversation.get', { conversation_id: conversationId, limit: 32 })).messages
 }
 
 async function turn(profile: ScratchProfile, conversationId: string, text: string): Promise<void> {
@@ -137,7 +137,7 @@ test('R011: a search reply, an older page and a search cursor read before a rewi
   const olderPage = {
     conversation_id: conversationId,
     before: page.messages[0].sequence,
-    limit: 50,
+    limit: 32,
     history_epoch: page.history_epoch,
   }
 
@@ -201,7 +201,7 @@ test('R011: a result delayed across a conversation delete cannot resurrect it', 
   const olderPage = {
     conversation_id: conversationId,
     before: page.messages[0].sequence,
-    limit: 50,
+    limit: 32,
     history_epoch: page.history_epoch,
   }
 

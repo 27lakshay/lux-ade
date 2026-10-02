@@ -47,11 +47,14 @@ test('the bundle carries every declared native and provider resource and no test
     'cli/package.json',
     'cli/node_modules/@ade/client/dist/index.js',
     'cli/node_modules/@ade/contracts/dist/index.js',
-    'providers/claude/bridge.mjs',
+    'providers/claude/worker.mjs',
     'providers/claude/package.json',
     'providers/claude/node_modules/@anthropic-ai/claude-agent-sdk/package.json',
     'providers/codex/shared-server.mjs',
     'providers/omp/package.json',
+    'providers/omp/worker.mjs',
+    'providers/acp/worker.mjs',
+    'providers/acp/node_modules/@agentclientprotocol/sdk/package.json',
     'providers/plan.mjs',
     'providers/tool.mjs',
     'packages/plugin-host/src/host.mjs',
@@ -70,7 +73,7 @@ test('the bundle carries every declared native and provider resource and no test
   expect(
     shipped.filter(
       (path) =>
-        /(\.test\.mjs|fake-sdk\.mjs|mock-cli\.mjs|transport-fixture\.mjs|\.py)$/.test(path) ||
+        /(\.test\.mjs|worker-test-[\w-]+\.mjs|mock-cli\.mjs|transport-fixture\.mjs|\.py)$/.test(path) ||
         /mock|fixture/.test(path),
     ),
   ).toEqual([])
@@ -79,7 +82,7 @@ test('the bundle carries every declared native and provider resource and no test
 
 test('bundled launchers and provider shims are relocatable and never name the build checkout', async () => {
   const checked: string[] = [bundle.cli]
-  for (const provider of ['claude', 'omp']) {
+  for (const provider of ['claude', 'omp', 'acp']) {
     await walk(join(bundle.resources, 'providers', provider, 'node_modules'), async (path) => {
       if (path.split(sep).at(-2) === '.bin' && (await lstat(path)).isFile()) checked.push(path)
     })

@@ -80,6 +80,7 @@ export function createFakeHost(respond: Request = async () => ({})): FakeHost {
         importSendJournal: unsupported,
         onFeedFrame: listen(feedListeners),
         onDraftError: () => () => undefined,
+        pluginUiEntries: async () => [],
       },
     },
     pushClientState: (state) => {

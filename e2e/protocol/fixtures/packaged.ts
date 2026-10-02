@@ -17,7 +17,6 @@ import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { copyFile, mkdir, readdir, symlink, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
-import { pathToFileURL } from 'node:url'
 import { repositoryRoot } from './environment'
 import { test as base } from './index'
 import { ProfileHost, type Launcher } from './managed-profiles'
@@ -43,7 +42,7 @@ export function bundlePaths(app: string) {
     daemon: join(app, 'Contents/MacOS/ade-daemon'),
     runtime: join(app, 'Contents/MacOS/ade-runtime'),
     bun: join(app, 'Contents/Resources/bin/bun'),
-    /** The bundle's Node for bridges and plugins: runs `electron` with ELECTRON_RUN_AS_NODE=1. */
+    /** The bundle's Node for provider workers and plugins: runs `electron` with ELECTRON_RUN_AS_NODE=1. */
     node: join(app, 'Contents/Resources/bin/ade-node'),
   }
 }
@@ -157,23 +156,17 @@ process.on('SIGTERM', () => { child.kill('SIGTERM'); server.stop(); process.exit
 `
 
 /**
- * The Claude bridge script ADE_CLAUDE_BRIDGE points at: the bundle's own
- * bridge.mjs serving the deterministic fake SDK. The Node that runs it is the
- * one the product chose, which it records.
+ * The Claude SDK module ADE_E2E_CLAUDE_SDK names: it records the Node the bundle's own
+ * Claude worker runs under, then serves the deterministic SDK double staged beside it.
  */
-function claudeRunner(paths: BundlePaths, fakeSdk: string): string {
-  return `
+const claudeSdk = `
 import { appendFileSync, mkdirSync } from 'node:fs';
-import { serve } from ${JSON.stringify(pathToFileURL(join(paths.resources, 'providers/claude/bridge.mjs')).href)};
-import { fakeSdk } from ${JSON.stringify(pathToFileURL(fakeSdk).href)};
-const directory = process.env.ADE_MOCK_CLAUDE_DIR;
+const directory = process.env.ADE_CLAUDE_WORKER_TEST_DIR;
 mkdirSync(directory, { recursive: true });
 appendFileSync(directory + '/launch.jsonl', JSON.stringify({ pid: process.pid, execPath: process.execPath,
   electronRunAsNode: process.env.ELECTRON_RUN_AS_NODE ?? null, path: process.env.PATH }) + '\\n');
-process.env.ADE_CLAUDE_BIN = process.execPath;
-serve(fakeSdk(directory));
+export * from './worker-test-sdk.mjs';
 `
-}
 
 /** Copy the provider fixtures out of the repository so no packaged process reads the checkout. */
 export async function stageProviderFixtures(
@@ -182,21 +175,22 @@ export async function stageProviderFixtures(
 ): Promise<Launcher['providers']> {
   await mkdir(directory, { recursive: true })
   const codexMock = join(directory, 'codex_mock.py')
-  const fakeSdk = join(directory, 'claude-fake-sdk.mjs')
   const server = join(directory, 'codex-unix-server.mjs')
   const codexCli = join(directory, 'codex')
-  const runner = join(directory, 'claude-runner.mjs')
+  const sdk = join(directory, 'claude-sdk.mjs')
   await copyFile(join(repositoryRoot, 'scripts/fixtures/codex_mock.py'), codexMock)
-  await copyFile(join(repositoryRoot, 'providers/claude/fake-sdk.mjs'), fakeSdk)
+  // Packaging leaves the SDK double out of the bundle, so it is staged here.
+  for (const name of ['worker-test-sdk.mjs', 'worker-test-store.mjs', 'worker-test-scenarios.mjs'])
+    await copyFile(join(repositoryRoot, 'providers/claude', name), join(directory, name))
   await writeFile(server, codexServer)
   await writeFile(codexCli, `#!/bin/sh\nexec '${paths.bun}' '${server}' "$@"\n`, { mode: 0o755 })
-  await writeFile(runner, claudeRunner(paths, fakeSdk))
+  await writeFile(sdk, claudeSdk)
   return (profileRoot) => ({
     ADE_CODEX_BIN: codexCli,
     ADE_E2E_CODEX_MOCK: codexMock,
     ADE_MOCK_DIR: mockDirectory(profileRoot, 'codex'),
-    ADE_CLAUDE_BRIDGE: runner,
-    ADE_MOCK_CLAUDE_DIR: mockDirectory(profileRoot, 'claude'),
+    ADE_E2E_CLAUDE_SDK: sdk,
+    ADE_CLAUDE_WORKER_TEST_DIR: mockDirectory(profileRoot, 'claude'),
   })
 }
 

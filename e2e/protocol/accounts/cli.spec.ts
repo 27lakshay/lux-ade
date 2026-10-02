@@ -7,7 +7,6 @@
 import { execFile } from 'node:child_process'
 import { chmod, copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import { expect, test, type ScratchProfile } from '../fixtures'
 import { repositoryRoot } from '../fixtures/environment'
@@ -84,7 +83,6 @@ test('CLI exposes managed account metadata and requires explicit account selecti
 
 test('CLI verifies and sends through a managed Claude account using an external provider fixture', async ({ ade }) => {
   const nativeCli = join(ade.root, 'claude')
-  const bridge = join(ade.root, 'bridge.mjs')
   await writeFile(
     nativeCli,
     `#!/usr/bin/env node
@@ -101,21 +99,9 @@ else if (process.argv[2] === '--setting-sources' && process.argv[3] === ''
 `,
   )
   await chmod(nativeCli, 0o700)
-  const provider = (file: string) => JSON.stringify(pathToFileURL(join(repositoryRoot, 'providers/claude', file)).href)
-  await writeFile(
-    bridge,
-    `#!/usr/bin/env node
-import { join } from 'node:path';
-import { serve } from ${provider('bridge.mjs')};
-import { fakeSdk } from ${provider('fake-sdk.mjs')};
-serve(fakeSdk(join(process.env.CLAUDE_CONFIG_DIR, 'sessions')));
-`,
-  )
-  await chmod(bridge, 0o700)
   const profile = await ade.profile({
     env: {
       ADE_CLAUDE_BIN: nativeCli,
-      ADE_CLAUDE_BRIDGE_BIN: bridge,
       ANTHROPIC_API_KEY: 'ambient-credential-must-not-be-used',
     },
   })
@@ -153,7 +139,53 @@ serve(fakeSdk(join(process.env.CLAUDE_CONFIG_DIR, 'sessions')));
   await expect
     .poll(async () => (await profile.cli('conversation', 'inspect', conversation.id)).json!.conversation)
     .toMatchObject({ status: 'ready', account_id: account.id })
-  expect(await readFile(join(account.native_home, 'sessions', 'calls.jsonl'), 'utf8')).toContain('hello from CLI')
+  // The managed launch ran the Claude SDK double under the account's home, where it logs its calls.
+  expect(await readFile(join(account.native_home, 'ade-mock', 'calls.jsonl'), 'utf8')).toContain('hello from CLI')
+
+  // Ticket 09: the open session records what it was bound to, and the CLI and SDK read the same record.
+  const bound = (await profile.call('conversation.get', { conversation_id: conversation.id })).conversation
+  expect(bound.execution).toMatchObject({
+    account_context: 'managed',
+    account_id: account.id,
+    account_generation: (verified.json!.account as Account).generation,
+    source_attempt_id: bound.runtime_run,
+    native_session: bound.provider_thread_id,
+    reattached: false,
+  })
+  expect((await profile.cli('conversation', 'inspect', conversation.id)).json!.conversation).toMatchObject({
+    execution: bound.execution,
+  })
+
+  // A logout cannot be undone by a delayed refresh, and the next send is refused before launch.
+  const disabled = (await profile.cli('account', 'disable', account.id)).json!.account as Account
+  expect(disabled.state).toBe('disabled')
+  const stale = await profile.cli(
+    'account',
+    'verify',
+    account.id,
+    String((verified.json!.account as Account).generation),
+    JSON.stringify(inspection.identity),
+  )
+  expect(stale.code).not.toBe(0)
+  expect(
+    ((await profile.cli('account', 'list')).json!.accounts as Account[]).find((a) => a.id === account.id)!.state,
+  ).toBe('disabled')
+  const refused = await profile.cli('conversation', 'send', conversation.id, 'after logout')
+  expect(refused.code).not.toBe(0)
+  expect(await readFile(join(account.native_home, 'ade-mock', 'calls.jsonl'), 'utf8')).not.toContain('after logout')
+  expect(
+    JSON.stringify((await profile.call('conversation.get', { conversation_id: conversation.id })).messages),
+  ).not.toContain('ambient-credential-must-not-be-used')
+
+  // An ambient conversation says so; ADE does not claim to isolate the machine's own login.
+  const ambient = (await profile.cli('conversation', 'create', workspace_id, 'claude', 'Ambient')).json!
+    .conversation as {
+    id: string
+  }
+  await profile.cli('conversation', 'send', ambient.id, 'ambient hello')
+  await expect
+    .poll(async () => (await profile.call('conversation.get', { conversation_id: ambient.id })).conversation.execution)
+    .toMatchObject({ account_context: 'ambient', account_id: null, account_generation: null })
 })
 
 /** Write one Oh My Pi native OAuth credential into the account's agent.db. */

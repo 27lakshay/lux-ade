@@ -13,7 +13,7 @@ import { cancellationIntent, expect, prompts, send, startConversation, test, typ
 import { mockDirectory } from '../fixtures/providers'
 
 async function conversation(profile: ScratchProfile, conversationId: string) {
-  return profile.call('conversation.get', { conversation_id: conversationId, limit: 200 })
+  return profile.call('conversation.get', { conversation_id: conversationId, limit: 32 })
 }
 
 async function runningTurn(profile: ScratchProfile, conversationId: string, sent = true): Promise<string> {

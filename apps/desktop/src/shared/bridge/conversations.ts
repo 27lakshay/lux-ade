@@ -1,4 +1,5 @@
 import type { CallRequest, DailyUseResponse, FeedFrame } from '@ade/client'
+import type { PluginComposerContribution, PluginTimelineContribution } from '@ade/contracts'
 import type { ConversationOperation } from './operations'
 import type { PendingSend } from './types'
 
@@ -49,6 +50,11 @@ type LocalRequests = {
   'draft.get': { conversation_id: string; view_id: string }
   'draft.save': { conversation_id: string; text: string; view_id: string }
   'draft.flush': { conversation_id: string; view_id: string }
+  /** Chooses files in a native dialog and adds them to the draft once the daemon imported each. */
+  'draft.attach': { conversation_id: string; view_id: string }
+  'draft.detach': { conversation_id: string; view_id: string; attachment_id: string }
+  /** Writes the readable export to a file chosen in a native save dialog; null when cancelled. */
+  'conversation.export.file': { conversation_id: string }
   'draft.stash.list': { conversation_id: string; view_id: string }
   'draft.stash.restore': { conversation_id: string; name: string; stash_revision: number; view_id: string }
   'agent.send': {
@@ -63,6 +69,9 @@ type LocalResponses = {
   'draft.get': DraftState
   'draft.save': DraftState
   'draft.flush': DraftState
+  'draft.attach': DraftState
+  'draft.detach': DraftState
+  'conversation.export.file': { file: string; message_count: number; format: string } | null
   'draft.stash.list': DailyUseResponse<'draft.stash.list'>
   'draft.stash.restore': DraftState
   'agent.send': SendResult
@@ -98,6 +107,18 @@ export type SendJournalImport = {
   replay: 'held-until-cross-owner-reconciliation'
 }
 
+/** An enabled plugin's UI entry point for its current activation generation, and what it declares. */
+export type PluginUiEntry = {
+  plugin_id: string
+  name: string
+  version: string
+  generation: number
+  /** `ade-plugin://<plugin ID>/<generation>/<entry path>`, served only while that generation is current. */
+  url: string
+  timeline: PluginTimelineContribution[]
+  composer: PluginComposerContribution[]
+}
+
 /** `window.adeHost.conversations`: the main-process `conversations` module. */
 export interface ConversationsBridge {
   request<O extends ConversationOperation>(op: O, fields: ConversationRequest<O>): Promise<ConversationResponse<O>>
@@ -106,4 +127,6 @@ export interface ConversationsBridge {
   importSendJournal(bundle: string, sourceProfileId: string, targetProfileId: string): Promise<SendJournalImport>
   onFeedFrame(listener: (frame: FeedFrame) => void): () => void
   onDraftError(listener: (value: DraftError) => void): () => void
+  /** The enabled plugins with a UI entry point; main serves only these generations' files. */
+  pluginUiEntries(): Promise<PluginUiEntry[]>
 }

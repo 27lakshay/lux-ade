@@ -1,7 +1,8 @@
 // F023, 04-S11: a refused plugin uninstall keeps every idle Conversation on
 // the generation it started on; delegated children, parallel runs,
-// provider.capabilities and provider.readiness reach plugin providers through
-// the provider registry rather than the static catalogue.
+// provider.capabilities reaches plugin providers through the provider registry
+// and provider.readiness through the installed worker, rather than the static
+// catalogue.
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { expect, send, test, waitForIdle, waitForMessage, type ScratchProfile } from '../fixtures'
@@ -82,7 +83,7 @@ test('F023: a delegated child and a parallel run can use a plugin provider', asy
   const provider = `plugin:${pluginId}`
   const { parent } = await parentIn(profile, profile.defaultWorkspaceRoot)
 
-  // A plugin provider runs on the agent's own login; inheriting the parent's account needs its provider.
+  // Inheriting the parent's account needs the parent's provider.
   await expect(
     profile.call('orchestration.delegate', {
       operation_id: opId('inherit'),
@@ -104,7 +105,9 @@ test('F023: a delegated child and a parallel run can use a plugin provider', asy
       workspace: { mode: 'same' },
       task: 'hello',
     }),
-  ).rejects.toThrow(/manages no accounts/)
+    // This plugin's worker declares account inspection, so a managed account is looked up like a
+    // bundled provider's; one that does not exist is refused.
+  ).rejects.toThrow(/Unknown accounts ID: acct/)
   await expect(
     profile.call('orchestration.delegate', {
       operation_id: opId('missing'),
@@ -166,35 +169,48 @@ test('F023: provider.capabilities and provider.readiness describe a plugin provi
     name: 'E2E agent',
     conversation: {
       resume: { support: 'supported' },
-      steering: { support: 'unknown' },
+      // Controls and managed accounts follow the operations the worker declared.
+      steering: { support: 'unsupported' },
       account_switch: { support: 'unsupported' },
     },
-    managed_accounts: { support: 'unsupported' },
+    managed_accounts: { support: 'supported' },
     permission_modes: [{ id: 'default', support: 'supported' }],
   })
   expect(providers[0].fingerprint).toMatch(/^[0-9a-f]{64}$/)
   const all = (await profile.call('provider.capabilities', {})).providers.map((record) => record.provider)
   expect(all).toEqual(expect.arrayContaining(['codex', 'claude', provider]))
 
+  // Readiness runs the installed worker's read-only initialization (provider SDK ticket 02); it
+  // never starts native provider work, so that check is skipped and authentication stays unchecked.
   const readiness = await profile.call('provider.readiness', { provider })
   expect(readiness).toMatchObject({
     provider,
     account_id: null,
     state: 'installed_unchecked',
-    version: null,
-    checks: [{ check: 'registration', state: 'passed' }],
+    version: '1.0.0',
+    checks: [
+      { check: 'worker.initialize', state: 'passed' },
+      { check: 'provider.native_work', state: 'skipped' },
+    ],
   })
-  expect(readiness.reason).toMatch(/cannot check/)
-  await expect(profile.call('provider.readiness', { provider, account_id: 'acct' })).rejects.toThrow(
-    /manages no accounts/,
-  )
+  expect(readiness.reason).toMatch(/not checked/)
+  await expect(profile.call('provider.readiness', { provider, account_id: 'acct' })).rejects.toThrow(/account\.inspect/)
 
   // A disabled plugin registers no provider; both operations say so rather than reporting stale data.
   await profile.call('plugin.disable', { plugin_id: pluginId })
   await expect(profile.call('provider.capabilities', { provider })).rejects.toThrow(
     /No enabled plugin registers provider/,
   )
-  await expect(profile.call('provider.readiness', { provider })).rejects.toThrow(/No enabled plugin registers provider/)
+  // Readiness answers with its typed missing state, as it does for a missing bundled provider.
+  expect(await profile.call('provider.readiness', { provider })).toMatchObject({
+    provider,
+    state: 'missing_executable',
+    reason: expect.stringMatching(/No enabled plugin registers this provider/),
+    checks: [
+      { check: 'worker.initialize', state: 'failed' },
+      { check: 'provider.native_work', state: 'skipped' },
+    ],
+  })
   expect((await profile.call('provider.capabilities', {})).providers.map((record) => record.provider)).not.toContain(
     provider,
   )

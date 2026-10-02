@@ -121,12 +121,12 @@ mod tests {
 
     #[test]
     fn reasoning_levels_are_only_declared_selectable_when_a_launch_can_carry_them() {
-        // `provider::Config` has no reasoning field yet, so no adapter may
-        // claim reasoning selection until one is added end to end.
+        // A provider claims reasoning selection exactly when `provider::Config`
+        // carries levels for it end to end (`reasoning_efforts`).
         for record in records() {
-            assert_ne!(
-                record.reasoning.selection.support,
-                Support::Supported,
+            assert_eq!(
+                record.reasoning.selection.support == Support::Supported,
+                !ade_core::provider::reasoning_efforts(&record.provider).is_empty(),
                 "{}",
                 record.provider
             );

@@ -3,6 +3,8 @@
 // retained and the session continues. A lost reply is read back after a crash
 // without a second native call. ADE never claims a context state the provider
 // did not report.
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import {
   conversationStatus,
   expect,
@@ -15,7 +17,9 @@ import {
   waitForMessage,
   type ScratchProfile,
 } from '../fixtures'
+import { repositoryRoot } from '../fixtures/environment'
 import { sendAndLoseReply } from '../fixtures/lost-reply'
+import { mockDirectory } from '../fixtures/providers'
 import { snapshot } from './helpers'
 
 async function nativeCompactions(profile: ScratchProfile) {
@@ -35,7 +39,7 @@ test('F040: a Codex compaction keeps its native provenance and the earlier histo
     (await profile.call('conversation.controls', { conversation_id: conversationId })).controls.find(
       (entry) => entry.control === 'compact',
     ),
-  ).toMatchObject({ available: true, mechanism: 'thread/compact/start' })
+  ).toMatchObject({ available: true, mechanism: 'worker.compact' })
 
   const reply = await profile.call('conversation.compact', {
     operation_id: 'compact-keep',
@@ -116,11 +120,11 @@ test('F040: an unsupported provider or a busy Conversation reports why and recor
   })
   expect(unsupported).toMatchObject({
     outcome: 'unavailable',
-    reason: "ADE's Claude adapter does not issue Claude Code's compaction command yet",
+    reason: "ADE's Claude worker does not issue Claude Code's /compact command",
   })
   const cli = await profile.cli('conversation', 'compact', claude, '--operation-id', 'compact-claude-cli')
   expect(cli.code).not.toBe(0)
-  expect(cli.stderr).toContain('compaction command')
+  expect(cli.stderr).toContain('/compact command')
 
   const codex = (await startConversation(profile, 'codex')).conversationId
   await send(profile, codex, prompts.hold)
@@ -134,4 +138,75 @@ test('F040: an unsupported provider or a busy Conversation reports why and recor
     ).toBe(false)
   }
   expect(await nativeCompactions(profile)).toEqual([])
+})
+
+test('PC35: tool material a provider repeats while compacting is not a second execution and joins no other tool', async ({
+  profile,
+}) => {
+  const { conversationId } = await startConversation(profile, 'codex')
+  await send(profile, conversationId, 'typed-tool')
+  await waitForIdle(profile, conversationId)
+  const before = await snapshot(profile, conversationId)
+  const tools = (messages: typeof before.messages) => messages.filter((message) => message.kind === 'commandExecution')
+  const [original] = tools(before.messages)
+  expect(original).toBeDefined()
+
+  await writeFile(join(mockDirectory(profile.root, 'codex'), 'compact-replay-tools'), '')
+  await profile.call('conversation.compact', { operation_id: 'compact-replay', conversation_id: conversationId })
+  await waitForMessage(profile, conversationId, compactionText)
+  await waitForIdle(profile, conversationId)
+
+  // The repeated item is the same execution: one record, with its own turn and output unchanged.
+  const after = await snapshot(profile, conversationId)
+  expect(tools(after.messages)).toEqual([original])
+  expect(after.messages.filter((message) => message.kind === 'contextCompaction')).toHaveLength(1)
+
+  // A later tool gets only its own output, never the repeated material.
+  await send(profile, conversationId, 'typed-tool')
+  await waitForIdle(profile, conversationId)
+  const later = tools((await snapshot(profile, conversationId)).messages)
+  expect(later).toHaveLength(2)
+  expect(later[0]).toEqual(original)
+  expect(later[1]!.provider_item_id).not.toBe(original!.provider_item_id)
+  expect(later[1]!.text).toBe(original!.text)
+})
+
+test("PC02: Oh My Pi compaction is offered from its worker's declaration and performed through the native RPC compact", async ({
+  ade,
+}) => {
+  // The Oh My Pi CLI is the recording fixture `providers/omp/mock-cli.mjs`.
+  const calls = join(ade.root, 'omp-mock')
+  await mkdir(calls, { recursive: true })
+  const profile = await ade.profile({
+    env: { ADE_OMP_BIN: join(repositoryRoot, 'providers/omp/mock-cli.mjs'), ADE_MOCK_OMP_DIR: calls },
+  })
+  const { conversationId } = await startConversation(profile, 'omp')
+  await send(profile, conversationId, 'hello')
+  await waitForMessage(profile, conversationId, 'Hello Oh My Pi')
+  await waitForIdle(profile, conversationId)
+  const controls = (await profile.call('conversation.controls', { conversation_id: conversationId })).controls
+  expect(controls.find((entry) => entry.control === 'compact')).toMatchObject({
+    available: true,
+    mechanism: 'worker.compact',
+  })
+  // What the worker declares unsupported reports the worker's own reason.
+  expect(controls.find((entry) => entry.control === 'rewind_conversation')?.reason).toContain('Oh My Pi RPC has branch')
+  const compacts = async () =>
+    (await readFile(join(calls, 'calls.jsonl'), 'utf8').catch(() => ''))
+      .split('\n')
+      .filter((line) => line.includes('"method":"compact"')).length
+  expect(
+    await profile.call('conversation.compact', { operation_id: 'compact-omp', conversation_id: conversationId }),
+  ).toMatchObject({ outcome: 'acknowledged', control: 'compact' })
+  expect(await compacts()).toBe(1)
+  // A retry under the same operation ID replays the receipt without a second native compaction.
+  expect(
+    await profile.call('conversation.compact', { operation_id: 'compact-omp', conversation_id: conversationId }),
+  ).toMatchObject({ outcome: 'acknowledged', control: 'compact' })
+  expect(await compacts()).toBe(1)
+  await send(profile, conversationId, 'after compaction')
+  await expect
+    .poll(async () => (await snapshot(profile, conversationId)).messages.map((m) => m.text))
+    .toContain('after compaction')
+  await waitForIdle(profile, conversationId)
 })

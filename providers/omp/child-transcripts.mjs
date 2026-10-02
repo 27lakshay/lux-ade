@@ -4,46 +4,6 @@ import { isAbsolute } from 'node:path'
 import { parseSessionEntries } from '@oh-my-pi/pi-coding-agent/session/session-loader'
 import { projectHistory } from './history.mjs'
 
-export class ChildTranscripts {
-  constructor(db) {
-    this.db = db
-    db.exec(`CREATE TABLE IF NOT EXISTS child_transcripts (
-      parent TEXT NOT NULL, child TEXT NOT NULL, file TEXT NOT NULL, header_id TEXT,
-      PRIMARY KEY(parent, child)
-    )`)
-  }
-  remember(parent, payload) {
-    if (!payload?.sessionFile) return
-    if (
-      typeof payload.id !== 'string' ||
-      !payload.id ||
-      Buffer.byteLength(payload.id) > 4096 ||
-      typeof payload.sessionFile !== 'string' ||
-      !isAbsolute(payload.sessionFile) ||
-      Buffer.byteLength(payload.sessionFile) > 4096
-    )
-      throw new Error('Invalid Oh My Pi child transcript identity')
-    const existing = this.db
-      .query('SELECT file FROM child_transcripts WHERE parent=? AND child=?')
-      .get(parent, payload.id)
-    if (existing && existing.file !== payload.sessionFile) throw new Error('Oh My Pi child transcript path changed')
-    this.db
-      .query('INSERT OR IGNORE INTO child_transcripts(parent,child,file) VALUES (?,?,?)')
-      .run(parent, payload.id, payload.sessionFile)
-  }
-  async read(parent, child, offset) {
-    const record = this.db
-      .query('SELECT file,header_id FROM child_transcripts WHERE parent=? AND child=?')
-      .get(parent, child)
-    if (!record) throw new Error('Child transcript was not announced by this Oh My Pi session')
-    const result = await readChildTranscript(record.file, child, offset, record.header_id)
-    this.db
-      .query('UPDATE child_transcripts SET header_id=? WHERE parent=? AND child=? AND header_id IS NULL')
-      .run(result.header_id, parent, child)
-    return result.page
-  }
-}
-
 // The public worker keeps this native reference only in its session-local map.
 export async function readChildTranscript(file, child, offset, expectedHeaderId = null) {
   if (

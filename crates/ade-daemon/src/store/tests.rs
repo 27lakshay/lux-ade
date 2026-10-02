@@ -816,9 +816,21 @@ fn dense_small_rows_share_one_decoded_page_budget_without_changing_durable_ident
         )
         .unwrap();
     assert!(raw_bytes < 524288);
-    let failure = store.messages(&conversation.id, None, 32).unwrap_err();
+    // The window keeps the newest rows that fit the decoded budget and stops
+    // before the first older row that would exceed it; the caller pages older.
+    let window = store.messages(&conversation.id, None, 32).unwrap();
+    assert!(!window.is_empty() && window.len() < 32);
+    assert_eq!(window.last().unwrap().sequence, 32);
+    let older = store
+        .messages(&conversation.id, Some(window[0].sequence), 32)
+        .unwrap();
+    assert_eq!(older.last().unwrap().sequence, window[0].sequence - 1);
+    // A read that needs every row still refuses rather than drop any.
     assert_eq!(
-        failure.downcast_ref::<ade_core::error::Failure>(),
+        store
+            .messages_from(&conversation.id, 0)
+            .unwrap_err()
+            .downcast_ref::<ade_core::error::Failure>(),
         Some(&ade_core::error::Failure::ResourceLimit)
     );
     let bounded = store.messages(&conversation.id, None, 8).unwrap();

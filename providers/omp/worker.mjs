@@ -9,6 +9,7 @@ import { promptPayload } from './admission.mjs'
 import { TextStream } from './stream.mjs'
 import { Subagents } from './subagents.mjs'
 import { readChildTranscript } from './child-transcripts.mjs'
+import { discover, stateSettings } from './settings.mjs'
 const descriptor = JSON.parse(process.env.ADE_OMP_WORKER_DESCRIPTOR ?? 'null')
 if (!descriptor) throw new Error('The owning ADE runtime must provide OMP worker metadata')
 const failure = (code, message) => ({ code, message })
@@ -38,6 +39,22 @@ runProviderWorker({
     let nativeState
     let mcpServers = null
     let currentAttempt = null
+    // The attempt that owned the native agent run in progress, set at agent_start.
+    let runOwner = null
+    // Native user entries linked to the admitted prompt they echo: native ID -> admitted message ID.
+    const echoes = new Map()
+    // OMP echoes the prompt it was sent without a native correlation ID. Prompts are serialized
+    // (send refuses unless OMP is idle), so the first user entry with the exact admitted text after
+    // that send is its echo, and keeps the admitted native message ID wherever it is re-emitted.
+    const linkEcho = (item, attempt = currentAttempt) => {
+      if (item.role !== 'user') return item
+      if (!echoes.has(item.id) && attempt?.messageId && !attempt.echoed && item.text === attempt.text) {
+        attempt.echoed = true
+        echoes.set(item.id, attempt.messageId)
+        while (echoes.size > 256) echoes.delete(echoes.keys().next().value)
+      }
+      return echoes.has(item.id) ? { ...item, id: echoes.get(item.id) } : item
+    }
     const promptAttempts = new Map()
     let lastAssistant = null
     let stream = new TextStream()
@@ -93,6 +110,7 @@ runProviderWorker({
         }
         emit({ type: 'item', session, submission: null, item: { ...child, turn: null } })
       }
+      if (frame.type === 'agent_start') runOwner = currentAttempt
       if (frame.type === 'message_start' || frame.type === 'message_update' || frame.type === 'message_end') {
         if (frame.message?.role === 'assistant' && frame.type === 'message_end') {
           lastAssistant = frame.message
@@ -108,19 +126,27 @@ runProviderWorker({
         for (const event of stream.consume(frame, null))
           emit({
             ...event,
-            ...(event.type === 'item' ? { item: { ...event.item, turn: null } } : {}),
+            ...(event.type === 'item' ? { item: linkEcho({ ...event.item, turn: null }) } : {}),
             session,
             submission: null,
           })
         if (frame.type === 'message_end') await reconcile()
       } else if (frame.type === 'agent_end') {
-        // agent_end has no native RPC correlation; it must not clear a newer attempt.
+        // agent_end has no native RPC correlation; it must not clear a newer attempt. It settles
+        // the one acknowledged attempt only when a fresh state sample shows OMP idle with nothing
+        // queued; otherwise the finish stays unattributed.
         const last =
           [...(frame.messages ?? [])].reverse().find((message) => message.role === 'assistant') ?? lastAssistant
+        // The run that just ended belongs to the attempt that was current when it started;
+        // a late agent_end from an older run therefore cannot settle a newer prompt.
+        const attempt = runOwner
+        runOwner = null
+        const settled = attempt
+        if (attempt && currentAttempt === attempt) currentAttempt = null
         emit({
           type: 'finished',
           session,
-          submission: null,
+          submission: settled?.submission ?? null,
           turn: null,
           interrupt_requested: false,
           status:
@@ -164,11 +190,12 @@ runProviderWorker({
         if (submitted && currentAttempt === submitted) currentAttempt = null
       }
     }
-    const reconcile = async () => {
+    // The attempt is captured when the frame arrives: the refresh below can outlast its run.
+    const reconcile = async (attempt = currentAttempt) => {
       const snapshot = await history.refresh()
       const next = new Map()
       for (const item of projectHistory(snapshot).items) {
-        const projected = { ...item, turn: null, client_id: null }
+        const projected = linkEcho({ ...item, turn: null, client_id: null }, attempt)
         const encoded = JSON.stringify(projected)
         next.set(projected.id, encoded)
         if (reconciledItems.get(projected.id) !== encoded)
@@ -301,11 +328,17 @@ runProviderWorker({
             await transport.request('set_subagent_subscription', { level: 'progress' })
             history = new EntryHistory(transport)
             const snapshot = await history.refresh()
+            const choices = await discover(transport, nativeState)
             opened = true
             const initial = projectHistory(snapshot)
               .items.slice(-descriptor.limits.max_history_page_items)
               .map((item) => ({ ...item, turn: null, client_id: null }))
-            return { session, history: initial }
+            return {
+              session,
+              history: initial,
+              native_settings: stateSettings(nativeState),
+              ...(choices ? { native_choices: choices } : {}),
+            }
           },
           catch: (error) =>
             error?.code ? error : failure('provider_failure', error.message ?? 'Could not open Oh My Pi'),
@@ -331,6 +364,9 @@ runProviderWorker({
             const record = {
               sourceAttemptId: params.source_attempt_id,
               submission: params.submission,
+              messageId: params.message_id ?? null,
+              text: params.text,
+              echoed: false,
               rpcId,
               acknowledged: false,
               localComplete: false,
@@ -398,7 +434,25 @@ runProviderWorker({
                 ? sample.isStreaming || sample.isCompacting
                 : null
             const queued = Number.isSafeInteger(sample?.queuedMessageCount) ? sample.queuedMessageCount : null
-            if (active === false && queued === 0) currentAttempt = null
+            if (active === false && queued === 0) {
+              // OMP sampled idle with nothing queued after the abort: the attempt's work has
+              // ended. An abort before OMP started the run sends no agent_end, so finish the
+              // attempt here from that native sample; a later agent_end finds no owner.
+              currentAttempt = null
+              if (!runOwner || runOwner === attempt) {
+                runOwner = null
+                emit({
+                  type: 'finished',
+                  session,
+                  submission: attempt.submission,
+                  turn: null,
+                  interrupt_requested: true,
+                  status: 'interrupted',
+                  error: null,
+                  native_terminal: { stop_reason: 'aborted', is_error: false },
+                })
+              }
+            }
             return {
               type: 'cancel_result',
               evidence: {
@@ -567,12 +621,19 @@ async function historyPage(params, descriptor, history, session) {
   }
 }
 
+/**
+ * The profile MCP catalog as an ADE-owned OMP extension package (F131). Each launch rewrites it,
+ * so a resume reads the current catalog; a launch with no servers removes it.
+ */
 async function writeMcpExtension(root, sessionId, servers) {
-  if (!servers || !Object.keys(servers).length) return null
   const { createHash } = await import('node:crypto')
-  const { mkdir, rename, writeFile } = await import('node:fs/promises')
+  const { mkdir, rename, rm, writeFile } = await import('node:fs/promises')
   const paths = await import('node:path')
   const directory = join(root, 'mcp', createHash('sha256').update(sessionId).digest('hex').slice(0, 32))
+  if (!servers || typeof servers !== 'object' || !Object.keys(servers).length) {
+    await rm(directory, { recursive: true, force: true })
+    return null
+  }
   const mcpServers = Object.fromEntries(
     Object.entries(servers).map(([name, server]) => [
       name,

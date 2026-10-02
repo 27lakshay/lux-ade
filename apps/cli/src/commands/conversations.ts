@@ -1,6 +1,4 @@
 import { randomUUID } from 'node:crypto'
-import { link, open, unlink } from 'node:fs/promises'
-import { basename, dirname, join } from 'node:path'
 import {
   call,
   DaemonRequestError,
@@ -11,12 +9,12 @@ import {
   type DailyUseResponse,
 } from '@ade/client'
 import { deliverHeldSends, heldDirectSends, SendHeld, sendJournaled } from '@ade/client/journals'
+import { exportConversation as exportReadable, ExportError } from '@ade/client/export'
 import {
   boundedInteger,
   catalog,
   CliError,
   jsonObject,
-  object,
   effectOperationId,
   parseWords,
   positionals,
@@ -72,14 +70,19 @@ export const conversationUsage = `  conversation list [WORKSPACE_ID]      List c
   conversation mark-seen ID [--through UPDATED_AT]
                                         Mark the conversation seen, up to the change shown
   conversation create WORKSPACE_ID [PROVIDER] [TITLE] [--account ID] [--preset NAME]
-  conversation send ID TEXT [--request-id ID]
+  conversation send ID TEXT [--request-id ID] [--attach ATTACHMENT_ID]...
                                         Send a prompt; retain ID for safe lost-reply retries.
                                         An unanswered prompt stays held in the client journal
   conversation pending                  List prompts held in the client journal
   conversation deliver                  Deliver each held prompt once, under its original request ID
-  conversation cancel ID [--turn TURN_ID]
-                                        Request cancellation of the active turn; with --turn, only while that turn is active
-  conversation resume ID                Reconnect or resume a stopped agent
+  conversation cancel ID [--turn TURN_ID] [--wait]
+                                        Request cancellation of the active turn; with --turn, only while that turn is active.
+                                        The reply is acknowledgement only; --wait also reports the confirmed or unresolved stop
+  conversation terminate ID             End the provider process ADE owns for the current attempt, even mid-turn.
+                                        Child or background processes the provider started may survive
+  conversation resume ID [--continue-interrupted]
+                                        Reconnect or resume a stopped agent; after a prompt
+                                        whose outcome is unknown, resuming may continue it
   conversation disconnect ID            Stop the conversation's idle agent
   conversation child-transcript ID MESSAGE_ID CHILD_ID [--cursor CURSOR] [--offset 0..100000]
                                         Read one page of a provider child agent's transcript
@@ -88,140 +91,34 @@ export const conversationUsage = `  conversation list [WORKSPACE_ID]      List c
                                         For questions, pass a JSON object of question IDs to text or text arrays
 `
 
-/** Export through the public paginated read without holding the whole transcript in memory. */
-async function exportConversation(
-  socketPath: string,
-  conversationId: string,
-  destination: string,
-): Promise<Record<string, unknown>> {
-  const pageSize = 32
-  const first = await requestDaemon(socketPath, 'conversation.get', {
-    conversation_id: conversationId,
-    limit: pageSize,
-  })
-  if (first.type !== 'conversation_snapshot')
-    throw new CliError('protocol', 'Daemon returned an unexpected conversation response.')
-  const conversation = object(first.conversation)
-  if (
-    conversation.id !== conversationId ||
-    typeof first.boot_id !== 'string' ||
-    !first.boot_id ||
-    !Number.isSafeInteger(first.revision) ||
-    (first.revision as number) < 0
-  ) {
-    throw new CliError('protocol', 'Daemon returned invalid conversation identity or revision.')
-  }
-  const bootId = first.boot_id
-  const revision = first.revision
-  const conversationRecord = JSON.stringify(conversation)
-  const temporary = join(dirname(destination), `.${basename(destination)}.${randomUUID()}.tmp`)
-  let file: Awaited<ReturnType<typeof open>>
-  try {
-    file = await open(temporary, 'wx', 0o600)
-  } catch (error) {
-    throw new CliError('invalid_request', `Cannot create export file: ${String(error)}`)
-  }
-  let fileClosed = false
-  let count = 0
-  let oldest = Number.POSITIVE_INFINITY
-  let page = first
-  try {
-    await file.writeFile(
-      `{\n  "format": "ade-conversation-history-v1",\n  "scope": "conversation-history",\n  "message_order": "newest_first",\n  "boot_id": ${JSON.stringify(bootId)},\n  "revision": ${revision},\n  "conversation": ${JSON.stringify(conversation, null, 2)},\n  "messages": [\n`,
+/**
+ * Waits for the Stop `operationId` to leave `requested`. The daemon bounds that
+ * wait with its own settlement window, so this loop ends; a later Stop that
+ * replaces the record is reported as such rather than awaited.
+ */
+async function settledStop(socketPath: string, conversationId: string, operationId: string) {
+  for (;;) {
+    const { conversation } = decodeReply(
+      'conversation.get',
+      await requestDaemon(socketPath, 'conversation.get', { conversation_id: conversationId, limit: 1 }),
     )
-    for (;;) {
-      if (
-        page.type !== 'conversation_snapshot' ||
-        page.boot_id !== bootId ||
-        page.revision !== revision ||
-        !page.conversation ||
-        typeof page.conversation !== 'object' ||
-        (page.conversation as Record<string, unknown>).id !== conversationId ||
-        JSON.stringify(page.conversation) !== conversationRecord ||
-        !Array.isArray(page.messages) ||
-        page.messages.length > pageSize
-      ) {
-        throw new CliError(
-          'protocol',
-          'Conversation changed or daemon returned an invalid history page; retry the export.',
-        )
-      }
-      const messages = page.messages as unknown[]
-      let previous = 0
-      for (const value of messages) {
-        const message = object(value)
-        const sequence = message.sequence
-        if (
-          message.conversation_id !== conversationId ||
-          typeof message.id !== 'string' ||
-          !message.id ||
-          !Number.isSafeInteger(sequence) ||
-          (sequence as number) <= previous ||
-          (sequence as number) >= oldest ||
-          typeof message.role !== 'string' ||
-          typeof message.kind !== 'string' ||
-          typeof message.text !== 'string' ||
-          typeof message.status !== 'string'
-        ) {
-          throw new CliError('protocol', 'Daemon returned an invalid or overlapping history page; retry the export.')
-        }
-        previous = sequence as number
-      }
-      for (let index = messages.length - 1; index >= 0; index--) {
-        await file.writeFile(`${count ? ',\n' : ''}${JSON.stringify(messages[index], null, 2)}`)
-        count++
-      }
-      if (messages.length < pageSize) break
-      oldest = (messages[0] as Record<string, unknown>).sequence as number
-      page = await requestDaemon(socketPath, 'conversation.get', {
-        conversation_id: conversationId,
-        before: oldest,
-        limit: pageSize,
-      })
+    const stop = conversation.stop
+    if (!stop || stop.operation_id !== operationId) {
+      throw new CliError('conflict', 'A later Stop replaced this one; inspect the conversation for its outcome.')
     }
-    await file.writeFile('\n  ]\n}\n')
-    await file.sync()
-    await file.close()
-    fileClosed = true
-    try {
-      await link(temporary, destination)
-    } catch (error) {
-      const reason = error as NodeJS.ErrnoException
-      throw new CliError(
-        'invalid_request',
-        reason.code === 'EEXIST'
-          ? 'Export destination already exists; choose a new file.'
-          : `Cannot publish export file: ${String(error)}`,
-      )
-    }
-    try {
-      const directory = await open(dirname(destination), 'r')
-      try {
-        await directory.sync()
-      } finally {
-        await directory.close()
-      }
-    } catch (error) {
-      throw new CliError(
-        'invalid_request',
-        `Export was created, but directory sync failed; durability is unconfirmed: ${String(error)}`,
-      )
-    }
-    return {
-      type: 'conversation_export',
-      conversation_id: conversationId,
-      file: destination,
-      format: 'ade-conversation-history-v1',
-      message_count: count,
-      boot_id: bootId,
-      revision,
-    }
+    if (stop.outcome !== 'requested') return stop
+    await new Promise((resolve) => setTimeout(resolve, 200))
+  }
+}
+
+/** The SDK's readable export, with its failures as CLI errors. */
+async function exportConversation(socketPath: string, conversationId: string, destination: string) {
+  try {
+    return await exportReadable(socketPath, conversationId, destination)
   } catch (error) {
-    if (error instanceof CliError || error instanceof DaemonRequestError) throw error
+    if (error instanceof ExportError) throw new CliError(error.code, error.message)
+    if (error instanceof DaemonRequestError || error instanceof CliError) throw error
     throw new CliError('invalid_request', `Cannot write export file: ${String(error)}`)
-  } finally {
-    if (!fileClosed) await file.close()
-    await unlink(temporary).catch(() => undefined)
   }
 }
 
@@ -297,15 +194,20 @@ export async function runConversationCommand(
     return decodeReply('conversation.create', await requestDaemon(socketPath, 'conversation.create', fields))
   }
   if (area === 'conversation' && action === 'send') {
-    if (rest.length !== 2 && (rest.length !== 4 || rest[2] !== '--request-id')) {
-      throw new CliError('usage', 'conversation send requires ID TEXT [--request-id ID].')
+    const usage = 'conversation send requires ID TEXT [--request-id ID] [--attach ATTACHMENT_ID]...'
+    const [first, second, ...options] = rest
+    if (first === undefined || second === undefined || options.length % 2 !== 0) throw new CliError('usage', usage)
+    const conversationId = required(first, 'ID')
+    const text = required(second, 'TEXT')
+    if (conversationId.startsWith('--')) throw new CliError('usage', usage)
+    let suppliedId: string | undefined
+    const attachmentIds: string[] = []
+    for (let index = 0; index < options.length; index += 2) {
+      const [flag, value] = [options[index], options[index + 1]!]
+      if (flag === '--request-id' && suppliedId === undefined) suppliedId = value
+      else if (flag === '--attach' && value && !value.startsWith('--')) attachmentIds.push(value)
+      else throw new CliError('usage', usage)
     }
-    const conversationId = required(rest[0], 'ID')
-    const text = required(rest[1], 'TEXT')
-    if (conversationId.startsWith('--')) {
-      throw new CliError('usage', 'conversation send requires ID TEXT [--request-id ID].')
-    }
-    const suppliedId = rest[3]
     if (suppliedId !== undefined && (!suppliedId || suppliedId.startsWith('--') || suppliedId.length > 256)) {
       throw new CliError('usage', '--request-id requires an ID of 1 to 256 characters.')
     }
@@ -313,9 +215,18 @@ export async function runConversationCommand(
       throw new CliError('usage', '--request-id must be 1 to 128 letters, digits, "-" or "_".')
     }
     const requestId = suppliedId ?? randomUUID()
+    // The daemon's own record of each attachment; it checks them again at admission.
+    const attachments: unknown[] = []
+    for (const attachment_id of attachmentIds) {
+      const inspected = decodeReply(
+        'attachment.inspect',
+        await requestDaemon(socketPath, 'attachment.inspect', { conversation_id: conversationId, attachment_id }),
+      )
+      attachments.push(inspected.attachment)
+    }
     const response = await withJournals(({ send }, profileId) =>
       journalFailure(() =>
-        sendJournaled(send, { endpoint: socketPath, profileId, conversationId }, { requestId, text }),
+        sendJournaled(send, { endpoint: socketPath, profileId, conversationId }, { requestId, text, attachments }),
       ),
     )
     return { ...decodeReply('agent.send', response), request_id: requestId }
@@ -340,8 +251,8 @@ export async function runConversationCommand(
     }))
   }
   if (area === 'conversation' && action === 'cancel') {
-    const parsed = parseWords(rest, ['--turn'], [], 'conversation cancel')
-    const [conversation_id] = positionals(parsed, 1, 'conversation cancel requires ID [--turn TURN_ID]')
+    const parsed = parseWords(rest, ['--turn'], ['--wait'], 'conversation cancel')
+    const [conversation_id] = positionals(parsed, 1, 'conversation cancel requires ID [--turn TURN_ID] [--wait]')
     const turn = parsed.options['--turn']
     const { conversation } = decodeReply(
       'conversation.get',
@@ -350,10 +261,14 @@ export async function runConversationCommand(
     const source_attempt_id = conversation.runtime_run
     const submission_id = conversation.runtime_submission
     const target_turn_id = turn ?? conversation.active_turn_id ?? undefined
+    // The daemon's own first refusal, so the CLI and the SDK refuse alike.
+    if (!['starting', 'running', 'waiting', 'cancelling'].includes(conversation.status)) {
+      throw new CliError('daemon', 'Agent has no active turn')
+    }
     if (!source_attempt_id || !submission_id) {
       throw new CliError('usage', 'Conversation has no active cancellation target.')
     }
-    return decodeReply(
+    const outcome = decodeReply(
       'agent.cancel',
       await requestDaemon(socketPath, 'agent.cancel', {
         operation_id: effectOperationId(),
@@ -363,6 +278,35 @@ export async function runConversationCommand(
         ...(target_turn_id === undefined ? {} : { turn_id: target_turn_id }),
       }),
     )
+    if (!parsed.flags.has('--wait')) return outcome
+    return { ...outcome, stop: await settledStop(socketPath, conversation_id, outcome.operation_id) }
+  }
+  if (area === 'conversation' && action === 'terminate') {
+    if (rest.length !== 1) throw new CliError('usage', 'conversation terminate requires ID.')
+    const conversation_id = required(rest[0], 'ID')
+    const { conversation } = decodeReply(
+      'conversation.get',
+      await requestDaemon(socketPath, 'conversation.get', { conversation_id }),
+    )
+    if (!conversation.runtime_run) throw new CliError('usage', 'Conversation has no provider process to terminate.')
+    return decodeReply(
+      'agent.terminate',
+      await requestDaemon(socketPath, 'agent.terminate', {
+        operation_id: effectOperationId(),
+        conversation_id,
+        source_attempt_id: conversation.runtime_run,
+      }),
+    )
+  }
+  if (area === 'conversation' && action === 'resume') {
+    const continueInterrupted = rest[1] === '--continue-interrupted'
+    if (rest.length !== (continueInterrupted ? 2 : 1))
+      throw new CliError('usage', 'conversation resume requires ID [--continue-interrupted].')
+    return requestDaemon(socketPath, 'agent.resume', {
+      operation_id: effectOperationId(),
+      conversation_id: required(rest[0], 'ID'),
+      ...(continueInterrupted ? { continue_interrupted: true } : {}),
+    })
   }
   if (area === 'conversation' && (action === 'resume' || action === 'disconnect')) {
     if (rest.length !== 1) throw new CliError('usage', `conversation ${action} requires ID.`)

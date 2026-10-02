@@ -7,6 +7,7 @@ import { join, relative } from 'node:path'
 import type { Page } from '@playwright/test'
 import { expect, prompts, test, turnReply, waitForIdle, waitForMessage, type ScratchProfile } from './fixtures'
 import { binaries, repositoryRoot } from '../protocol/fixtures/environment'
+import { isRunning } from '../protocol/fixtures/processes'
 
 async function sha256(path: string): Promise<string> {
   const hash = createHash('sha256')
@@ -28,11 +29,14 @@ async function startConversation(profile: ScratchProfile, title: string) {
 }
 
 /** A conversation request through the window's bridge; a refusal comes back as its message. */
-function request(
+async function request(
   page: Page,
   op: 'draft.save' | 'agent.send' | 'agent.retry_send',
   fields: Record<string, string>,
 ): Promise<SendReply | { refused: string }> {
+  // Requests carry the rendered view's tab ID; a re-render must not leave it empty.
+  if (fields.conversation_id)
+    await expect(page.locator(`[data-conversation-id="${fields.conversation_id}"][data-tab-id]`).first()).toBeVisible()
   return page.evaluate(
     ({ op, fields }) =>
       (
@@ -123,12 +127,52 @@ test('a prompt sent from the window starts one turn, and a repeat of it is not s
   expect(live.runtime_run).toBeTruthy()
   expect(live.runtime_submission).toBeTruthy()
   await view.getByRole('button', { name: 'Stop current turn' }).click()
-  const cancellationEvidence = view.getByRole('status', { name: 'Cancellation evidence' })
-  await expect(cancellationEvidence).toBeVisible()
-  await expect(cancellationEvidence).toContainText(
-    `targeted attempt ${live.runtime_run} and submission ${live.runtime_submission}`,
-  )
-  await expect(cancellationEvidence).not.toContainText(/\bstopped\b/i)
+  // The window shows the daemon's Stop record: confirmed only by the native terminal event.
+  const stopStatus = view.getByRole('status', { name: 'Stop status' })
+  await expect(stopStatus).toHaveAttribute('data-stop-outcome', 'confirmed')
+  await expect(stopStatus).toContainText('The provider reported the turn ended (interrupted).')
+  const settled = (await profile.call('conversation.get', { conversation_id: conversationId })).conversation
+  expect(settled.stop).toMatchObject({
+    source_attempt_id: live.runtime_run,
+    submission_id: live.runtime_submission,
+    outcome: 'confirmed',
+    confirmation: 'native_terminal',
+  })
+  await expect(view.getByRole('button', { name: 'Stop current turn' })).toHaveCount(0)
+})
+
+test('an unconfirmed Stop stays unresolved in the window until termination ends the provider process', async ({
+  ade,
+  desktop,
+}, testInfo) => {
+  const profile = await ade.profile({ env: { ADE_E2E_STOP_SETTLE_MS: '1500' } })
+  const { conversationId } = await startConversation(profile, 'Unconfirmed stop')
+  const { window: page } = await desktop.launch(profile)
+  await conversationRow(page, 'Unconfirmed stop').click()
+  const view = page.locator(`[data-conversation-id="${conversationId}"]`)
+  await expect(view).toBeVisible()
+  await type(page, conversationId, prompts.hold)
+  expect(
+    await request(page, 'agent.send', { conversation_id: conversationId, request_id: 'held', text: prompts.hold }),
+  ).toMatchObject({ type: 'ack' })
+  await expect.poll(() => turns(profile)).toBe(1)
+  const provider = (await profile.mockCalls('codex')).at(-1)!.pid
+  // The provider acknowledges the interrupt but never reports the turn ending.
+  await profile.releaseMock('codex', 'defer-interrupt')
+  await view.getByRole('button', { name: 'Stop current turn' }).click()
+  const stopStatus = view.getByRole('status', { name: 'Stop status' })
+  await expect(stopStatus).toHaveAttribute('data-stop-outcome', 'unresolved')
+  await expect(stopStatus).toContainText('Stop unresolved')
+  await expect(stopStatus).toContainText('did not report the turn ending')
+  await expect(stopStatus).not.toContainText(/^Stopped/)
+  await testInfo.attach('stop-unresolved.png', { body: await page.screenshot(), contentType: 'image/png' })
+
+  await view.getByRole('button', { name: 'Terminate provider process' }).click()
+  await expect(stopStatus).toHaveAttribute('data-stop-outcome', 'confirmed')
+  await expect(stopStatus).toContainText('The provider process ended.')
+  await expect(stopStatus).toContainText('may still be running')
+  await testInfo.attach('stop-terminated.png', { body: await page.screenshot(), contentType: 'image/png' })
+  await expect.poll(() => isRunning(provider)).toBe(false)
 })
 test('two live conversation views fence conflicting drafts and recover only the listed stash revision', async ({
   ade,
@@ -203,11 +247,13 @@ test('two live conversation views fence conflicting drafts and recover only the 
     })
     .toEqual({
       localDraft: conflictingDraft,
-      localError: '',
+      // The conflict is reported, and the second view's text is kept as a recovery copy.
+      localError: 'Draft revision changed or could not be confirmed; its text and context are saved for recovery',
       draftText: 'hello',
       stashTexts: [conflictingDraft],
     })
   await expect(secondPrompt).toHaveText(conflictingDraft)
+  await expect(secondView.getByText(/Draft revision changed/)).toBeVisible()
 
   // Hold the first actual UI send between its durable journal write and daemon dispatch.
   await firstTab.click()
@@ -267,7 +313,7 @@ test('two live conversation views fence conflicting drafts and recover only the 
   expect(revised.outcome).toBe('replaced')
   expect(revised.stash.revision).toBeGreaterThan(listedStash!.revision)
   await firstComposer.getByRole('button', { name: 'Restore draft 1' }).click()
-  await expect(firstComposer.getByText(/Could not restore saved draft. Saved draft recovery changed/)).toBeVisible()
+  await expect(firstComposer.getByText(/Could not restore the saved draft. Saved draft recovery changed/)).toBeVisible()
   expect(await readServerDraft()).toMatchObject({ text: currentDraft })
   await expect(firstPrompt).toHaveText(currentDraft)
 
@@ -377,12 +423,10 @@ test('an admitted intent reconciles after Electron restarts without starting ano
   await reopenedFirstTab.click()
   const reopenedView = reopened.locator(`[data-conversation-id="${conversationId}"][data-tab-id="${firstTabId}"]`)
   await expect(reopenedView).toBeVisible()
+  // The native agent already accepted the prompt, so the restored intent settles from that
+  // evidence under its own request ID: no Reconcile action is needed and no turn starts again.
   const composer = reopenedView.getByRole('form', { name: 'Prompt composer' })
-  await expect(composer.getByRole('button', { name: 'Reconcile delivery' })).toBeVisible()
-  expect(await userMessages(profile, conversationId)).toEqual([text])
-  expect(await turns(profile)).toBe(1)
-
-  await composer.getByRole('button', { name: 'Reconcile delivery' }).click()
+  await expect(composer.getByRole('button', { name: 'Reconcile delivery' })).toHaveCount(0)
   await expect
     .poll(async () => (await reopened.evaluate(() => window.adeHost.conversations.listPendingSends())).length)
     .toBe(0)

@@ -118,6 +118,7 @@ for (const [packageName, folder] of [
   ['ade-claude-adapter', 'claude'],
   ['ade-codex-worker', 'codex'],
   ['ade-omp-bridge', 'omp'],
+  ['ade-acp-worker', 'acp'],
 ]) {
   run('pnpm', [
     '--filter',
@@ -134,7 +135,8 @@ for (const [packageName, folder] of [
     if (relative(join(providers, folder), filename).split(sep).includes('node_modules')) return
     if (
       filename.endsWith('.test.mjs') ||
-      filename.endsWith('fake-sdk.mjs') ||
+      filename.endsWith('conformance-fixture.mjs') ||
+      /(^|\/)worker-test-[\w-]+\.mjs$/.test(filename) ||
       filename.endsWith('mock-cli.mjs') ||
       filename.endsWith('transport-fixture.mjs')
     ) {
@@ -146,12 +148,6 @@ for (const [packageName, folder] of [
 mkdirSync(join(providers, 'codex'), { recursive: true })
 for (const name of ['shared-server.mjs'])
   copyFileSync(join(root, 'providers/codex', name), join(providers, 'codex', name))
-mkdirSync(join(providers, 'opencode'), { recursive: true })
-for (const name of readdirSync(join(root, 'providers/opencode'))) {
-  if (!name.endsWith('.mjs') || name.endsWith('.test.mjs') || name.includes('fixture') || name.includes('mock'))
-    continue
-  copyFileSync(join(root, 'providers/opencode', name), join(providers, 'opencode', name))
-}
 for (const name of ['plan.mjs', 'tool.mjs']) copyFileSync(join(root, 'providers', name), join(providers, name))
 // The backend plugin host (F057); the daemon resolves Resources/packages/plugin-host/src/host.mjs.
 const pluginHost = join(stage, 'packages/plugin-host/src')
@@ -167,7 +163,7 @@ const installedBunVersion = execFileSync(bun, ['--version'], { encoding: 'utf8' 
 if (installedBunVersion !== bunVersion) throw new Error(`Expected Bun ${bunVersion}, found ${installedBunVersion}`)
 mkdirSync(bin, { recursive: true })
 copyFileSync(bun, join(bin, 'bun'))
-// The bundle's Node for provider bridges and the plugin host: Electron run as
+// The bundle's Node for provider workers and the plugin host: Electron run as
 // Node. ELECTRON_RUN_AS_NODE is set here, for this process only, so it never
 // reaches the daemon's environment and so never a terminal, service or tool.
 writeFileSync(

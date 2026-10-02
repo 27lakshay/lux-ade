@@ -61,6 +61,14 @@
         },
         "state": {
           "type": "string"
+        },
+        "worker_identity": {
+          "additionalProperties": true,
+          "description": "The identity a provider worker's `account_inspect` reported, pinned for\na provider without a bundled account probe, such as a plugin's.",
+          "type": [
+            "object",
+            "null"
+          ]
         }
       },
       "required": [
@@ -639,72 +647,6 @@
       ],
       "type": "object"
     },
-    "AcpHandshake": {
-      "description": "What an ACP agent declared in its `initialize` response.",
-      "properties": {
-        "agent_name": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "agent_version": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "auth_methods": {
-          "description": "IDs of the authentication methods the agent offers. ADE runs none of\nthem; sign in with the agent's own CLI.",
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "list_sessions": {
-          "type": "boolean"
-        },
-        "load_session": {
-          "type": "boolean"
-        },
-        "mcp_http": {
-          "type": "boolean"
-        },
-        "mcp_sse": {
-          "type": "boolean"
-        },
-        "prompt_audio": {
-          "type": "boolean"
-        },
-        "prompt_embedded_context": {
-          "type": "boolean"
-        },
-        "prompt_image": {
-          "type": "boolean"
-        },
-        "protocol_version": {
-          "maximum": 65535,
-          "minimum": 0,
-          "type": "integer"
-        },
-        "resume_session": {
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "protocol_version",
-        "auth_methods",
-        "load_session",
-        "resume_session",
-        "list_sessions",
-        "prompt_image",
-        "prompt_audio",
-        "prompt_embedded_context",
-        "mcp_http",
-        "mcp_sse"
-      ],
-      "type": "object"
-    },
     "Activity": {
       "description": "One durable activity record.",
       "properties": {
@@ -1096,7 +1038,7 @@
       "oneOf": [
         {
           "const": "acp",
-          "description": "Agent Client Protocol v1: JSON-RPC 2.0, one message per line.",
+          "description": "Agent Client Protocol v1: JSON-RPC 2.0, one message per line, run\nthrough the bundled ACP provider worker (`providers/acp`).",
           "type": "string"
         },
         {
@@ -1420,6 +1362,9 @@
         },
         "token": {
           "type": "string"
+        },
+        "worker": {
+          "description": "For a plugin provider, the pinned `ProviderWorker` whose\n`account_inspect` reads the account. Absent for a bundled provider."
         }
       },
       "required": [
@@ -1549,13 +1494,24 @@
       "type": "object"
     },
     "AgentCancelOutcome": {
-      "description": "Native interruption evidence attached to the durable agent.cancel operation receipt.",
+      "description": "The `agent.cancel` reply. It reports what the provider acknowledged within\na short bounded wait, never a confirmed stop: the Conversation's `stop`\nrecord follows the same operation to its confirmed or unresolved outcome.",
       "properties": {
         "conversation_id": {
           "type": "string"
         },
+        "delivery": {
+          "$ref": "#/$defs/StopDelivery"
+        },
         "evidence": {
-          "$ref": "#/$defs/ProviderCancelEvidence"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProviderCancelEvidence"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The provider's interruption evidence; null while delivery is pending."
         },
         "operation_id": {
           "type": "string"
@@ -1582,6 +1538,7 @@
         "conversation_id",
         "source_attempt_id",
         "submission_id",
+        "delivery",
         "evidence"
       ],
       "type": "object"
@@ -1729,6 +1686,10 @@
       "additionalProperties": false,
       "description": "`agent.resume`: reconnect the Conversation's Agent.",
       "properties": {
+        "continue_interrupted": {
+          "description": "Required when the newest prompt's native outcome is unknown: reopening\nits native session may continue that interrupted work. ADE never\nresends the prompt either way.",
+          "type": "boolean"
+        },
         "conversation_id": {
           "type": "string"
         },
@@ -1866,6 +1827,73 @@
         "conversation_id",
         "request_id",
         "text"
+      ],
+      "type": "object"
+    },
+    "AgentTerminateOutcome": {
+      "description": "What terminating the provider process proved.",
+      "properties": {
+        "conversation_id": {
+          "type": "string"
+        },
+        "limits": {
+          "description": "What termination cannot prove, in plain words.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "process_exited": {
+          "description": "Whether the runtime confirmed the provider process exited.",
+          "type": "boolean"
+        },
+        "source_attempt_id": {
+          "type": "string"
+        },
+        "type": {
+          "description": "The `agent_terminate_outcome` type tag.",
+          "enum": [
+            "agent_terminate_outcome"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "operation_id",
+        "conversation_id",
+        "source_attempt_id",
+        "process_exited",
+        "limits"
+      ],
+      "type": "object"
+    },
+    "AgentTerminateRequest": {
+      "additionalProperties": false,
+      "description": "`agent.terminate`: end the provider process the runtime owns for this\nattempt. Unlike `agent.cancel` it does not depend on the provider's\ncooperation, and unlike `agent.disconnect` it may interrupt a running\nturn. It never reaches a later attempt.",
+      "properties": {
+        "conversation_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "agent.terminate"
+        },
+        "operation_id": {
+          "description": "The caller's operation ID. The daemon keeps a receipt under it: a\nretry with the same ID and payload returns the recorded outcome, and\nthe same ID with another payload is a conflict.",
+          "type": "string"
+        },
+        "source_attempt_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "operation_id",
+        "conversation_id",
+        "source_attempt_id"
       ],
       "type": "object"
     },
@@ -2410,6 +2438,45 @@
         "runtime_protocol",
         "missing",
         "incompatible"
+      ],
+      "type": "object"
+    },
+    "BackgroundActivity": {
+      "description": "Background work in a provider session, with its evidence. A provider\nthat stops reporting, or whose process ended, leaves `active` unknown:\nsilence and a closed transport are not evidence that work settled.",
+      "properties": {
+        "active": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "observed_at_ms": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "running": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "source": {
+          "description": "The native evidence, such as `task_lifecycle`, or `provider_exited`.",
+          "type": "string"
+        },
+        "source_attempt_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_attempt_id",
+        "active",
+        "running",
+        "source",
+        "observed_at_ms"
       ],
       "type": "object"
     },
@@ -6354,6 +6421,26 @@
       ],
       "type": "object"
     },
+    "ChoicesSource": {
+      "description": "Where a setting's choices come from.",
+      "oneOf": [
+        {
+          "const": "native_reported",
+          "description": "The open provider session listed them for the model in question,\nnarrowed to what ADE can request.",
+          "type": "string"
+        },
+        {
+          "const": "static",
+          "description": "ADE's table for the provider: the provider listed none for this model.",
+          "type": "string"
+        },
+        {
+          "const": "unavailable",
+          "description": "No list: discovery is unavailable and ADE has no table (model is free text).",
+          "type": "string"
+        }
+      ]
+    },
     "ClaimMode": {
       "description": "Shared use admits other shared use; an exclusive lifecycle claim admits nothing.",
       "enum": [
@@ -7039,6 +7126,13 @@
           "default": "default",
           "type": "string"
         },
+        "reasoning_effort": {
+          "description": "A reasoning level from [`reasoning_efforts`]; absent means the provider's default.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "setting_sources": {
           "default": [],
           "items": {
@@ -7061,6 +7155,28 @@
             "$ref": "#/$defs/Item"
           },
           "type": "array"
+        },
+        "native_choices": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NativeChoices"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The models, with their dependent settings, the provider listed for\nthis session; null when it listed none or discovery failed."
+        },
+        "native_settings": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NativeSettings"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What the provider reported in effect when the session opened."
         },
         "rewound_from": {
           "description": "Set when a rewind forked `session` from this one after the Agent\nopened (F039): a daemon that reattaches may still hold it.",
@@ -7175,6 +7291,21 @@
             "type",
             "operation",
             "agents"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A plugin's typed payload for the timeline contribution that declares\nthe message's `kind`. The message `text` stays the canonical readable\ncontent; a client without that renderer shows the text.",
+          "properties": {
+            "data": true,
+            "type": {
+              "const": "extension",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "data"
           ],
           "type": "object"
         }
@@ -7836,11 +7967,45 @@
           "$ref": "#/$defs/Attention",
           "description": "Derived from `status` and open requests\n(`crate::workspaces::attention`). Set on every reply, never stored."
         },
+        "autonomous_output_at_ms": {
+          "default": null,
+          "description": "When output last arrived that no submission of this Conversation\nowns: autonomous work in the native session, never shown as a prompt.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "background": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BackgroundActivity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Background work the provider last reported for the open session.\nNull when it has reported none; `active: null` when it is unknown."
+        },
         "error": {
           "type": [
             "string",
             "null"
           ]
+        },
+        "execution": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConversationExecution"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "What the open provider session was bound to; null before one opens."
         },
         "execution_host": {
           "description": "The ADE placement of this Conversation; filled from the profile placement record for each reply.",
@@ -7887,6 +8052,18 @@
         "id": {
           "type": "string"
         },
+        "native_settings": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NativeSettings"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "What the provider reported in effect when its session opened or later\n(Claude `system/init`); null when it reported nothing or has not opened."
+        },
         "parent_conversation_id": {
           "description": "The Conversation that delegated this one, when it is an\norchestration child. Set on every reply, never stored.",
           "type": [
@@ -7931,8 +8108,27 @@
             "null"
           ]
         },
+        "settings_revision": {
+          "default": 0,
+          "description": "Rises with each change to `provider_config`; guards the next change.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
         "status": {
           "type": "string"
+        },
+        "stop": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConversationStop"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The latest Stop and how far it got; null when none was requested."
         },
         "title": {
           "type": "string"
@@ -7954,6 +8150,12 @@
         "queue_paused",
         "runtime_run",
         "runtime_cursor",
+        "stop",
+        "settings_revision",
+        "background",
+        "autonomous_output_at_ms",
+        "execution",
+        "native_settings",
         "runtime_submission",
         "id",
         "workspace_id",
@@ -8475,6 +8677,162 @@
       ],
       "type": "object"
     },
+    "ConversationExecution": {
+      "description": "What a Conversation's open provider session was bound to when it opened:\nthe ADE attempt, the account context and generation it was checked\nagainst, the native session it opened and the settings revision it used.\nA later account change, settings change or reattach records a new one.",
+      "properties": {
+        "account_context": {
+          "$ref": "#/$defs/AccountContext",
+          "description": "Managed or ambient; an ambient session uses the machine's own login,\nwhich ADE does not isolate."
+        },
+        "account_generation": {
+          "description": "The managed account generation verified before the session opened.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "account_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "native_session": {
+          "type": "string"
+        },
+        "opened_at_ms": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "reattached": {
+          "description": "Whether the runtime reattached to a session that survived a daemon restart.",
+          "type": "boolean"
+        },
+        "settings_revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "source_attempt_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_attempt_id",
+        "account_context",
+        "account_id",
+        "account_generation",
+        "native_session",
+        "settings_revision",
+        "reattached",
+        "opened_at_ms"
+      ],
+      "type": "object"
+    },
+    "ConversationExport": {
+      "description": "The `conversation.export` reply.",
+      "properties": {
+        "boot_id": {
+          "description": "The daemon boot and feed revision this page was read at; a reader that\nsees either change between pages is reading a history that changed.",
+          "type": "string"
+        },
+        "continuity": {
+          "$ref": "#/$defs/ExportContinuity"
+        },
+        "conversation": {
+          "$ref": "#/$defs/Conversation"
+        },
+        "history_epoch": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "messages": {
+          "items": {
+            "$ref": "#/$defs/ExportedMessage"
+          },
+          "type": "array"
+        },
+        "next_after_sequence": {
+          "description": "Pass as `after_sequence` for the next page; null on the last.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "not_included": {
+          "description": "What this export does not contain: provider-native history that ADE\nnever retained, and private reasoning a provider withheld.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "type": {
+          "description": "The `conversation_export` type tag.",
+          "enum": [
+            "conversation_export"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "conversation",
+        "boot_id",
+        "revision",
+        "history_epoch",
+        "continuity",
+        "messages",
+        "next_after_sequence",
+        "not_included"
+      ],
+      "type": "object"
+    },
+    "ConversationExportRequest": {
+      "additionalProperties": false,
+      "description": "`conversation.export`: one page of a conversation's retained messages in\norder, readable without its provider, its credentials or any renderer.",
+      "properties": {
+        "after_sequence": {
+          "description": "Export messages after this sequence; from the first when absent.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "limit": {
+          "description": "At most 32, the bounded read window; 32 when absent.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "op": {
+          "const": "conversation.export"
+        }
+      },
+      "required": [
+        "op",
+        "conversation_id"
+      ],
+      "type": "object"
+    },
     "ConversationGetRequest": {
       "additionalProperties": false,
       "description": "`conversation.get`: one page of a conversation's messages, newest first.",
@@ -8919,6 +9277,169 @@
       ],
       "type": "object"
     },
+    "ConversationSettings": {
+      "properties": {
+        "agent_connected": {
+          "description": "Whether an Agent is connected; a change relaunches an idle Agent so it applies.",
+          "type": "boolean"
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "discovery": {
+          "$ref": "#/$defs/SettingsDiscovery",
+          "description": "What the open provider session listed; choices are rediscovered from it."
+        },
+        "model": {
+          "$ref": "#/$defs/SettingState"
+        },
+        "permission_mode": {
+          "$ref": "#/$defs/SettingState"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "reasoning_effort": {
+          "$ref": "#/$defs/SettingState"
+        },
+        "revision": {
+          "description": "Guards `conversation.settings.update`; rises with every change.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "turn_running": {
+          "description": "A change is refused while a turn runs.",
+          "type": "boolean"
+        },
+        "type": {
+          "description": "The `conversation_settings` type tag.",
+          "enum": [
+            "conversation_settings"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "conversation_id",
+        "provider",
+        "revision",
+        "model",
+        "reasoning_effort",
+        "permission_mode",
+        "discovery",
+        "agent_connected",
+        "turn_running"
+      ],
+      "type": "object"
+    },
+    "ConversationSettingsRequest": {
+      "additionalProperties": false,
+      "description": "`conversation.settings`: the requested provider settings, what the provider\nreported in effect, and the choices offered now.",
+      "properties": {
+        "conversation_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "conversation.settings"
+        }
+      },
+      "required": [
+        "op",
+        "conversation_id"
+      ],
+      "type": "object"
+    },
+    "ConversationSettingsUpdateRequest": {
+      "additionalProperties": false,
+      "description": "`conversation.settings.update`: change requested settings at a known revision.\nAn absent field keeps its value; an empty `model` or `reasoning_effort`\nreturns it to the provider's default. The model is applied before the\nsettings that depend on it, and those (the new values and the ones kept)\nare checked against the choices the provider listed for the new model; a\nvalue it does not offer refuses the whole change, so nothing is applied.\nNothing is widened or substituted implicitly.",
+      "properties": {
+        "conversation_id": {
+          "type": "string"
+        },
+        "expected_revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "op": {
+          "const": "conversation.settings.update"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "permission_mode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reasoning_effort": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "operation_id",
+        "conversation_id",
+        "expected_revision"
+      ],
+      "type": "object"
+    },
+    "ConversationSettingsUpdated": {
+      "properties": {
+        "changed": {
+          "description": "Settings whose requested value changed.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "native_error": {
+          "description": "Set when the stored change could not be applied natively. The stored\nrevision stays; it is not rolled back, and the Conversation reports the error.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "relaunched": {
+          "description": "Whether the idle Agent was relaunched under the new settings.",
+          "type": "boolean"
+        },
+        "settings": {
+          "$ref": "#/$defs/ConversationSettings"
+        },
+        "type": {
+          "description": "The `conversation_settings_updated` type tag.",
+          "enum": [
+            "conversation_settings_updated"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "conversation_id",
+        "changed",
+        "relaunched",
+        "native_error",
+        "settings"
+      ],
+      "type": "object"
+    },
     "ConversationSnapshot": {
       "description": "The `conversation.get` reply.",
       "properties": {
@@ -9131,6 +9652,106 @@
         "conversation_id",
         "turn_id",
         "text"
+      ],
+      "type": "object"
+    },
+    "ConversationStop": {
+      "description": "The latest Stop on a Conversation, keyed by its operation. It is bound\nto one attempt and submission: a successor never settles it.",
+      "properties": {
+        "confirmation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StopConfirmation"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "delivery": {
+          "$ref": "#/$defs/StopDelivery"
+        },
+        "escalation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StopEscalation"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "evidence": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProviderCancelEvidence"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The provider's latest interruption evidence: scope, remaining\nforeground, queued and background work."
+        },
+        "native_status": {
+          "description": "The native terminal status that settled it, such as `interrupted`\nor `completed` when the turn ended before the interruption took hold.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "outcome": {
+          "$ref": "#/$defs/StopOutcome"
+        },
+        "reason": {
+          "description": "Why the outcome is unresolved, in plain words.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "requested_at_ms": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "settled_at_ms": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "source_attempt_id": {
+          "type": "string"
+        },
+        "submission_id": {
+          "type": "string"
+        },
+        "turn_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "operation_id",
+        "source_attempt_id",
+        "submission_id",
+        "turn_id",
+        "requested_at_ms",
+        "delivery",
+        "outcome",
+        "confirmation",
+        "native_status",
+        "evidence",
+        "reason",
+        "escalation",
+        "settled_at_ms"
       ],
       "type": "object"
     },
@@ -11490,6 +12111,40 @@
       ],
       "type": "object"
     },
+    "DiscoveredModel": {
+      "description": "One listed model, as the provider reported it, with what ADE would offer\nfor the settings that depend on it were it selected.",
+      "properties": {
+        "native": {
+          "$ref": "#/$defs/NativeModel"
+        },
+        "permission_choices": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "permission_choices_source": {
+          "$ref": "#/$defs/ChoicesSource"
+        },
+        "reasoning_choices": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "reasoning_choices_source": {
+          "$ref": "#/$defs/ChoicesSource"
+        }
+      },
+      "required": [
+        "native",
+        "reasoning_choices",
+        "reasoning_choices_source",
+        "permission_choices",
+        "permission_choices_source"
+      ],
+      "type": "object"
+    },
     "Draft": {
       "description": "The schema of [`Draft`], which the model defines without one.",
       "properties": {
@@ -12674,7 +13329,64 @@
           "type": "object"
         },
         {
-          "description": "Token, cost or rate-limit figures exactly as the provider reported\nthem. `source` names the native event; the daemon normalizes `report`\nand never fills in a figure the provider left out.",
+          "description": "Token, cost or rate-limit figures exactly as the provider reported\nthem. `source` names the native event; the daemon normalizes `report`\nand never fills in a figure the provider left out.\nBackground work the provider reports for its session, apart from the\nforeground turn: running native tasks, children or processes. Null\nfields mean the provider gave no evidence for them.",
+          "properties": {
+            "active": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "running": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "session": {
+              "type": "string"
+            },
+            "source": {
+              "type": "string"
+            },
+            "type": {
+              "const": "background",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "session",
+            "active",
+            "running",
+            "source"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Settings the provider reported in effect during its session, such as\nClaude's `system/init` frame. A null field was not reported.",
+          "properties": {
+            "session": {
+              "type": "string"
+            },
+            "settings": {
+              "$ref": "#/$defs/NativeSettings"
+            },
+            "type": {
+              "const": "settings",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "session",
+            "settings"
+          ],
+          "type": "object"
+        },
+        {
           "properties": {
             "report": {
               "default": null
@@ -12685,6 +13397,13 @@
             },
             "source": {
               "type": "string"
+            },
+            "submission": {
+              "description": "The submission the report belongs to, for a provider that names no\nturn; ADE then keys the turn's usage by it.",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "turn": {
               "default": null,
@@ -12949,6 +13668,72 @@
         "unavailable"
       ],
       "type": "string"
+    },
+    "ExportContinuity": {
+      "description": "Whether the provider that ran a conversation can continue it natively.",
+      "properties": {
+        "native_resume_possible": {
+          "description": "True only when both hold. Readability never implies it.",
+          "type": "boolean"
+        },
+        "native_session": {
+          "description": "The conversation names a native session a provider could resume.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "provider_available": {
+          "description": "The provider is installed and registered in this profile now.",
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider_available",
+        "native_session",
+        "native_resume_possible",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "ExportedAttachment": {
+      "description": "One attachment of an exported message and whether its payload remains.",
+      "properties": {
+        "attachment": {
+          "$ref": "#/$defs/Attachment"
+        },
+        "state": {
+          "description": "`live`, or why the payload is gone (such as `reclaimed`).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "attachment",
+        "state"
+      ],
+      "type": "object"
+    },
+    "ExportedMessage": {
+      "description": "One retained message, with its attachments' availability.",
+      "properties": {
+        "attachments": {
+          "items": {
+            "$ref": "#/$defs/ExportedAttachment"
+          },
+          "type": "array"
+        },
+        "message": {
+          "$ref": "#/$defs/Message"
+        }
+      },
+      "required": [
+        "message",
+        "attachments"
+      ],
+      "type": "object"
     },
     "Failure": {
       "description": "Categories carry no raw provider payload. Recovery is advice, never an\nauthorization to replay a mutation whose outcome might be unknown.",
@@ -16293,7 +17078,7 @@
           "type": "string"
         },
         "document": {
-          "description": "The provider's native configuration document; null when the provider has no projection."
+          "description": "The provider's native configuration document."
         },
         "excluded": {
           "items": {
@@ -16302,11 +17087,8 @@
           "type": "array"
         },
         "format": {
-          "description": "`claude_mcp_json`, `codex_config_toml` (the TOML tables as JSON) or `omp_mcp_json`.",
-          "type": [
-            "string",
-            "null"
-          ]
+          "description": "`claude_mcp_json`, `codex_config_toml` (the TOML tables as JSON),\n`omp_mcp_json`, or `worker_mcp_json`: the provider-neutral projection a\nworker without a native one receives (`docs/provider-authoring.md`).",
+          "type": "string"
         },
         "protocol_versions": {
           "items": {
@@ -16331,7 +17113,7 @@
           "type": "string"
         },
         "wired": {
-          "description": "True only when the provider's adapter passes `document` at launch. When\nfalse, this is what ADE would pass; the provider does not see it.",
+          "description": "True only when the provider's worker declares `configure_mcp`\navailable, so `document` reaches it at launch and resume. When false,\nthis is what ADE would pass; the provider does not see it.",
           "type": "boolean"
         },
         "workspace_id": {
@@ -16968,13 +17750,28 @@
           "const": "native_id",
           "description": "Any ID or alias the provider accepts, such as `sonnet` or `gpt-5.5`.",
           "type": "string"
-        },
-        {
-          "const": "provider_qualified",
-          "description": "`provider/model`, such as `anthropic/claude-sonnet-5`.",
-          "type": "string"
         }
       ]
+    },
+    "NativeChoices": {
+      "description": "The models a provider listed when its session opened.",
+      "properties": {
+        "models": {
+          "items": {
+            "$ref": "#/$defs/NativeModel"
+          },
+          "type": "array"
+        },
+        "source": {
+          "description": "The native call that listed them, such as `model/list`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "models"
+      ],
+      "type": "object"
     },
     "NativeMessageLocator": {
       "description": "Provider-native transcript identity. It is independent of ADE message IDs,\nclient IDs, and turn IDs, and is valid only in its native session.",
@@ -16993,6 +17790,103 @@
         "provider",
         "session",
         "message_id"
+      ],
+      "type": "object"
+    },
+    "NativeModel": {
+      "description": "One model a provider listed for its open session (Codex `model/list`,\nClaude `supportedModels()`, Oh My Pi `get_available_models`), with the\ndependent settings it reported for that model. A null list was not reported.",
+      "properties": {
+        "aliases": {
+          "default": [],
+          "description": "Other names the provider resolves to this model.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "default_reasoning_effort": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "display_name": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "description": "The value a launch passes as the model.",
+          "type": "string"
+        },
+        "is_default": {
+          "default": false,
+          "description": "The provider's default model.",
+          "type": "boolean"
+        },
+        "permission_modes": {
+          "default": null,
+          "description": "Permission modes the provider listed for this model.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "reasoning_efforts": {
+          "default": null,
+          "description": "Reasoning levels the provider listed for this model.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "display_name",
+        "is_default",
+        "aliases",
+        "reasoning_efforts",
+        "default_reasoning_effort",
+        "permission_modes"
+      ],
+      "type": "object"
+    },
+    "NativeSettings": {
+      "description": "Settings the provider itself reported for an opened session; each value\nis null when the provider did not report it.",
+      "properties": {
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "permission_mode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reasoning_effort": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "model",
+        "reasoning_effort",
+        "permission_mode"
       ],
       "type": "object"
     },
@@ -18458,6 +19352,35 @@
       ],
       "type": "object"
     },
+    "PluginComposerContribution": {
+      "additionalProperties": false,
+      "description": "A composer contribution: context nodes of one kind in a draft, and a\nside-effect-free transform that prepares the prompt before it is sent. Its\nID and `node_kind` start with the plugin ID and a dot. A node of that kind\nkeeps a plain-text fallback in `data.text`.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "node_kind": {
+          "description": "The draft context node `kind` this contribution owns.",
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "version": {
+          "description": "The node and transform version, from 1.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "version",
+        "node_kind",
+        "title"
+      ],
+      "type": "object"
+    },
     "PluginContributions": {
       "additionalProperties": false,
       "description": "Static contributions the registry records for each activation.",
@@ -18466,6 +19389,13 @@
           "default": [],
           "items": {
             "$ref": "#/$defs/PluginCommandContribution"
+          },
+          "type": "array"
+        },
+        "composer": {
+          "description": "Composer contributions the UI entry point registers, one per context node kind.",
+          "items": {
+            "$ref": "#/$defs/PluginComposerContribution"
           },
           "type": "array"
         },
@@ -18494,6 +19424,13 @@
           "description": "Static, validated declarative theme definitions contributed by this plugin.",
           "items": {
             "$ref": "#/$defs/ThemeDefinition"
+          },
+          "type": "array"
+        },
+        "timeline": {
+          "description": "Timeline renderers the UI entry point registers, one per message kind.",
+          "items": {
+            "$ref": "#/$defs/PluginTimelineContribution"
           },
           "type": "array"
         }
@@ -19565,7 +20502,9 @@
       "description": "A registration kind in the activation registry.",
       "enum": [
         "command",
-        "panel"
+        "panel",
+        "timeline",
+        "composer"
       ],
       "type": "string"
     },
@@ -19981,6 +20920,67 @@
         "activation_error",
         "installed_at",
         "updated_at"
+      ],
+      "type": "object"
+    },
+    "PluginTimelineAction": {
+      "additionalProperties": false,
+      "description": "One action on a timeline item: a readable title and a declared command.",
+      "properties": {
+        "command": {
+          "description": "A command ID from this plugin's `contributes.commands`.",
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "command"
+      ],
+      "type": "object"
+    },
+    "PluginTimelineContribution": {
+      "additionalProperties": false,
+      "description": "A renderer for timeline messages of one kind. Its ID and `item_kind` start\nwith the plugin ID and a dot. A message of that kind keeps its canonical\ntext, which every client shows when the renderer is missing or fails.",
+      "properties": {
+        "actions": {
+          "description": "Actions offered on an item of this kind, shown whether or not the\nrenderer is available. Each runs a command this plugin declares, through\n`plugin.command.invoke` (an effect command with a receipt), with\n`{conversation_id, message_id}` as its arguments.",
+          "items": {
+            "$ref": "#/$defs/PluginTimelineAction"
+          },
+          "type": "array"
+        },
+        "id": {
+          "type": "string"
+        },
+        "item_kind": {
+          "description": "The message `kind` this renders.",
+          "type": "string"
+        },
+        "required_fields": {
+          "description": "Top-level payload fields the renderer needs. A payload without them is\nnot passed to the renderer; the canonical text shows instead.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "title": {
+          "type": "string"
+        },
+        "version": {
+          "description": "The renderer's payload version, from 1.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "version",
+        "item_kind",
+        "title"
       ],
       "type": "object"
     },
@@ -20406,17 +21406,6 @@
       "oneOf": [
         {
           "properties": {
-            "acp": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/AcpHandshake"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Present for ACP adapters."
-            },
             "capabilities": {
               "description": "ADE capability names, in the vocabulary of provider descriptors.",
               "items": {
@@ -20427,6 +21416,17 @@
             "status": {
               "const": "ready",
               "type": "string"
+            },
+            "worker": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ProviderWorkerInitialize"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "For an ACP adapter, the bundled ACP worker's `initialize` reply,\nincluding what the agent itself negotiated (`native_peer`)."
             }
           },
           "required": [
@@ -21333,7 +22333,7 @@
           ]
         },
         "wired": {
-          "description": "True only when the provider's adapter passes the catalog at launch.",
+          "description": "True only when the provider's worker declares `configure_mcp` available.",
           "type": "boolean"
         }
       },
@@ -21372,6 +22372,101 @@
         "entry"
       ],
       "type": "object"
+    },
+    "ProviderWorkerAccountContext": {
+      "additionalProperties": false,
+      "description": "The managed account a worker runs on. A worker launched on a managed\naccount receives it as JSON in the `ADE_ACCOUNT_CONTEXT` environment\nvariable, in an environment ADE has cleared of everything except a few\nlocale and path variables, so no ambient credential reaches it. Every\nworker receives the same fields, bundled or installed. Without a managed\naccount the variable is absent and the worker uses the agent's own login.",
+      "properties": {
+        "account_id": {
+          "type": "string"
+        },
+        "generation": {
+          "description": "Increases whenever the account is verified again or disabled.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "identity": {
+          "additionalProperties": true,
+          "description": "The identity ADE pinned when it verified the account, in the shape the\nprovider's inspection reported it.",
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "native_home": {
+          "description": "The account's own directory, private to this user. The worker keeps the\nagent's login, configuration and sessions for this account here, and\nnowhere else.",
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "account_id",
+        "provider",
+        "generation",
+        "native_home"
+      ],
+      "type": "object"
+    },
+    "ProviderWorkerAccountInspectRequest": {
+      "additionalProperties": false,
+      "description": "`account_inspect` takes no parameters: the account is the worker's launch\ncontext ([`ProviderWorkerAccountContext`]).",
+      "type": "object"
+    },
+    "ProviderWorkerAccountInspection": {
+      "additionalProperties": false,
+      "description": "The `account_inspect` result. ADE pins `identity` when the account is\nverified and compares it again before each launch on the account, so a\nlogin that changed underneath ADE is refused rather than used.",
+      "properties": {
+        "identity": {
+          "additionalProperties": true,
+          "description": "What identifies the signed-in login, such as an email and an\norganization. Never a credential. Required when `state` is `ready`.",
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "reason": {
+          "description": "Why the account is not ready; empty when it is.",
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/ProviderWorkerAccountState"
+        },
+        "version": {
+          "description": "The native executable's version, when the worker read it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "state",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "ProviderWorkerAccountState": {
+      "description": "Whether a managed account's native login can run.",
+      "oneOf": [
+        {
+          "const": "ready",
+          "description": "Signed in; `identity` names the login.",
+          "type": "string"
+        },
+        {
+          "const": "signed_out",
+          "description": "No usable login in the account's native home.",
+          "type": "string"
+        },
+        {
+          "const": "unavailable",
+          "description": "The login cannot be checked now, such as a missing or incompatible executable.",
+          "type": "string"
+        }
+      ]
     },
     "ProviderWorkerAck": {
       "additionalProperties": false,
@@ -21739,7 +22834,7 @@
     },
     "ProviderWorkerInitialize": {
       "additionalProperties": false,
-      "description": "Exact JSON-RPC initialize reply; every field is required and unknown fields are rejected.",
+      "description": "Exact JSON-RPC initialize reply; every field except `native_peer` is\nrequired and unknown fields are rejected.",
       "properties": {
         "capabilities": {
           "items": {
@@ -21760,6 +22855,17 @@
         },
         "name": {
           "type": "string"
+        },
+        "native_peer": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProviderWorkerNativePeer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What the native peer reported when the worker negotiated with it\nbefore answering `initialize`. Absent when the worker starts its\nnative peer lazily or bridges no negotiated protocol."
         },
         "operations": {
           "items": {
@@ -21831,7 +22937,7 @@
           "type": "integer"
         },
         "max_input_frame_bytes": {
-          "maximum": 1048576,
+          "maximum": 16777216,
           "minimum": 1,
           "type": "integer"
         },
@@ -21847,7 +22953,8 @@
           "type": "integer"
         },
         "max_output_frame_bytes": {
-          "maximum": 1048576,
+          "description": "Output frames may exceed input frames: a stored message is up to\n1 MiB, and an item carries it with its tool output and envelope.",
+          "maximum": 4194304,
           "minimum": 1,
           "type": "integer"
         },
@@ -21873,20 +22980,82 @@
     },
     "ProviderWorkerMethod": {
       "description": "An operation handled by the current worker protocol. Unknown methods cannot be declared supported.",
-      "enum": [
-        "initialize",
-        "open",
-        "send",
-        "steer",
-        "cancel",
-        "answer",
-        "history",
-        "configure_mcp",
-        "compact",
-        "rewind",
-        "child_transcript"
+      "oneOf": [
+        {
+          "enum": [
+            "initialize",
+            "open",
+            "send",
+            "steer",
+            "cancel",
+            "answer",
+            "history",
+            "configure_mcp",
+            "compact",
+            "rewind",
+            "child_transcript"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "account_inspect",
+          "description": "Reads which native login the worker's managed account context holds.",
+          "type": "string"
+        }
+      ]
+    },
+    "ProviderWorkerNativePeer": {
+      "additionalProperties": false,
+      "description": "A native peer's negotiation report, as the worker observed it. It is\nevidence for diagnostics and readiness, never a grant: operations and\ncapabilities remain authoritative.",
+      "properties": {
+        "auth_methods": {
+          "description": "IDs of sign-in methods the peer offers. ADE runs none of them.",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 16,
+          "type": "array"
+        },
+        "features": {
+          "description": "Native features the peer declared, as lowercase snake_case names.",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 32,
+          "type": "array"
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "protocol": {
+          "description": "The native protocol's short name, such as `acp`.",
+          "type": "string"
+        },
+        "protocol_version": {
+          "description": "The protocol version the peer stated, even when the worker refused it.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "protocol",
+        "features",
+        "auth_methods"
       ],
-      "type": "string"
+      "type": "object"
     },
     "ProviderWorkerOpenRequest": {
       "additionalProperties": false,
@@ -29251,6 +30420,78 @@
       ],
       "type": "object"
     },
+    "SettingSource": {
+      "description": "Where an effective value comes from.",
+      "oneOf": [
+        {
+          "const": "native_reported",
+          "description": "The provider reported it when its session opened.",
+          "type": "string"
+        },
+        {
+          "const": "requested_only",
+          "description": "The provider did not report it; ADE requested this value.",
+          "type": "string"
+        },
+        {
+          "const": "provider_default",
+          "description": "Neither requested nor reported: the provider's own default applies, unseen.",
+          "type": "string"
+        }
+      ]
+    },
+    "SettingState": {
+      "description": "One setting: what ADE asked for, what is known to be in effect, and why.",
+      "properties": {
+        "choices": {
+          "description": "Values ADE can request now, for the requested model (or the model in\neffect); empty when unsupported or when `choices_source` is `unavailable`.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "choices_source": {
+          "$ref": "#/$defs/ChoicesSource"
+        },
+        "effective": {
+          "description": "Null when nothing reports the value in effect.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "description": "Why the setting is unsupported or limited.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "requested": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "$ref": "#/$defs/SettingSource"
+        },
+        "supported": {
+          "description": "Whether ADE can change this setting for the provider at all.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "requested",
+        "effective",
+        "source",
+        "choices",
+        "choices_source",
+        "supported",
+        "reason"
+      ],
+      "type": "object"
+    },
     "SettingValue": {
       "description": "A value set in a server's environment or HTTP headers. Secrets are never\nstored: they are read at launch from the named environment variable.",
       "oneOf": [
@@ -29342,6 +30583,49 @@
         "settings",
         "boot_id",
         "revision"
+      ],
+      "type": "object"
+    },
+    "SettingsDiscovery": {
+      "description": "The models a connected provider session listed when it opened. Discovery\nbelongs to that session's installation and account: with no Agent\nconnected, or a provider that lists nothing, it is unavailable and says why.",
+      "properties": {
+        "available": {
+          "type": "boolean"
+        },
+        "models": {
+          "items": {
+            "$ref": "#/$defs/DiscoveredModel"
+          },
+          "type": "array"
+        },
+        "reason": {
+          "description": "Why discovery is unavailable.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "description": "The native call that listed the models, such as `model/list`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_attempt_id": {
+          "description": "The Agent run whose session listed them.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "available",
+        "source",
+        "source_attempt_id",
+        "reason",
+        "models"
       ],
       "type": "object"
     },
@@ -30676,6 +31960,76 @@
         "abandoned"
       ],
       "type": "string"
+    },
+    "StopConfirmation": {
+      "description": "Evidence that confirmed a Stop.",
+      "oneOf": [
+        {
+          "const": "native_terminal",
+          "description": "The provider reported the targeted turn or submission finished.",
+          "type": "string"
+        },
+        {
+          "const": "process_exit",
+          "description": "The runtime confirmed that the provider process it owns exited.\nChild or background processes the provider started may survive it\nunless `background_work_remaining` is false.",
+          "type": "string"
+        }
+      ]
+    },
+    "StopDelivery": {
+      "description": "Whether the provider answered the cancellation request.",
+      "oneOf": [
+        {
+          "const": "pending",
+          "description": "The request was sent and no reply has arrived yet.",
+          "type": "string"
+        },
+        {
+          "const": "acknowledged",
+          "description": "The provider replied. This is acknowledgement, not proof of stop.",
+          "type": "string"
+        },
+        {
+          "const": "refused",
+          "description": "The provider replied with a refusal or error; the work may continue.",
+          "type": "string"
+        },
+        {
+          "const": "unknown",
+          "description": "No provider was attached, or the reply was lost.",
+          "type": "string"
+        }
+      ]
+    },
+    "StopEscalation": {
+      "description": "A declared step ADE offers when a Stop is unresolved.",
+      "oneOf": [
+        {
+          "const": "terminate_process",
+          "description": "`agent.terminate`: end the runtime-owned provider process.",
+          "type": "string"
+        }
+      ]
+    },
+    "StopOutcome": {
+      "description": "Where a Stop stands.",
+      "oneOf": [
+        {
+          "const": "requested",
+          "description": "Asked for; no terminal evidence yet.",
+          "type": "string"
+        },
+        {
+          "const": "confirmed",
+          "description": "Native terminal evidence or runtime-owned process exit ended the target.",
+          "type": "string"
+        },
+        {
+          "const": "unresolved",
+          "description": "The target may still run, or work the provider queued can still run.\n`escalation` names what ADE can do next.",
+          "type": "string"
+        }
+      ]
     },
     "SubmissionDelivery": {
       "additionalProperties": false,
@@ -36871,6 +38225,13 @@
     },
     {
       "domain": "conversations",
+      "name": "conversation.export",
+      "request": "ConversationExportRequest",
+      "response": "ConversationExport",
+      "tier": "query"
+    },
+    {
+      "domain": "conversations",
       "name": "agent.send",
       "request": "AgentSendRequest",
       "response": "Ack",
@@ -37018,6 +38379,20 @@
     },
     {
       "domain": "conversations",
+      "name": "conversation.settings",
+      "request": "ConversationSettingsRequest",
+      "response": "ConversationSettings",
+      "tier": "query"
+    },
+    {
+      "domain": "conversations",
+      "name": "conversation.settings.update",
+      "request": "ConversationSettingsUpdateRequest",
+      "response": "ConversationSettingsUpdated",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "conversations",
       "name": "conversation.steer",
       "request": "ConversationSteerRequest",
       "response": "ConversationControlReply",
@@ -37119,6 +38494,13 @@
       "name": "agent.cancel",
       "request": "AgentCancelRequest",
       "response": "AgentCancelOutcome",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "agents",
+      "name": "agent.terminate",
+      "request": "AgentTerminateRequest",
+      "response": "AgentTerminateOutcome",
       "tier": "effect_command"
     },
     {

@@ -111,10 +111,11 @@ overhaul. Their files and assertions remain intact. Exclusion does not establish
 current coverage or authorize deletion; migration parity remains unverified and must be reported
 as such when reviewing acceptance or removing historical code.
 
-Installed-provider checks (`test_codex_loopback.py`, `test_claude_loopback.py`, and the OMP and
-OpenCode loopback files) use real installed binaries against local fixtures. The OpenCode and
-OMP `live.test.mjs` files also belong to installed-provider acceptance: their startup/session
-checks never send model prompts. The Python live-provider probes need explicit opt-in and can
+Installed-provider checks (`test_codex_loopback.py`, the Claude worker's `loopback.test.mjs`, the
+OMP worker's loopback case in `worker-peer.test.mjs` and the OpenCode plugin's installed case in
+`e2e/protocol/adapters/opencode-native.spec.ts`) use real installed binaries against local
+fixtures. The OpenCode
+spec's live case is opt-in (`ADE_RUN_LIVE_PROVIDERS=1`) and sends one minimal prompt. The Python live-provider probes need explicit opt-in and can
 consume provider usage.
 The catalog assigns these checks to external suites without running them during discovery.
 Current provisioning and execution evidence is tracked by the live/system acceptance work.
@@ -583,7 +584,10 @@ pnpm test:performance --grep 'terminal streaming:'
 pnpm test:performance --grep 'ten agents' --diagnostics
 pnpm test:performance --grep 'appearance switching:'
 pnpm test:performance --grep 'ten agents|appearance switching:'
+pnpm test:performance --grep 'conversation:'
 ```
+
+The conversation workload is the one with numeric budgets. It checks the 95th percentile of opening, first output, Stop while another conversation floods, history prepend and catch-up after a daemon kill, and footprint growth over repeated feed subscriptions, against the budgets at the top of `e2e/protocol/load/conversation.spec.ts`. The reference machine is recorded in each run's `performance.json`.
 
 The command builds the debug daemon/runtime, SDK and CLI, then runs exactly one
 Playwright worker with zero retries. Build time is a separate stage. A selected pattern

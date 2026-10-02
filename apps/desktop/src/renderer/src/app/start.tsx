@@ -26,6 +26,7 @@ import { clearOnProfileSwitch, queryClient } from './query-client'
 import { createAppRouter } from './router'
 import { startProfileSettings } from './profile-settings'
 import { startTheme } from './theme'
+import { startPluginUi } from '../plugins/ui-host'
 
 // Starts the app in this window: theme, commands, routing, then the first render. Called once by
 // src/bootstrap.ts.
@@ -63,6 +64,8 @@ export async function start(): Promise<void> {
     Recovery: safeMode ? SafeModeRecovery : undefined,
   })
   if (daemon && window.adeHost) startProfileSettings(window.adeHost, daemon.store)
+  // Plugin UI entry points load after the app's own code; safe mode loads none.
+  if (window.adeHost) startPluginUi(window.adeHost.conversations, { safeMode })
   // This window's layouts come from the daemon; the bench serves its own (dev/bench.tsx).
   if (daemon && !bench) {
     startLayoutSync(hostConnection(window.adeHost, daemon.store))

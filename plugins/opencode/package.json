@@ -1,0 +1,52 @@
+{
+  "name": "@ade/opencode-provider",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OpenCode v2 as an independently installed ADE provider plugin, built on the public provider SDK.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/client.d.ts",
+      "import": "./dist/client.js"
+    }
+  },
+  "dependencies": {
+    "@ade/provider-sdk": "workspace:0.2.0",
+    "effect": "4.0.0-rc.118"
+  },
+  "devDependencies": {
+    "@ade/contracts": "workspace:0.1.0",
+    "@effect/tsgo": "0.47.1",
+    "@types/node": "24.6.0",
+    "typescript": "7.0.2"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/copy-native.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "effect:diagnostics": "effect-tsgo diagnostics --project tsconfig.json",
+    "package": "node scripts/package.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "nx": {
+    "targets": {
+      "build": {
+        "outputs": [
+          "{projectRoot}/dist"
+        ]
+      },
+      "typecheck": {},
+      "effect:diagnostics": {}
+    }
+  },
+  "files": [
+    "ade-plugin.json",
+    "dist/**/*.js",
+    "dist/**/*.mjs",
+    "LICENSE-opencode",
+    "PROVENANCE.md",
+    "README.md"
+  ]
+}

@@ -2208,6 +2208,15 @@ fn handle_connection(mut stream: UnixStream, host: Arc<Host>, lane: Lane) -> any
                     break;
                 }
             }
+            // The queued frames were written; name the reason the stream ends, so the
+            // client reloads knowing it fell behind rather than that the daemon left.
+            if host.sessions.take_overflowed(&id) {
+                let _ = writeln!(
+                    stream,
+                    "{}",
+                    serde_json::json!({"type": "feed_overflow", "message": "This client fell behind the daemon feed and was disconnected; reconnect and reload"})
+                );
+            }
             host.sessions.unsubscribe(&id);
             let _ = stream.shutdown(std::net::Shutdown::Both);
             return Ok(());

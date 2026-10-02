@@ -59,7 +59,8 @@ export async function forkBefore(sdk, session, locator, options, previousAliases
   if (source?.sessionId !== session) fail('provider_failure', 'Claude rewind source session was not found')
   const all = await readChain(sdk, session)
   const chain = all.filter((message) => !message.parent_tool_use_id)
-  const index = chain.findIndex((message) => message.uuid === locator.message_id)
+  // A fork copies messages under new UUIDs; ADE keeps naming them by the first ones.
+  const index = chain.findIndex((message) => (previousAliases.get(message.uuid) ?? message.uuid) === locator.message_id)
   if (index < 0 || !prompt(chain[index]))
     fail('invalid_request', 'Claude history has no such native prompt; original session retained')
   if (index === 0) fail('unsupported', 'Claude cannot fork before its first message; original session retained')
@@ -70,7 +71,7 @@ export async function forkBefore(sdk, session, locator, options, previousAliases
       resume: session,
       forkSession: true,
       resumeSessionAt: at,
-      resumeDropsTurn: locator.message_id,
+      resumeDropsTurn: chain[index].uuid,
     })
   const current = await sdk.getSessionInfo(session, { dir: process.cwd() })
   if (current?.lastModified !== source.lastModified || current?.fileSize !== source.fileSize)

@@ -38,9 +38,9 @@ async function stageProvider(root: string, control: string, reply: string, manif
   const worker = join(source, 'worker.mjs')
   const original = await readFile(worker, 'utf8')
   const held = `      const finish = () => {
-        event({ type: 'item', session, item: user })
-        event({ type: 'item', session, item: reply })
-        event({ type: 'finished', session, turn, status: 'completed', error: null })
+        event({ type: 'item', session, submission: params.submission, item: user })
+        event({ type: 'item', session, submission: params.submission, item: reply })
+        event({ type: 'finished', session, submission: params.submission, turn, status: 'completed', error: null })
       }
       if (params.text !== 'hold') return finish()
       writeFileSync(${JSON.stringify(join(control, 'held'))}, String(process.pid))
@@ -50,18 +50,19 @@ async function stageProvider(root: string, control: string, reply: string, manif
 `
   const edited = original
     .replace(
-      "import { createInterface } from 'node:readline'",
-      "import { createInterface } from 'node:readline'\nimport { existsSync, writeFileSync } from 'node:fs'",
+      "import { appendFileSync, existsSync, readFileSync } from 'node:fs'",
+      "import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs'",
     )
     .replace("text: 'Hello plugin'", `text: ${JSON.stringify(reply)}`)
     .replace(
-      `      event({ type: 'item', session, item: user })
-      event({ type: 'item', session, item: reply })
-      event({ type: 'finished', session, turn, status: 'completed', error: null })
+      `      event({ type: 'item', session, submission: params.submission, item: user })
+      event({ type: 'item', session, submission: params.submission, item: reply })
+      event({ type: 'finished', session, submission: params.submission, turn, status: 'completed', error: null })
 `,
       held,
     )
   expect(edited).toContain("params.text !== 'hold'")
+  expect(edited).toContain('writeFileSync } from')
   await writeFile(worker, edited)
   return source
 }

@@ -22,18 +22,16 @@ use std::collections::{BTreeMap, BTreeSet};
 /// MCP protocol revisions the modelled transports follow, newest first.
 pub const PROTOCOL_VERSIONS: &[&str] = &["2026-07-28", "2025-11-25", "2025-06-18"];
 
-/// Providers that have an MCP projection.
-pub const PROJECTED_PROVIDERS: &[&str] = &["claude", "codex", "omp"];
-
-/// Providers whose adapter passes the projection to the provider at launch:
-/// Codex as one `mcp_servers.<name>` config override per server on
-/// `thread/start` and `thread/resume`, Claude as the SDK's `mcpServers` query
-/// option, and Oh My Pi as the `.mcp.json` of an ADE-owned extension package
-/// named with `--extension`. Oh My Pi reads an explicitly named extension
-/// package's sibling `.mcp.json` (`docs/extension-loading.md`,
-/// `docs/mcp-config.md` "OMP extension packages"), so ADE never writes the
-/// user's own `mcp.json`, and the user's native entries keep precedence.
-pub const WIRED_PROVIDERS: &[&str] = &["claude", "codex", "omp"];
+// Every provider receives its projection the same way: through its worker's
+// `configure_mcp` operation at launch and resume, when the worker declares
+// that operation available. What a worker does with it is its own: Codex
+// passes one `mcp_servers.<name>` config override per server on
+// `thread/start` and `thread/resume`, Claude the SDK's `mcpServers` query
+// option, and Oh My Pi the `.mcp.json` of an ADE-owned extension package
+// named with `--extension` (`docs/extension-loading.md`, `docs/mcp-config.md`
+// "OMP extension packages"), so ADE never writes the user's own `mcp.json`.
+// Any other provider, such as a plugin's worker, receives the provider-neutral
+// projection described at [`project_worker`].
 
 const MAX_NAME: usize = 64;
 const MAX_TEXT: usize = 4096;
@@ -185,10 +183,11 @@ pub struct Projected {
 pub struct Resolution {
     pub servers: Vec<Projected>,
     pub excluded: Vec<Excluded>,
-    /// The provider's whole native document, or null when the provider has no projection.
-    pub document: Option<Value>,
-    /// The document's format: `claude_mcp_json`, `codex_config_toml` or `omp_mcp_json`.
-    pub format: Option<String>,
+    /// The provider's whole native document.
+    pub document: Value,
+    /// The document's format: `claude_mcp_json`, `codex_config_toml`,
+    /// `omp_mcp_json`, or `worker_mcp_json` for the provider-neutral projection.
+    pub format: String,
 }
 
 /// Checks an entry name: 1 to 64 lowercase letters, digits, `-` or `_`,
@@ -493,12 +492,46 @@ const CLAUDE_BLANKED: &[&str] = &[
 ];
 
 /// One entry in the provider's native shape, or why it cannot be expressed.
+/// A provider without a native projection of its own gets the
+/// provider-neutral one.
 pub fn project(transport: &Transport, provider: &str) -> Result<Value, String> {
     match provider {
         "claude" => project_claude(transport),
         "codex" => project_codex(transport),
         "omp" => project_omp(transport),
-        other => Err(format!("ADE has no MCP projection for provider {other}")),
+        _ => Ok(project_worker(transport)),
+    }
+}
+
+/// The provider-neutral projection a worker without a native projection of
+/// its own receives in `configure_mcp`: the common `.mcp.json` server object.
+/// A stdio server is `{"type":"stdio","command","args","env"}`, with `"cwd"`
+/// when one is set; a remote one is `{"type":"http"|"sse","url","headers"}`.
+/// An `env` or header value is the stored literal, or `${NAME}` for a
+/// reference to `NAME` in the worker's launch environment, which the worker
+/// substitutes before it starts or connects to the server. Every catalog entry
+/// can be expressed.
+fn project_worker(transport: &Transport) -> Value {
+    match transport {
+        Transport::Stdio {
+            command,
+            args,
+            env,
+            cwd,
+        } => {
+            let mut native =
+                json!({"type": "stdio", "command": command, "args": args, "env": expanded(env)});
+            if let Some(cwd) = cwd {
+                native["cwd"] = Value::String(cwd.clone());
+            }
+            native
+        }
+        Transport::StreamableHttp { url, headers } => {
+            json!({"type": "http", "url": url, "headers": expanded(headers)})
+        }
+        Transport::Sse { url, headers } => {
+            json!({"type": "sse", "url": url, "headers": expanded(headers)})
+        }
     }
 }
 
@@ -658,12 +691,12 @@ fn project_omp(transport: &Transport) -> Result<Value, String> {
     }
 }
 
-fn document(provider: &str, servers: Map<String, Value>) -> Option<(Value, &'static str)> {
+fn document(provider: &str, servers: Map<String, Value>) -> (Value, &'static str) {
     match provider {
-        "claude" => Some((json!({"mcpServers": servers}), "claude_mcp_json")),
-        "codex" => Some((json!({"mcp_servers": servers}), "codex_config_toml")),
-        "omp" => Some((json!({"mcpServers": servers}), "omp_mcp_json")),
-        _ => None,
+        "claude" => (json!({"mcpServers": servers}), "claude_mcp_json"),
+        "codex" => (json!({"mcp_servers": servers}), "codex_config_toml"),
+        "omp" => (json!({"mcpServers": servers}), "omp_mcp_json"),
+        _ => (json!({"mcpServers": servers}), "worker_mcp_json"),
     }
 }
 
@@ -695,10 +728,8 @@ pub fn resolve(servers: &[Server], target: &Target<'_>) -> Resolution {
         .iter()
         .map(|server| (server.name.clone(), server.native.clone()))
         .collect();
-    let (document, format) = match document(target.provider, natives) {
-        Some((document, format)) => (Some(document), Some(format.to_owned())),
-        None => (None, None),
-    };
+    let (document, format) = document(target.provider, natives);
+    let format = format.to_owned();
     Resolution {
         servers: projected,
         excluded,
@@ -711,7 +742,7 @@ pub fn resolve(servers: &[Server], target: &Target<'_>) -> Resolution {
 mod tests {
     use super::*;
 
-    const PROVIDERS: &[&str] = &["claude", "codex", "omp", "opencode"];
+    const PROVIDERS: &[&str] = &["claude", "codex", "omp"];
 
     fn stdio(env: &[(&str, SettingValue)]) -> Definition {
         Definition {
@@ -950,20 +981,25 @@ mod tests {
         ]);
         let servers = [server("github", definition)];
         let claude = resolve(&servers, &target("w", None, "claude"));
-        assert_eq!(claude.format.as_deref(), Some("claude_mcp_json"));
+        assert_eq!(claude.format, "claude_mcp_json");
         assert_eq!(
-            claude.document.unwrap()["mcpServers"]["github"]["env"],
+            claude.document["mcpServers"]["github"]["env"],
             json!({"GITHUB_TOKEN": "${GITHUB_TOKEN}", "LOG_LEVEL": "debug level"})
         );
         let codex = resolve(&servers, &target("w", None, "codex"));
-        let native = &codex.document.unwrap()["mcp_servers"]["github"];
+        let native = &codex.document["mcp_servers"]["github"];
         assert_eq!(native["env_vars"], json!(["GITHUB_TOKEN"]));
         assert_eq!(native["env"], json!({"LOG_LEVEL": "debug level"}));
         let omp = resolve(&servers, &target("w", None, "omp"));
         assert_eq!(omp.servers.len(), 1);
-        let other = resolve(&servers, &target("w", None, "opencode"));
-        assert!(other.document.is_none() && other.servers.is_empty());
-        assert_eq!(other.excluded[0].reason, Exclusion::Unsupported);
+        // A plugin's worker receives the provider-neutral projection.
+        let plugin = resolve(&servers, &target("w", None, "plugin:ade.opencode"));
+        assert_eq!(plugin.format, "worker_mcp_json");
+        assert_eq!(
+            plugin.document["mcpServers"]["github"],
+            json!({"type": "stdio", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-github@2025.4.8"],
+                "env": {"GITHUB_TOKEN": "${GITHUB_TOKEN}", "LOG_LEVEL": "debug level"}})
+        );
     }
 
     #[test]

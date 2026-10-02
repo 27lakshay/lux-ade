@@ -51,7 +51,7 @@ def copy_providers(source, destination):
         if 'node_modules' not in relative.parts:
             excluded.update(name for name in names if name == '.cache')
             excluded.update(name for name in names if name.endswith(('.test.mjs', '.log', '.pyc')))
-            excluded.update(name for name in names if name in ('fake-sdk.mjs', 'native-tui-fixture.mjs', 'mock-cli.mjs', 'transport-fixture.mjs'))
+            excluded.update(name for name in names if name in ('mock-cli.mjs', 'transport-fixture.mjs'))
         return excluded
 
     replace_tree(source, destination, symlinks=True, ignore=exclusions)

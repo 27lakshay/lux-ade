@@ -498,6 +498,8 @@ impl Provider for Adapter {
             session: id,
             history: vec![],
             rewound_from: None,
+            native_settings: None,
+            native_choices: None,
         })
     }
     fn send(

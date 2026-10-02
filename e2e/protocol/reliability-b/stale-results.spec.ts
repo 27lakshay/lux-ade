@@ -21,7 +21,7 @@ import {
 import { openConversationView, sdkModules, viewDigest } from '../fixtures/sync-view'
 
 async function fresh(profile: ScratchProfile, conversationId: string) {
-  return profile.call('conversation.get', { conversation_id: conversationId, limit: 200 })
+  return profile.call('conversation.get', { conversation_id: conversationId, limit: 32 })
 }
 
 test('a profile switch drops the old profile late snapshot and frames', async ({ ade }) => {
@@ -184,7 +184,7 @@ test('late pages and cursors from another context never return that context', as
   const oldest = Math.min(...top.messages.map((message) => message.sequence))
   await send(first, a.conversationId, 'wombat first late')
   await waitForIdle(first, a.conversationId)
-  const older = await first.call('conversation.get', { conversation_id: a.conversationId, before: oldest, limit: 200 })
+  const older = await first.call('conversation.get', { conversation_id: a.conversationId, before: oldest, limit: 32 })
   expect(older.messages.every((message) => message.sequence < oldest)).toBe(true)
   expect(JSON.stringify(older.messages)).not.toContain('wombat first late')
   const all = await fresh(first, a.conversationId)

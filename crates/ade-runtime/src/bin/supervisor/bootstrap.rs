@@ -1,10 +1,14 @@
 use anyhow::{Context, Result};
 
 pub(super) fn run() -> Result<()> {
+    let logs = ade_platform::resources::logs();
     if std::env::args().nth(1).as_deref() == Some("--codex-native-client") {
+        // The owned native client records its own sanitized events, such as the
+        // native provider's stderr size, beside the runtime's. Without the log
+        // directory it runs without them.
+        let _diagnostics_guard = ade_platform::diagnostics::init(&logs, "codex-native").ok();
         return ade_runtime::codex::run_native_client();
     }
-    let logs = ade_platform::resources::logs();
     if let Some(destination) = std::env::args()
         .skip(1)
         .collect::<Vec<_>>()

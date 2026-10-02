@@ -26,8 +26,37 @@ pub fn seal(mut record: CapabilityRecord) -> CapabilityRecord {
 /// descriptor its registry entry publishes. Only what the descriptor states
 /// is claimed: a listed capability is supported, a descriptor capability it
 /// omits is unsupported, and anything the descriptor cannot express is
-/// unknown. ADE manages no accounts for such a provider.
-pub fn registered_record(descriptor: &ade_core::provider::Descriptor) -> CapabilityRecord {
+/// unknown. Steering, rewind, compaction and managed accounts follow the
+/// operations its worker declares (`operations`), with the worker's own
+/// reason; without a declaration they are unknown.
+pub fn registered_record(
+    descriptor: &ade_core::provider::Descriptor,
+    operations: Option<&[ade_core::contract::providers::ProviderWorkerOperation]>,
+) -> CapabilityRecord {
+    use ade_core::contract::providers::{ProviderWorkerAvailability, ProviderWorkerMethod};
+    let operation = |method: ProviderWorkerMethod| {
+        let Some(operations) = operations else {
+            return Capability::new(
+                Support::Unknown,
+                "The provider's worker has not declared its operations yet",
+            );
+        };
+        match operations
+            .iter()
+            .find(|operation| operation.method == method)
+        {
+            Some(operation) if operation.availability == ProviderWorkerAvailability::Available => {
+                Capability::new(Support::Supported, "Declared by the provider's worker")
+            }
+            Some(operation) if !operation.reason.is_empty() => {
+                Capability::new(Support::Unsupported, &operation.reason)
+            }
+            _ => Capability::new(
+                Support::Unsupported,
+                "The provider's worker does not declare this operation",
+            ),
+        }
+    };
     let declares = |name: &str| descriptor.capabilities.iter().any(|c| c == name);
     let unknown = || {
         Capability::new(
@@ -88,22 +117,19 @@ pub fn registered_record(descriptor: &ade_core::provider::Descriptor) -> Capabil
             persistent: unknown(),
         },
         conversation: ConversationCapabilities {
-            steering: unknown(),
-            rewind: unknown(),
-            compaction: unknown(),
+            steering: operation(ProviderWorkerMethod::Steer),
+            rewind: operation(ProviderWorkerMethod::Rewind),
+            compaction: operation(ProviderWorkerMethod::Compact),
             resume: declared("resume"),
             import: unknown(),
             fork: unknown(),
             account_switch: Capability::new(
                 Support::Unsupported,
-                "The provider uses the agent's own login; ADE manages no accounts for it",
+                "ADE moves a conversation to another account only for a bundled provider",
             ),
         },
         quota: unknown(),
-        managed_accounts: Capability::new(
-            Support::Unsupported,
-            "The provider uses the agent's own login; ADE manages no accounts for it",
-        ),
+        managed_accounts: operation(ProviderWorkerMethod::AccountInspect),
     })
 }
 
@@ -175,15 +201,6 @@ pub fn validate(settings: &PresetSettings, record: &CapabilityRecord) -> Vec<Pre
             conflicts.push(conflict(
                 PresetField::Model,
                 format!("Model must be 1 to {MAX_MODEL_BYTES} bytes without surrounding spaces or control characters"),
-            ));
-        } else if record.models.format == ModelFormat::ProviderQualified
-            && !model
-                .split_once('/')
-                .is_some_and(|(provider, id)| !provider.is_empty() && !id.is_empty())
-        {
-            conflicts.push(conflict(
-                PresetField::Model,
-                format!("{name} needs a provider/model ID"),
             ));
         }
     }
@@ -497,12 +514,12 @@ mod tests {
             permission_modes: vec!["default".into()],
             setting_sources: vec![],
         };
-        let record = registered_record(&descriptor);
+        let record = registered_record(&descriptor, None);
         assert_eq!(record.provider, "plugin:e2e.agent");
         assert_eq!(record.conversation.resume.support, Support::Supported);
         assert_eq!(record.conversation.steering.support, Support::Unknown);
         assert_eq!(record.grants.once.support, Support::Unknown);
-        assert_eq!(record.managed_accounts.support, Support::Unsupported);
+        assert_eq!(record.managed_accounts.support, Support::Unknown);
         assert_eq!(record.permission_modes.len(), 1);
         assert_eq!(record, seal(record.clone()));
         let (state, reason) = readiness(&record, &[], None);
@@ -510,9 +527,31 @@ mod tests {
         assert!(reason.contains("cannot check"));
         let mut without_resume = descriptor.clone();
         without_resume.capabilities = vec!["tool_approval".into()];
-        let record = registered_record(&without_resume);
+        let record = registered_record(&without_resume, None);
         assert_eq!(record.conversation.resume.support, Support::Unsupported);
         assert_eq!(record.grants.once.support, Support::Supported);
+        // A worker's declared operations decide its controls and managed accounts.
+        use ade_core::contract::providers::{
+            ProviderWorkerAvailability as Availability, ProviderWorkerMethod as Method,
+            ProviderWorkerOperation,
+        };
+        let declared = |method, availability, reason: &str| ProviderWorkerOperation {
+            method,
+            tier: ade_core::contract::Tier::Query,
+            availability,
+            reason: reason.into(),
+        };
+        let operations = [
+            declared(Method::Compact, Availability::Available, ""),
+            declared(Method::Steer, Availability::Unsupported, "No steer"),
+            declared(Method::AccountInspect, Availability::Available, ""),
+        ];
+        let record = registered_record(&descriptor, Some(&operations));
+        assert_eq!(record.conversation.compaction.support, Support::Supported);
+        assert_eq!(record.conversation.steering.support, Support::Unsupported);
+        assert_eq!(record.conversation.steering.note, "No steer");
+        assert_eq!(record.conversation.rewind.support, Support::Unsupported);
+        assert_eq!(record.managed_accounts.support, Support::Supported);
     }
 
     fn cap(support: Support) -> Capability {
@@ -645,20 +684,6 @@ mod tests {
             fields(&validate(&settings(None, Some(""), "default"), &record)),
             [PresetField::Reasoning]
         );
-    }
-
-    #[test]
-    fn provider_qualified_models_need_both_parts() {
-        let mut record = record();
-        record.models.format = ModelFormat::ProviderQualified;
-        assert!(validate(&settings(Some("a/b"), None, "default"), &record).is_empty());
-        for bad in ["ab", "/b", "a/"] {
-            assert_eq!(
-                fields(&validate(&settings(Some(bad), None, "default"), &record)),
-                [PresetField::Model],
-                "{bad}"
-            );
-        }
     }
 
     #[test]

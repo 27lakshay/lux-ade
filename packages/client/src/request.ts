@@ -130,6 +130,7 @@ export const controlOperations: ReadonlySet<string> = new Set([
   'runtime.status',
   'diagnostics.status',
   'agent.cancel',
+  'agent.terminate',
   'terminal.stop',
   'service.stop',
   'runtime.prepare_restart',

@@ -10,4 +10,5 @@ export const conversations: ConversationsBridge = {
     invoke('ade:send-journal-import', bundle, sourceProfileId, targetProfileId),
   onFeedFrame,
   onDraftError: (listener) => subscribe('ade:draft-error', listener),
+  pluginUiEntries: () => invoke('ade:plugin-ui-entries'),
 }

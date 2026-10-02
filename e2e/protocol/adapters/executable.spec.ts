@@ -57,7 +57,7 @@ test('F024: a custom executable runs turns, cancel stops a running one, and unsu
     turn_id: conversation.active_turn_id ?? '',
     text: 'more',
   })
-  expect(steer).toMatchObject({ outcome: 'unavailable', reason: expect.stringContaining('no native steer path') })
+  expect(steer).toMatchObject({ outcome: 'unavailable', reason: expect.stringContaining('not a provider worker') })
   await cancelTurn(profile, conversationId)
   await releaseExec(agents)
   expect(await execPrompts(agents)).toEqual(['hello', 'hold please'])

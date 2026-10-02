@@ -1,6 +1,6 @@
 //! The one provider interface every provider registers through (F023).
 //!
-//! Claude Code, Codex, Oh My Pi and OpenCode, the generic ACP and custom
+//! Claude Code, Codex and Oh My Pi, the generic ACP and custom
 //! executable adapters, and installed plugin workers all register a
 //! [`ProviderEntry`] in a [`Registry`] through [`Registry::register`]. Bundled
 //! providers get no other path: [`crate::provider::spawn`] resolves them
@@ -34,7 +34,8 @@
 use crate::capabilities::{CapabilityRecord, Executable};
 use crate::provider::{Descriptor, Event, Provider};
 use ade_core::contract::providers::{
-    ProviderOrigin, ProviderRegistrationView, ProviderWorkerPin, RegistrationState,
+    ProviderOrigin, ProviderRegistrationView, ProviderWorkerInitialize, ProviderWorkerPin,
+    RegistrationState,
 };
 use ade_core::model::AccountExecution;
 use anyhow::{Result, bail, ensure};
@@ -71,6 +72,12 @@ pub trait ProviderEntry: Send + Sync {
     }
     fn process_scope(&self) -> ProcessScope {
         ProcessScope::Run
+    }
+    /// What the provider's worker declares at its `initialize` handshake, when
+    /// it is known without starting it: a bundled worker answers with exactly
+    /// this descriptor. `None` for a provider known only once started.
+    fn worker_descriptor(&self) -> Option<ProviderWorkerInitialize> {
+        None
     }
     /// Starts one owned native process. `account` already belongs to this
     /// provider; [`Registry::launch`] checks that before calling.
@@ -323,6 +330,8 @@ struct Bundled {
     id: &'static str,
     capabilities: fn() -> CapabilityRecord,
     installation: &'static [Executable],
+    /// The descriptor the bundled worker is given and answers `initialize` with.
+    worker: fn() -> ProviderWorkerInitialize,
     launch: Launch,
 }
 
@@ -347,6 +356,9 @@ impl ProviderEntry for Bundled {
     fn installation(&self) -> &'static [Executable] {
         self.installation
     }
+    fn worker_descriptor(&self) -> Option<ProviderWorkerInitialize> {
+        Some((self.worker)())
+    }
     fn launch(
         &self,
         cwd: &str,
@@ -362,19 +374,9 @@ fn launch_omp(
     account: Option<&AccountExecution>,
     events: mpsc::SyncSender<Event>,
 ) -> Result<Arc<dyn Provider>> {
-    Ok(crate::omp::Adapter::spawn(cwd, account, events)?)
-}
-
-fn launch_opencode(
-    cwd: &str,
-    account: Option<&AccountExecution>,
-    events: mpsc::SyncSender<Event>,
-) -> Result<Arc<dyn Provider>> {
-    ensure!(
-        account.is_none(),
-        "Managed OpenCode accounts are not supported yet"
-    );
-    Ok(crate::opencode::Adapter::spawn(cwd, events)?)
+    Ok(crate::provider::worker::Worker::spawn_omp(
+        cwd, account, events,
+    )?)
 }
 
 fn launch_codex(
@@ -407,24 +409,21 @@ pub fn bundled() -> &'static Registry {
                 id: "omp",
                 capabilities: crate::omp::capabilities,
                 installation: crate::omp::INSTALLATION,
+                worker: crate::omp::worker_descriptor,
                 launch: launch_omp,
-            },
-            Bundled {
-                id: "opencode",
-                capabilities: crate::opencode::capabilities,
-                installation: crate::opencode::INSTALLATION,
-                launch: launch_opencode,
             },
             Bundled {
                 id: "codex",
                 capabilities: crate::codex::capabilities,
                 installation: crate::codex::INSTALLATION,
+                worker: crate::codex::public_descriptor,
                 launch: launch_codex,
             },
             Bundled {
                 id: "claude",
                 capabilities: crate::claude::capabilities,
                 installation: crate::claude::INSTALLATION,
+                worker: crate::claude::worker_descriptor,
                 launch: launch_claude,
             },
         ];
@@ -752,7 +751,6 @@ mod tests {
             states,
             [
                 ("omp", RegistrationState::Registered),
-                ("opencode", RegistrationState::Registered),
                 ("codex", RegistrationState::Registered),
                 ("claude", RegistrationState::Registered),
                 ("adapter:my-agent", RegistrationState::Registered),
@@ -761,7 +759,7 @@ mod tests {
             ]
         );
         assert!(
-            views[6]
+            views[5]
                 .reason
                 .as_deref()
                 .unwrap()
@@ -771,7 +769,7 @@ mod tests {
             registry.get("claude").unwrap().origin,
             ProviderOrigin::Bundled
         );
-        assert_eq!(registry.iter().count(), 6);
+        assert_eq!(registry.iter().count(), 5);
     }
 
     #[test]

@@ -5,6 +5,12 @@ import { Button } from '@/components/ui/button'
 import { Field, FieldLabel } from '@/components/ui/field'
 import { EditorContent } from '@tiptap/react'
 import { PromptDeliveryStatus } from './PromptDeliveryStatus'
+import { DraftContext } from './DraftContext'
+import { PreparedPrompt } from './PreparedPrompt'
+import type { PreparedSend } from './usePreparedSend'
+import { DraftAttachments } from './DraftAttachments'
+import type { useDraftAttachments } from './useDraftAttachments'
+import type { useFollowUpInput } from './useFollowUpInput'
 
 type Delivery = 'sending' | 'pending' | 'unknown' | 'rejected'
 
@@ -25,6 +31,10 @@ export function ConversationComposerForm({
   draftStashes,
   onOpenDraftRecovery,
   onRestoreDraftRecovery,
+  followUp,
+  contextNodes,
+  draftAttachments,
+  prepared,
 }: {
   promptId: string
   editor: ComponentProps<typeof EditorContent>['editor']
@@ -42,6 +52,11 @@ export function ConversationComposerForm({
   draftStashes: DraftStash[] | null
   onOpenDraftRecovery: () => Promise<void>
   onRestoreDraftRecovery: (stash: DraftStash) => Promise<void>
+  followUp: ReturnType<typeof useFollowUpInput>
+  contextNodes: unknown[]
+  draftAttachments: ReturnType<typeof useDraftAttachments>
+  /** The saved draft and the prompt plugin contributions prepare from it. */
+  prepared: PreparedSend
 }) {
   return (
     <form
@@ -56,6 +71,9 @@ export function ConversationComposerForm({
         <FieldLabel htmlFor={promptId}>Prompt</FieldLabel>
         <EditorContent editor={editor} />
       </Field>
+      <DraftContext nodes={contextNodes} plan={draftAttachments.plan} preview={draftAttachments.preview} />
+      <PreparedPrompt send={prepared} attachments={draftAttachments.attachments} />
+      <DraftAttachments state={draftAttachments} disabled={!ready || busy || attemptRequestId !== null} />
       <div className="flex flex-wrap items-center justify-between gap-2">
         <PromptDeliveryStatus requestId={attemptRequestId} delivery={delivery} admitted={admitted} detail={detail} />
         {attemptRequestId ? (
@@ -80,12 +98,50 @@ export function ConversationComposerForm({
               {delivery === 'sending' ? 'Sending…' : 'Waiting for confirmation'}
             </Button>
           )
+        ) : followUp.sendBlocked ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              type="button"
+              onClick={() => void followUp.queue()}
+              disabled={!ready || busy || !canSubmit || followUp.working !== null}
+            >
+              {followUp.working === 'queue' ? 'Queueing…' : 'Queue prompt'}
+            </Button>
+            {followUp.steer && (
+              <Button
+                size="sm"
+                type="button"
+                variant="outline"
+                onClick={() => void followUp.steerTurn()}
+                disabled={!ready || busy || !canSubmit || !followUp.steer.available || followUp.working !== null}
+              >
+                {followUp.working === 'steer' ? 'Steering…' : 'Steer turn'}
+              </Button>
+            )}
+          </div>
         ) : (
           <Button size="sm" type="submit" disabled={!ready || busy || !canSubmit}>
             Send prompt
           </Button>
         )}
       </div>
+      {followUp.sendBlocked && !attemptRequestId && (
+        <Caption tone="muted" role="status">
+          {followUp.turnActive ? 'A turn is running. ' : 'Earlier prompts are queued. '}
+          Queue adds this prompt to ADE's queue
+          {followUp.steer
+            ? followUp.steer.available
+              ? '; Steer adds it to the running turn.'
+              : '. Steering is unavailable: ' + (followUp.steer.reason ?? 'the provider does not support it') + '.'
+            : '.'}
+        </Caption>
+      )}
+      {followUp.detail && (
+        <Body role="alert" className="break-words">
+          {followUp.detail}
+        </Body>
+      )}
       <div className="flex flex-col gap-2">
         <Button
           size="sm"

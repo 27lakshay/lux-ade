@@ -1,4 +1,5 @@
-import type { ConversationStore } from '../state/conversation-store'
+import { hostErrorMessage } from '@/lib/host-error'
+import type { ConversationState, ConversationStore } from '../state/conversation-store'
 import type { SubmissionDelivery } from '@ade/contracts'
 
 export const recoveryAdvice: Record<NonNullable<SubmissionDelivery['recovery']>, string> = {
@@ -18,13 +19,13 @@ export const documentFor = (text: string) => ({
   })),
 })
 
-export const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error))
+/** The reason an error gives, without Electron's IPC wrapper text. */
+export const messageOf = hostErrorMessage
+/** The daemon's delivery evidence for a request, from the message it recorded for it. */
+export const deliveryOf = (state: ConversationState, requestId: string): SubmissionDelivery | null =>
+  state.snapshot?.messages.find(
+    (message) => message.delivery?.request_id === requestId && message.id === message.delivery.recoverable_message_id,
+  )?.delivery ?? null
+
 export const hasDeliveryEvidence = (store: ConversationStore, requestId: string): boolean =>
-  Boolean(
-    store
-      .getState()
-      .snapshot?.messages.some(
-        (message) =>
-          message.delivery?.request_id === requestId && message.id === message.delivery.recoverable_message_id,
-      ),
-  )
+  deliveryOf(store.getState(), requestId) !== null

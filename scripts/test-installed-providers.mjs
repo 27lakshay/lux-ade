@@ -26,8 +26,8 @@ export function installedPrerequisites(selected, env, directory = root) {
     if (found) binaries[name] = found
     else missing.push(name)
   }
-  if (selected.some((name) => name === 'codex' || name === 'claude')) requireBinary('python3', 'python3')
   if (selected.includes('codex')) {
+    requireBinary('python3', 'python3')
     requireBinary('codex', env.ADE_CODEX_BIN ?? 'codex')
     requireBinary('ade-daemon', resolve(directory, 'target/debug/ade-daemon'))
     requireBinary('ade-runtime', resolve(directory, 'target/debug/ade-runtime'))
@@ -36,7 +36,16 @@ export function installedPrerequisites(selected, env, directory = root) {
     requireBinary('node', 'node')
     requireBinary('claude', env.ADE_CLAUDE_BIN ?? 'claude')
   }
-  if (selected.includes('opencode')) requireBinary('opencode', env.ADE_OPENCODE_LOOPBACK_BIN ?? 'opencode')
+  if (selected.includes('opencode')) {
+    requireBinary('opencode', env.ADE_OPENCODE_LOOPBACK_BIN ?? 'opencode')
+    requireBinary('ade-daemon', resolve(directory, 'target/debug/ade-daemon'))
+    requireBinary('ade-runtime', resolve(directory, 'target/debug/ade-runtime'))
+    try {
+      accessSync(resolve(directory, 'plugins/opencode/artifact/ade-plugin.json'), constants.R_OK)
+    } catch {
+      missing.push('packaged OpenCode plugin (pnpm build:sdk)')
+    }
+  }
   if (selected.includes('omp')) {
     requireBinary('bun', env.ADE_BUN_BIN ?? 'bun')
     requireBinary('omp', env.ADE_OMP_BIN ?? resolve(directory, 'providers/omp/node_modules/.bin/omp'))
@@ -54,20 +63,17 @@ export function installedPrerequisites(selected, env, directory = root) {
 
 function stages(selected, binaries, directory) {
   const result = selected.map((name) => {
-    if (name === 'codex' || name === 'claude')
-      return [name, [binaries.python3, `scripts/test_${name}_loopback.py`, '--run']]
+    if (name === 'codex') return [name, [binaries.python3, 'scripts/test_codex_loopback.py', '--run']]
+    // The packaged plugin runs installed OpenCode through the real daemon and runtime.
+    if (name === 'opencode')
+      return [
+        name,
+        ['pnpm', 'test:e2e:protocol:only', 'e2e/protocol/adapters/opencode-native.spec.ts', '--grep', 'installed'],
+      ]
     const report = resolve(directory, `${name}.xml`)
     const command =
       name === 'omp'
-        ? [
-            binaries.bun,
-            'test',
-            './loopback.test.mjs',
-            './live.test.mjs',
-            '--reporter=junit',
-            '--reporter-outfile',
-            report,
-          ]
+        ? [binaries.bun, 'test', './worker-peer.test.mjs', '--reporter=junit', '--reporter-outfile', report]
         : [
             process.execPath,
             '--test',
@@ -76,7 +82,6 @@ function stages(selected, binaries, directory) {
             '--test-reporter-destination=stdout',
             `--test-reporter-destination=${report}`,
             './loopback.test.mjs',
-            './live.test.mjs',
           ]
     return [name, command, { cwd: resolve(root, 'providers', name), reports: [report] }]
   })
@@ -121,11 +126,10 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
             ...process.env,
             ADE_CODEX_BIN: binaries.codex,
             ADE_CLAUDE_BIN: binaries.claude,
+            ADE_CLAUDE_LOOPBACK_BIN: binaries.claude,
             ADE_OPENCODE_LOOPBACK_BIN: binaries.opencode,
-            ADE_OPENCODE_LIVE_BIN: binaries.opencode,
             ADE_OMP_BIN: binaries.omp,
             ADE_OMP_LOOPBACK: '1',
-            ADE_OMP_LIVE: '1',
           },
         })
       }

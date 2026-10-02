@@ -27,8 +27,8 @@ retained as provenance and are not a current comprehensive inventory.
 
 Patch purposes, upstream status, verification methods and remaining reused-source
 gaps are recorded in [the vendor patch ledger](docs/vendor-patches.md). The
-OpenCode reduced protocol fixture retains its upstream MIT notice in
-`providers/opencode/LICENSE-opencode`; see its adjacent `PROVENANCE.md`.
+OpenCode provider plugin retains OpenCode's upstream MIT notice, for its reduced protocol
+fixture, in `plugins/opencode/LICENSE-opencode`; see its adjacent `PROVENANCE.md`.
 
 Packaging also produces a resolved Cargo inventory with available Rust source
 notices. See [build and release](docs/build-and-release.md#rust-notice-inventory)

@@ -109,9 +109,10 @@ test('F029: a preset is created, converges on repeat, is replaced and deleted on
 test('F029: saving a setting the current record does not support is refused with the reason, and nothing is stored', async ({
   profile,
 }) => {
-  const codex = await record(profile, 'codex')
-  expect(codex.reasoning.selection.support).toBe('native_only')
-  await expect(profile.call('preset.save', { name: 'Deep', provider: 'codex', reasoning: 'high' })).rejects.toThrow(
+  // Oh My Pi reports its thinking level, but ADE launches cannot select one yet.
+  const omp = await record(profile, 'omp')
+  expect(omp.reasoning.selection.support).not.toBe('supported')
+  await expect(profile.call('preset.save', { name: 'Deep', provider: 'omp', reasoning: 'high' })).rejects.toThrow(
     /reasoning selection is unavailable/,
   )
   await expect(
@@ -120,17 +121,13 @@ test('F029: saving a setting the current record does not support is refused with
   await expect(
     profile.call('preset.save', { name: 'Odd', provider: 'codex', permission_mode: 'no-such-mode' }),
   ).rejects.toThrow(/has no permission mode no-such-mode/)
-  // OpenCode needs a provider-qualified model ID.
-  await expect(profile.call('preset.save', { name: 'Bare', provider: 'opencode', model: 'sonnet' })).rejects.toThrow(
-    /provider\/model ID/,
-  )
   await expect(profile.call('preset.save', { name: 'Nowhere', provider: 'no-such-provider' })).rejects.toThrow(
     /Unknown provider/,
   )
   await expect(profile.call('preset.save', { name: '   ', provider: 'codex' })).rejects.toThrow(/Missing name/)
   expect((await profile.call('preset.list', {})).presets).toEqual([])
 
-  const cli = await profile.cli('preset', 'save', 'Deep', '--provider', 'codex', '--reasoning', 'high')
+  const cli = await profile.cli('preset', 'save', 'Deep', '--provider', 'omp', '--reasoning', 'high')
   expect(cli.code).not.toBe(0)
   expect(cli.stderr).toMatch(/reasoning selection is unavailable/)
 })

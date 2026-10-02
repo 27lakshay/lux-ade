@@ -234,3 +234,124 @@ test('the Node SDK drains admitted replies at EOF under backpressure, bounds out
     await rm(script, { force: true })
   }
 })
+
+test('the Node SDK answers a cancellation while a steer holds the shared control lane', async ({ ade }) => {
+  const artifact = await providerSdkDiagnosticArtifact(ade.root)
+  const script = join(artifact, '.sdk-cancel-lane-worker.mjs')
+  await writeFile(
+    script,
+    [
+      'import { Effect, Layer } from "effect"',
+      'import { DEFAULT_LIMITS, SDK_REQUIREMENTS } from "@ade/provider-sdk"',
+      'import { runProviderWorker } from "@ade/provider-sdk/node"',
+      'const available = (method, tier) => ({ method, tier, availability: "available", reason: "" })',
+      'runProviderWorker({',
+      '  descriptor: {',
+      '    compatible_protocol_versions: [2],',
+      '    name: "Cancel lane regression worker",',
+      '    capabilities: [],',
+      '    permission_modes: ["default"],',
+      '    operations: [available("initialize", "query"), available("steer", "effect_command"), available("cancel", "idempotent_command")],',
+      '    limits: DEFAULT_LIMITS,',
+      '    requirements: SDK_REQUIREMENTS,',
+      '  },',
+      '  dependencies: Layer.empty,',
+      '  acquire: Effect.succeed({',
+      '    steer: () => Effect.never,',
+      '    cancel: () => Effect.succeed({ type: "cancel_result", evidence: { scope: "turn", interruption_requested: true, termination: "requested", active_work_remaining: null, queued_work_count: null, background_work_remaining: null, observed_at_ms: null } }),',
+      '  }),',
+      '})',
+    ].join('\n'),
+  )
+  const child = spawn(process.execPath, [script], { cwd: artifact, stdio: 'pipe' })
+  const lines = createInterface({ input: child.stdout })[Symbol.asyncIterator]()
+  let stderr = ''
+  child.stderr.setEncoding('utf8').on('data', (chunk: string) => (stderr += chunk))
+  const send = (frame: Record<string, unknown>) =>
+    child.stdin.write(JSON.stringify({ jsonrpc: '2.0', ...frame }) + '\n')
+  const read = async () => {
+    const next = await lines.next()
+    if (next.done) throw new Error('Provider SDK worker ended before a response: ' + stderr)
+    return JSON.parse(next.value)
+  }
+  try {
+    send({ id: 1, method: 'initialize', params: { versions: [2] } })
+    expect(await read()).toMatchObject({ id: 1, result: { protocol_version: 2 } })
+    // The steer never settles, so it holds the steer/answer lane.
+    send({
+      id: 2,
+      method: 'steer',
+      params: { session: 's', turn: 't', message_id: 'm', text: 'never settles', attachments: [] },
+    })
+    send({ id: 3, method: 'cancel', params: { session: 's', source_attempt_id: 'a', submission_id: 'b', turn: 't' } })
+    expect(await read()).toMatchObject({ id: 3, result: { type: 'cancel_result', evidence: { scope: 'turn' } } })
+  } finally {
+    child.kill()
+    await rm(script, { force: true })
+  }
+})
+
+test('the Node SDK keeps an expected failure, a defect, an interruption and a shutdown apart', async ({ ade }) => {
+  const artifact = await providerSdkDiagnosticArtifact(ade.root)
+  const script = join(artifact, '.sdk-causes-worker.mjs')
+  await writeFile(
+    script,
+    [
+      'import { Effect, Layer } from "effect"',
+      'import { DEFAULT_LIMITS, SDK_REQUIREMENTS } from "@ade/provider-sdk"',
+      'import { runProviderWorker } from "@ade/provider-sdk/node"',
+      'const available = (method, tier) => ({ method, tier, availability: "available", reason: "" })',
+      'runProviderWorker({',
+      '  descriptor: {',
+      '    compatible_protocol_versions: [2],',
+      '    name: "Failure cause worker",',
+      '    capabilities: [],',
+      '    permission_modes: ["default"],',
+      '    operations: [available("initialize", "query"), available("steer", "effect_command")],',
+      '    limits: DEFAULT_LIMITS,',
+      '    requirements: SDK_REQUIREMENTS,',
+      '  },',
+      '  dependencies: Layer.empty,',
+      '  acquire: Effect.succeed({',
+      '    steer: (p) =>',
+      '      p.text === "expected" ? Effect.fail({ code: "rate_limited", message: "Native rate limit" })',
+      '      : p.text === "defect" ? Effect.die(new Error("bug"))',
+      '      : p.text === "interrupt" ? Effect.interrupt',
+      '      : Effect.never,',
+      '  }),',
+      '})',
+    ].join('\n'),
+  )
+  const child = spawn(process.execPath, [script], { cwd: artifact, stdio: 'pipe' })
+  const lines = createInterface({ input: child.stdout })[Symbol.asyncIterator]()
+  const send = (frame: Record<string, unknown>) =>
+    child.stdin.write(JSON.stringify({ jsonrpc: '2.0', ...frame }) + '\n')
+  const read = async () => {
+    const next = await lines.next()
+    return next.done ? null : JSON.parse(next.value)
+  }
+  const steer = (id: number, text: string) =>
+    send({ id, method: 'steer', params: { session: 's', turn: 't', message_id: 'm', text, attachments: [] } })
+  try {
+    send({ id: 1, method: 'initialize', params: { versions: [2] } })
+    expect(await read()).toMatchObject({ id: 1 })
+    const codes: Record<string, string> = {}
+    for (const [id, text] of [
+      [2, 'expected'],
+      [3, 'defect'],
+      [4, 'interrupt'],
+    ] as const) {
+      steer(id, text)
+      codes[text] = (await read())?.error?.data?.code
+    }
+    expect(codes).toEqual({ expected: 'rate_limited', defect: 'integration_bug', interrupt: 'cancelled' })
+    // At shutdown a pending request gets no reply at all: the host reads a closed transport as an
+    // unknown outcome, never as a cancellation or a success.
+    steer(5, 'pending')
+    child.stdin.end()
+    expect(await read()).toBeNull()
+  } finally {
+    child.kill()
+    await rm(script, { force: true })
+  }
+})

@@ -1,12 +1,14 @@
 import { randomUUID } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
+import { pathToFileURL } from 'node:url'
 import { Cause, Effect, Layer, Queue, Stream } from 'effect'
 import { runProviderWorker } from '@ade/provider-sdk/node'
 import { Transcript } from './transcript.mjs'
 import { loadAliases, saveAliases } from './identity.mjs'
 import { historyPage, childTranscript, hydrateTranscript } from './history.mjs'
 import { forkBefore } from './rewind.mjs'
-import { Subagents } from './subagents.mjs'
+import { BackgroundTasks, Subagents } from './subagents.mjs'
+import { initSettings, nativeChoices } from './settings.mjs'
 
 const descriptor = JSON.parse(process.env.ADE_CLAUDE_WORKER_DESCRIPTOR ?? 'null')
 if (!descriptor) throw new Error('The owning ADE runtime must provide Claude worker metadata')
@@ -116,7 +118,12 @@ runProviderWorker({
     let ready = false
     let streamMessage = null
     const sdk = yield* Effect.tryPromise({
-      try: () => import('@anthropic-ai/claude-agent-sdk'),
+      // ADE_E2E_CLAUDE_SDK is the named test seam: the protocol suites point it at the
+      // deterministic SDK double. history.mjs and rewind.mjs receive this same module.
+      try: () =>
+        process.env.ADE_E2E_CLAUDE_SDK
+          ? import(pathToFileURL(process.env.ADE_E2E_CLAUDE_SDK).href)
+          : import('@anthropic-ai/claude-agent-sdk'),
       catch: () => failure('provider_failure', 'The installed Claude Agent SDK could not be loaded'),
     })
 
@@ -137,6 +144,7 @@ runProviderWorker({
     let pendingSends = new Map()
     let callbacks = new Map()
     let subagents = new Subagents()
+    let background = new BackgroundTasks()
     let messageAliases = new Map()
     let transcript = null
 
@@ -265,6 +273,7 @@ runProviderWorker({
         systemPrompt: { type: 'preset', preset: 'claude_code' },
         onElicitation: async () => ({ action: 'decline' }),
         ...(params.config.model ? { model: params.config.model } : {}),
+        ...(params.config.reasoning_effort ? { effort: params.config.reasoning_effort } : {}),
         ...(params.resume ? { resume: params.resume } : { sessionId: nativeSession }),
         ...(process.env.ADE_CLAUDE_BIN ? { pathToClaudeCodeExecutable: process.env.ADE_CLAUDE_BIN } : {}),
       }
@@ -278,6 +287,10 @@ runProviderWorker({
             if (message.session_id && message.session_id !== nativeSession)
               throw failure('provider_failure', 'Claude SDK returned a different native session identity')
             const sent = confirmInputs(message)
+            // system/init names the model, permission mode and (when the host publishes it)
+            // effort in effect; each re-emitted init carries the current values.
+            if (message.type === 'system' && message.subtype === 'init')
+              push({ type: 'settings', session: nativeSession, settings: initSettings(message) })
             if (message.type === 'rate_limit_event')
               push({
                 type: 'usage',
@@ -286,6 +299,15 @@ runProviderWorker({
                 turn: null,
                 source: 'rate_limit_event',
                 report: message.rate_limit_info ?? {},
+              })
+            const running = background.observe(message)
+            if (running !== null)
+              push({
+                type: 'background',
+                session: nativeSession,
+                active: running > 0,
+                running,
+                source: 'task_lifecycle',
               })
             const nativeToolOwner = transcript.calls.get(message.tool_use_id)?.sent
             const child = subagents.consume(message, {
@@ -395,11 +417,13 @@ runProviderWorker({
       })()
       // initializationResult is a control capability report, not a session-ID report.
       // Read native startup frames concurrently so identity/refusal reaches open.
-      return query.initializationResult().then(async () => {
+      return query.initializationResult().then(async (initialized) => {
         await new Promise((resolve) => setImmediate(resolve))
         if (readFailure) throw readFailure
+        // No Started event here: ADE reads Started as a running turn, and an opened or
+        // resumed session has none until an input is accepted (Submitted).
         ready = true
-        push({ type: 'started', session: nativeSession, submission: null, turn: null })
+        return nativeChoices(initialized?.models)
       })
     }
 
@@ -415,15 +439,16 @@ runProviderWorker({
             if (params.resume) {
               await hydrateTranscript(sdk, nativeSession, transcript)
             }
+            let choices
             try {
-              await start(params)
+              choices = await start(params)
             } catch (error) {
               active = false
               wakeInput()
               query?.close()
               throw error
             }
-            return { session: nativeSession, history: [] }
+            return { session: nativeSession, history: [], ...(choices ? { native_choices: choices } : {}) }
           },
           catch: (error) =>
             error?.code ? error : failure('provider_failure', 'Claude Agent SDK initialization failed'),
@@ -503,10 +528,22 @@ runProviderWorker({
             if (interruptedSubmission === activeSubmission) return interruptResult
             interruptedSubmission = activeSubmission
             interruptResult = query.interrupt().then((receipt) => {
-              if (receipt?.still_queued?.includes(admitted.inputUuid)) {
-                interruptedSubmission = null
-                throw failure('unsupported', 'Claude SDK left the cancelled submission queued')
-              }
+              // Input the SDK still holds can run later, so this is no stop: report the
+              // queue depth and let ADE keep the outcome unresolved.
+              const stillQueued = Array.isArray(receipt?.still_queued) ? receipt.still_queued.length : 0
+              if (stillQueued > 0)
+                return {
+                  type: 'cancel_result',
+                  evidence: {
+                    scope: 'turn',
+                    interruption_requested: true,
+                    termination: 'requested',
+                    active_work_remaining: receipt.still_queued.includes(admitted.inputUuid) ? true : null,
+                    queued_work_count: stillQueued,
+                    background_work_remaining: null,
+                    observed_at_ms: Date.now(),
+                  },
+                }
               return {
                 type: 'cancel_result',
                 evidence: {
@@ -600,6 +637,7 @@ runProviderWorker({
               streamMessage = null
               await hydrateTranscript(sdk, nativeSession, transcript, receipts)
               subagents = new Subagents()
+              background = new BackgroundTasks()
               ready = false
               await start({ config: openConfig, resume: nativeSession })
               return { session: fork.session, previous_session: fork.previous_session, scope: fork.scope }

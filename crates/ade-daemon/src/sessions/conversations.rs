@@ -2,7 +2,7 @@
 use super::*;
 use ade_core::contract::agents::{
     AgentCancelRequest, AgentChildTranscriptRequest, AgentDisconnectRequest, AgentResumeRequest,
-    ChildTranscriptPage,
+    AgentTerminateRequest, ChildTranscriptPage,
 };
 use ade_core::contract::conversations::{
     Ack, AgentAnswerRequest, AgentSendRequest, AttachmentImportRequest, AttachmentInspectRequest,
@@ -42,6 +42,9 @@ fn field<'a, T>(
 ) -> Result<()> {
     read(&request[key]).map(drop).context(message.to_owned())
 }
+
+/// The reply budget of one `conversation.export` page.
+const EXPORT_PAGE_BYTES: usize = 4 * 1024 * 1024;
 
 impl Sessions {
     /// `agent.disconnect`: stops the Conversation's Agent, if one runs, and
@@ -215,6 +218,8 @@ impl Sessions {
                                 model: settings.model.clone(),
                                 permission_mode: settings.permission_mode.clone(),
                                 setting_sources: vec![],
+                                // A preset's reasoning level was dropped here before.
+                                reasoning_effort: settings.reasoning.clone(),
                             },
                         )
                     }
@@ -223,6 +228,9 @@ impl Sessions {
                 // Adapters and plugin providers are validated through the
                 // provider registry, not the static catalogue.
                 let registered = self.registered_descriptor(provider)?;
+                if registered.is_some() && create.account_id.is_some() {
+                    self.ensure_managed_accounts(provider)?;
+                }
                 let mut d = self.data.lock().unwrap();
                 let conversation = match &registered {
                     None => d.store.create_with_account(
@@ -232,14 +240,13 @@ impl Sessions {
                         provider_config,
                         create.account_id.as_deref(),
                     )?,
-                    Some(descriptor) => {
-                        ensure!(
-                            create.account_id.is_none(),
-                            "{provider} uses the agent's own login; ADE manages no accounts for it"
-                        );
-                        d.store
-                            .create_registered(workspace, title, descriptor, provider_config)?
-                    }
+                    Some(descriptor) => d.store.create_registered(
+                        workspace,
+                        title,
+                        descriptor,
+                        provider_config,
+                        create.account_id.as_deref(),
+                    )?,
                 };
                 self.pin_new(&conversation)?;
                 self.catalog_changed(&mut d)?;
@@ -262,6 +269,97 @@ impl Sessions {
                 reply(&Ack::default())
             }
             "conversation.history" => self.native_history_query(request),
+            "conversation.export" => {
+                use ade_core::contract::conversations::{
+                    ConversationExport, ConversationExportRequest, ExportContinuity,
+                    ExportedAttachment, ExportedMessage,
+                };
+                let export: ConversationExportRequest = decode(request)?;
+                let id = non_empty("conversation_id", &export.conversation_id)?;
+                let limit = export.limit.unwrap_or(32) as usize;
+                ensure!(
+                    (1..=32).contains(&limit),
+                    ade_core::error::Failure::ResourceLimit
+                );
+                let provider = self.data.lock().unwrap().store.conversation(id)?.provider;
+                let provider_available = self
+                    .provider_descriptors()
+                    .iter()
+                    .any(|descriptor| descriptor.id == provider);
+                let d = self.data.lock().unwrap();
+                let conversation = self.presented(&d, &d.store.conversation(id)?)?;
+                let (page, mut more) =
+                    d.store
+                        .messages_after(id, export.after_sequence.unwrap_or(i64::MIN), limit)?;
+                let mut messages: Vec<ExportedMessage> = Vec::with_capacity(page.len());
+                // A page holds as many whole messages as fit the reply budget, at least one.
+                let mut used = ade_core::json_budget::Usage { bytes: 2, nodes: 1 };
+                for message in page {
+                    let attachments = message
+                        .attachments
+                        .iter()
+                        .map(|attachment| ExportedAttachment {
+                            state: d
+                                .store
+                                .attachment_reclaim_preview(id, &attachment.id)
+                                .map_or_else(|_| "missing".into(), |preview| preview.state),
+                            attachment: attachment.clone(),
+                        })
+                        .collect();
+                    let entry = ExportedMessage {
+                        message,
+                        attachments,
+                    };
+                    let size = ade_core::json_budget::encoded_usage(&entry, EXPORT_PAGE_BYTES)?
+                        .context(ade_core::error::Failure::ResourceLimit)?;
+                    if !used.fits_with(size, EXPORT_PAGE_BYTES) {
+                        ensure!(
+                            !messages.is_empty(),
+                            ade_core::error::Failure::ResourceLimit
+                        );
+                        more = true;
+                        break;
+                    }
+                    used.add(size);
+                    messages.push(entry);
+                }
+                let native_session = conversation.provider_thread_id.clone();
+                let imported = Self::ensure_not_imported(&conversation).is_err();
+                let native_resume_possible =
+                    provider_available && native_session.is_some() && !imported;
+                reply(&ConversationExport {
+                    tag: Default::default(),
+                    boot_id: self.boot_id.clone(),
+                    revision: d.revision,
+                    history_epoch: d.store.history_epoch(id)?,
+                    continuity: ExportContinuity {
+                        provider_available,
+                        reason: match (provider_available, &native_session) {
+                            _ if imported => format!(
+                                "Imported native history is read-only: {}",
+                                crate::history::import::RESUME_UNAVAILABLE
+                            ),
+                            (false, _) => format!(
+                                "Provider {} is not installed in this profile; the history stays readable, and nothing can continue it natively",
+                                conversation.provider
+                            ),
+                            (true, None) => "No native session was recorded; a resume starts a new one".into(),
+                            (true, Some(_)) => "The provider is installed; resuming reopens the recorded native session".into(),
+                        },
+                        native_session,
+                        native_resume_possible,
+                    },
+                    next_after_sequence: more
+                        .then(|| messages.last().map(|m: &ExportedMessage| m.message.sequence))
+                        .flatten(),
+                    messages,
+                    conversation,
+                    not_included: vec![
+                        "Provider-native history ADE never retained".into(),
+                        "Private reasoning the provider did not expose".into(),
+                    ],
+                })
+            }
             "conversation.get" => {
                 let get: ConversationGetRequest = decode(request)?;
                 let id = non_empty("conversation_id", &get.conversation_id)?;
@@ -550,7 +648,16 @@ impl Sessions {
             }
             "agent.resume" => {
                 let resume: AgentResumeRequest = decode(request)?;
-                self.resume(non_empty("conversation_id", &resume.conversation_id)?)?;
+                let id = non_empty("conversation_id", &resume.conversation_id)?;
+                if !resume.continue_interrupted {
+                    let d = self.data.lock().unwrap();
+                    if let Some(request_id) = super::agents::interrupted_prompt(&d, id)? {
+                        bail!(
+                            "The outcome of prompt {request_id} is unknown. Resuming reopens its native session, which may continue that work; resume with continue_interrupted to accept that. ADE never resends the prompt"
+                        );
+                    }
+                }
+                self.resume(id)?;
                 reply(&Ack::default())
             }
             "agent.cancel" => {
@@ -561,6 +668,15 @@ impl Sessions {
                     non_empty("source_attempt_id", &cancel.source_attempt_id)?,
                     non_empty("submission_id", &cancel.submission_id)?,
                     cancel.turn_id.as_deref(),
+                )?;
+                reply(&outcome)
+            }
+            "agent.terminate" => {
+                let terminate: AgentTerminateRequest = decode(request)?;
+                let outcome = self.terminate(
+                    &terminate.operation_id,
+                    non_empty("conversation_id", &terminate.conversation_id)?,
+                    non_empty("source_attempt_id", &terminate.source_attempt_id)?,
                 )?;
                 reply(&outcome)
             }

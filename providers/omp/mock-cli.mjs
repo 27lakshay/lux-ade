@@ -33,6 +33,17 @@ const records = readFileSync(file, 'utf8')
 const header = records.find((record) => record.type === 'session')
 const entries = records.filter((record) => record.parentId !== undefined)
 const send = (frame) => process.stdout.write(JSON.stringify(frame) + '\n')
+// The catalogue `get_available_models` lists; `--model provider/id` selects the live model.
+const fixtureModels = [
+  { provider: 'fixture', id: 'omp-default', name: 'Fixture OMP Default', reasoning: true },
+  { provider: 'fixture', id: 'omp-plain', name: 'Fixture OMP Plain', reasoning: false },
+]
+const requestedModel = process.argv.includes('--model') ? process.argv[process.argv.indexOf('--model') + 1] : null
+const liveModel =
+  fixtureModels.find((model) => `${model.provider}/${model.id}` === requestedModel) ??
+  (requestedModel
+    ? { provider: requestedModel.split('/')[0], id: requestedModel.split('/').slice(1).join('/'), reasoning: false }
+    : fixtureModels[0])
 let active = false,
   pending = null,
   mismatchOnAbort = false,
@@ -49,6 +60,7 @@ const append = (message) => {
   entries.push(entry)
   send({ type: 'message_end', message })
 }
+let silentAbort = false
 function finish(aborted = false) {
   if (!active) return
   const message = {
@@ -85,7 +97,16 @@ for await (const line of createInterface({ input: process.stdin })) {
         isStreaming: active,
         isCompacting: false,
         queuedMessageCount: 0,
+        model: liveModel,
+        thinkingLevel: 'medium',
       }
+      break
+    case 'get_available_models':
+      data = { models: fixtureModels }
+      break
+    case 'get_available_thinking_levels':
+      // Native OMP lists the live model's levels, with `off` first.
+      data = { levels: ['off', ...(liveModel.reasoning ? ['low', 'medium', 'high'] : [])] }
       break
     case 'get_entries':
       data = {
@@ -93,16 +114,42 @@ for await (const line of createInterface({ input: process.stdin })) {
         leafId: entries.at(-1)?.id ?? null,
       }
       break
+    case 'compact': {
+      // Native compaction appends a compaction entry that summarizes the branch so far.
+      const entry = {
+        type: 'compaction',
+        id: randomUUID(),
+        parentId: entries.at(-1)?.id ?? null,
+        timestamp: new Date().toISOString(),
+        summary: 'Fixture compaction summary',
+      }
+      appendFileSync(file, JSON.stringify(entry) + '\n')
+      entries.push(entry)
+      if (process.env.ADE_MOCK_OMP_DIR)
+        appendFileSync(
+          join(process.env.ADE_MOCK_OMP_DIR, 'calls.jsonl'),
+          JSON.stringify({ pid: process.pid, method: 'compact' }) + '\n',
+        )
+      data = { summary: entry.summary, firstKeptEntryId: entry.parentId, tokensBefore: 0 }
+      break
+    }
     case 'abort':
       if (mismatchOnAbort) {
         mismatchNextState = true
         mismatchOnAbort = false
       }
-      finish(true)
+      // Installed OMP 18.4 was observed to acknowledge an abort and go idle without agent_end.
+      if (silentAbort) {
+        silentAbort = false
+        active = false
+      } else finish(true)
       break
     case 'prompt':
       active = true
+      // Native OMP announces each agent run before its messages.
+      send({ type: 'agent_start' })
       if (request.message === 'hold-unscoped') mismatchOnAbort = true
+      if (request.message === 'hold-silent-abort') silentAbort = true
       append({ role: 'user', content: request.message })
       if (request.message === 'typed-tools') {
         const toolCallId = randomUUID()
@@ -188,7 +235,7 @@ for await (const line of createInterface({ input: process.stdin })) {
           title: 'Fixture request',
           message: 'Allow fixture?',
         })
-      } else if (request.message !== 'hold' && request.message !== 'local-only') finish()
+      } else if (!request.message.startsWith('hold') && request.message !== 'local-only') finish()
       break
   }
   send({ type: 'response', id: request.id, command: request.type, success: true, data })

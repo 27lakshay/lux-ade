@@ -57,11 +57,28 @@ pub enum Content {
         operation: String,
         agents: Vec<Child>,
     },
+    /// A plugin's typed payload for the timeline contribution that declares
+    /// the message's `kind`. The message `text` stays the canonical readable
+    /// content; a client without that renderer shows the text.
+    Extension {
+        #[schemars(with = "serde_json::Value")]
+        data: serde_json::Value,
+    },
 }
+
+/// The most JSON a plugin's extension payload may encode to. A larger payload
+/// is dropped when the message is stored; its canonical text remains.
+pub const EXTENSION_DATA_LIMIT: usize = 64 * 1024;
 
 impl Content {
     pub fn validate(&self) -> Result<()> {
         match self {
+            Self::Extension { data } => {
+                ensure!(
+                    serde_json::to_vec(data)?.len() <= EXTENSION_DATA_LIMIT,
+                    "Extension payload exceeds 64 KiB"
+                );
+            }
             Self::Subagents { operation, agents } => {
                 ensure!(
                     !operation.is_empty() && operation.len() <= 256 && agents.len() <= 256,
@@ -130,6 +147,8 @@ impl Content {
     }
     pub fn display_text(&self) -> String {
         match self {
+            // The message text is the readable form of an extension payload.
+            Self::Extension { .. } => String::new(),
             Self::Subagents { operation, agents } => {
                 let mut lines = vec![operation.clone()];
                 for agent in agents {
@@ -243,6 +262,16 @@ pub fn bound_message(text: &mut String, content: &mut Option<Content>) -> bool {
     {
         cut |= bound_text(output);
     }
+    // An oversized extension payload is dropped whole: half a payload is not
+    // something its renderer can show, and the text keeps the content readable.
+    if matches!(content, Some(Content::Extension { .. }))
+        && content
+            .as_ref()
+            .is_some_and(|content| content.validate().is_err())
+    {
+        *content = None;
+        cut = true;
+    }
     cut
 }
 
@@ -273,6 +302,32 @@ mod tests {
         let mut text = format!("{}é{}", "a".repeat(cut - 1), "b".repeat(4096));
         assert!(bound_text(&mut text));
         assert_eq!(text, format!("{}{TRUNCATION_MARKER}", "a".repeat(cut - 1)));
+    }
+
+    #[test]
+    fn oversized_extension_payloads_are_dropped_and_their_text_kept() {
+        let mut text = "Readable summary".to_owned();
+        let mut small = Some(Content::Extension {
+            data: serde_json::json!({"rows": [1, 2, 3]}),
+        });
+        assert!(!bound_message(&mut text, &mut small));
+        assert!(small.as_ref().unwrap().validate().is_ok());
+        let mut large = Some(Content::Extension {
+            data: serde_json::json!({"blob": "x".repeat(EXTENSION_DATA_LIMIT)}),
+        });
+        assert!(large.as_ref().unwrap().validate().is_err());
+        assert!(bound_message(&mut text, &mut large));
+        assert_eq!(large, None);
+        assert_eq!(text, "Readable summary");
+        let wire: Content =
+            serde_json::from_value(serde_json::json!({"type": "extension", "data": {"a": 1}}))
+                .unwrap();
+        assert_eq!(
+            wire,
+            Content::Extension {
+                data: serde_json::json!({"a": 1})
+            }
+        );
     }
 
     #[test]

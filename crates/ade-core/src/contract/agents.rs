@@ -14,6 +14,10 @@ pub fn operations() -> Vec<OperationSpec> {
             "agent.cancel",
             Tier::EffectCommand,
         ),
+        OperationSpec::new::<AgentTerminateRequest, AgentTerminateOutcome>(
+            "agent.terminate",
+            Tier::EffectCommand,
+        ),
         OperationSpec::new::<AgentResumeRequest, Ack>("agent.resume", Tier::EffectCommand),
         OperationSpec::new::<AgentDisconnectRequest, Ack>("agent.disconnect", Tier::EffectCommand),
         OperationSpec::new::<AgentChildTranscriptRequest, ChildTranscriptPage>(
@@ -57,7 +61,9 @@ pub struct AgentCancelRequest {
     pub turn_id: Option<String>,
 }
 
-/// Native interruption evidence attached to the durable agent.cancel operation receipt.
+/// The `agent.cancel` reply. It reports what the provider acknowledged within
+/// a short bounded wait, never a confirmed stop: the Conversation's `stop`
+/// record follows the same operation to its confirmed or unresolved outcome.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct AgentCancelOutcome {
     #[serde(rename = "type")]
@@ -68,7 +74,162 @@ pub struct AgentCancelOutcome {
     pub submission_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn_id: Option<String>,
-    pub evidence: super::providers::ProviderCancelEvidence,
+    pub delivery: StopDelivery,
+    /// The provider's interruption evidence; null while delivery is pending.
+    pub evidence: Option<super::providers::ProviderCancelEvidence>,
+}
+
+/// Whether the provider answered the cancellation request.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum StopDelivery {
+    /// The request was sent and no reply has arrived yet.
+    Pending,
+    /// The provider replied. This is acknowledgement, not proof of stop.
+    Acknowledged,
+    /// The provider replied with a refusal or error; the work may continue.
+    Refused,
+    /// No provider was attached, or the reply was lost.
+    Unknown,
+}
+
+/// Where a Stop stands.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum StopOutcome {
+    /// Asked for; no terminal evidence yet.
+    Requested,
+    /// Native terminal evidence or runtime-owned process exit ended the target.
+    Confirmed,
+    /// The target may still run, or work the provider queued can still run.
+    /// `escalation` names what ADE can do next.
+    Unresolved,
+}
+
+/// Evidence that confirmed a Stop.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum StopConfirmation {
+    /// The provider reported the targeted turn or submission finished.
+    NativeTerminal,
+    /// The runtime confirmed that the provider process it owns exited.
+    /// Child or background processes the provider started may survive it
+    /// unless `background_work_remaining` is false.
+    ProcessExit,
+}
+
+/// A declared step ADE offers when a Stop is unresolved.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum StopEscalation {
+    /// `agent.terminate`: end the runtime-owned provider process.
+    TerminateProcess,
+}
+
+/// The latest Stop on a Conversation, keyed by its operation. It is bound
+/// to one attempt and submission: a successor never settles it.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+pub struct ConversationStop {
+    pub operation_id: String,
+    pub source_attempt_id: String,
+    pub submission_id: String,
+    pub turn_id: Option<String>,
+    pub requested_at_ms: i64,
+    pub delivery: StopDelivery,
+    pub outcome: StopOutcome,
+    pub confirmation: Option<StopConfirmation>,
+    /// The native terminal status that settled it, such as `interrupted`
+    /// or `completed` when the turn ended before the interruption took hold.
+    pub native_status: Option<String>,
+    /// The provider's latest interruption evidence: scope, remaining
+    /// foreground, queued and background work.
+    pub evidence: Option<super::providers::ProviderCancelEvidence>,
+    /// Why the outcome is unresolved, in plain words.
+    pub reason: Option<String>,
+    pub escalation: Option<StopEscalation>,
+    pub settled_at_ms: Option<i64>,
+}
+
+impl ConversationStop {
+    /// Records that the target may still run, offering termination.
+    pub fn unresolve(&mut self, reason: String) {
+        self.outcome = StopOutcome::Unresolved;
+        self.confirmation = None;
+        self.reason = Some(reason);
+        self.escalation = Some(StopEscalation::TerminateProcess);
+    }
+    /// Records the evidence that ended the target. Queued native input that
+    /// can still run keeps the Stop unresolved even so.
+    pub fn confirm(&mut self, by: StopConfirmation, native_status: Option<String>, at_ms: i64) {
+        self.native_status = native_status;
+        self.settled_at_ms = Some(at_ms);
+        let queued = self
+            .evidence
+            .as_ref()
+            .and_then(|evidence| evidence.queued_work_count)
+            .unwrap_or(0);
+        if queued > 0 {
+            self.unresolve(format!(
+                "The turn ended, but {queued} queued input{} can still run",
+                if queued == 1 { "" } else { "s" }
+            ));
+            return;
+        }
+        self.outcome = StopOutcome::Confirmed;
+        self.confirmation = Some(by);
+        self.reason = None;
+        self.escalation = None;
+    }
+}
+
+/// What a Conversation's open provider session was bound to when it opened:
+/// the ADE attempt, the account context and generation it was checked
+/// against, the native session it opened and the settings revision it used.
+/// A later account change, settings change or reattach records a new one.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+pub struct ConversationExecution {
+    pub source_attempt_id: String,
+    /// Managed or ambient; an ambient session uses the machine's own login,
+    /// which ADE does not isolate.
+    pub account_context: crate::model::AccountContext,
+    pub account_id: Option<String>,
+    /// The managed account generation verified before the session opened.
+    pub account_generation: Option<u64>,
+    pub native_session: String,
+    pub settings_revision: u64,
+    /// Whether the runtime reattached to a session that survived a daemon restart.
+    pub reattached: bool,
+    pub opened_at_ms: i64,
+}
+
+/// `agent.terminate`: end the provider process the runtime owns for this
+/// attempt. Unlike `agent.cancel` it does not depend on the provider's
+/// cooperation, and unlike `agent.disconnect` it may interrupt a running
+/// turn. It never reaches a later attempt.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct AgentTerminateRequest {
+    /// The caller's operation ID. The daemon keeps a receipt under it: a
+    /// retry with the same ID and payload returns the recorded outcome, and
+    /// the same ID with another payload is a conflict.
+    pub operation_id: String,
+    pub conversation_id: String,
+    pub source_attempt_id: String,
+}
+
+wire_tag!(AgentTerminateOutcomeTag, "agent_terminate_outcome");
+
+/// What terminating the provider process proved.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct AgentTerminateOutcome {
+    #[serde(rename = "type")]
+    pub tag: AgentTerminateOutcomeTag,
+    pub operation_id: String,
+    pub conversation_id: String,
+    pub source_attempt_id: String,
+    /// Whether the runtime confirmed the provider process exited.
+    pub process_exited: bool,
+    /// What termination cannot prove, in plain words.
+    pub limits: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
@@ -85,6 +246,11 @@ pub struct AgentResumeRequest {
     /// the same ID with another payload is a conflict.
     pub operation_id: String,
     pub conversation_id: String,
+    /// Required when the newest prompt's native outcome is unknown: reopening
+    /// its native session may continue that interrupted work. ADE never
+    /// resends the prompt either way.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub continue_interrupted: bool,
 }
 
 /// `agent.disconnect`: stop the Conversation's idle Agent.
@@ -214,6 +380,11 @@ pub struct AgentAccountInspectRequest {
     /// The account execution context (`ade_core::model::AccountExecution`).
     #[schemars(with = "Value")]
     pub account: Value,
+    /// For a plugin provider, the pinned `ProviderWorker` whose
+    /// `account_inspect` reads the account. Absent for a bundled provider.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<Value>")]
+    pub worker: Option<Value>,
 }
 
 /// The `agent.account_inspect` reply: an untagged account inspection.
@@ -321,7 +492,7 @@ mod tests {
                     op,
                     json!({"type": "agent_cancel_outcome", "operation_id": "o",
                         "conversation_id": "conversation_1", "source_attempt_id": "run_1",
-                        "submission_id": "submission_1",
+                        "submission_id": "submission_1", "delivery": "acknowledged",
                         "evidence": {"scope": "turn", "interruption_requested": true,
                             "termination": "unknown", "active_work_remaining": null,
                             "queued_work_count": null, "background_work_remaining": null,
@@ -342,6 +513,28 @@ mod tests {
                 "source_attempt_id":"run_1", "submission_id":"submission_1", "turn_id": "turn_1"}),
         );
         assert_eq!(fenced.turn_id.as_deref(), Some("turn_1"));
+        // A pending delivery carries no evidence yet.
+        response::<AgentCancelOutcome>(
+            "agent.cancel",
+            json!({"type": "agent_cancel_outcome", "operation_id": "o",
+                "conversation_id": "conversation_1", "source_attempt_id": "run_1",
+                "submission_id": "submission_1", "delivery": "pending", "evidence": null}),
+        );
+        drop(request::<AgentTerminateRequest>(
+            "agent.terminate",
+            json!({"op": "agent.terminate", "operation_id": "o", "conversation_id": "conversation_1",
+                "source_attempt_id": "run_1"}),
+        ));
+        response::<AgentTerminateOutcome>(
+            "agent.terminate",
+            json!({"type": "agent_terminate_outcome", "operation_id": "o",
+                "conversation_id": "conversation_1", "source_attempt_id": "run_1",
+                "process_exited": true, "limits": []}),
+        );
+        let (name, _, _) = operation("agent.terminate");
+        assert!(!validator(&name).is_valid(
+            &json!({"op": "agent.terminate", "operation_id": "o", "conversation_id": "conversation_1"})
+        ));
     }
 
     #[test]
@@ -416,5 +609,80 @@ mod tests {
             json!({"state": "missing", "reason": "Not installed", "version": null,
                 "identity": null}),
         );
+    }
+}
+
+#[cfg(test)]
+mod stop_tests {
+    use super::*;
+    use crate::contract::providers::{
+        ProviderCancelEvidence, ProviderCancelScope, ProviderCancelTermination,
+    };
+
+    fn requested(queued: Option<u64>) -> ConversationStop {
+        ConversationStop {
+            operation_id: "stop-1".into(),
+            source_attempt_id: "attempt".into(),
+            submission_id: "submission".into(),
+            turn_id: Some("turn".into()),
+            requested_at_ms: 1,
+            delivery: StopDelivery::Acknowledged,
+            outcome: StopOutcome::Requested,
+            confirmation: None,
+            native_status: None,
+            evidence: Some(ProviderCancelEvidence {
+                scope: ProviderCancelScope::Turn,
+                interruption_requested: true,
+                termination: ProviderCancelTermination::Requested,
+                active_work_remaining: None,
+                queued_work_count: queued,
+                background_work_remaining: None,
+                observed_at_ms: None,
+            }),
+            reason: None,
+            escalation: None,
+            settled_at_ms: None,
+        }
+    }
+
+    #[test]
+    fn terminal_evidence_confirms_a_stop_without_queued_input() {
+        let mut stop = requested(Some(0));
+        stop.confirm(
+            StopConfirmation::NativeTerminal,
+            Some("interrupted".into()),
+            9,
+        );
+        assert_eq!(stop.outcome, StopOutcome::Confirmed);
+        assert_eq!(stop.confirmation, Some(StopConfirmation::NativeTerminal));
+        assert_eq!(stop.native_status.as_deref(), Some("interrupted"));
+        assert_eq!((stop.escalation, stop.settled_at_ms), (None, Some(9)));
+    }
+
+    #[test]
+    fn queued_native_input_keeps_an_ended_turn_unresolved() {
+        let mut stop = requested(Some(2));
+        stop.confirm(
+            StopConfirmation::NativeTerminal,
+            Some("interrupted".into()),
+            9,
+        );
+        assert_eq!(stop.outcome, StopOutcome::Unresolved);
+        assert_eq!(stop.confirmation, None);
+        assert_eq!(stop.escalation, Some(StopEscalation::TerminateProcess));
+        assert_eq!(
+            stop.reason.as_deref(),
+            Some("The turn ended, but 2 queued inputs can still run")
+        );
+    }
+
+    #[test]
+    fn process_exit_confirms_an_unresolved_stop() {
+        let mut stop = requested(None);
+        stop.unresolve("The provider refused the cancellation".into());
+        stop.confirm(StopConfirmation::ProcessExit, None, 12);
+        assert_eq!(stop.outcome, StopOutcome::Confirmed);
+        assert_eq!(stop.confirmation, Some(StopConfirmation::ProcessExit));
+        assert_eq!((stop.reason, stop.escalation), (None, None));
     }
 }

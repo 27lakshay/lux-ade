@@ -149,6 +149,7 @@ export function ConversationTimeline({
       onTouchStartCapture={releaseAnchor}
       onKeyDownCapture={releaseAnchor}
       className="min-h-0 flex-1"
+      role="region"
       aria-label={ariaLabel}
     >
       <div className="mx-auto w-full max-w-[640px] px-4 py-4" aria-live="polite">

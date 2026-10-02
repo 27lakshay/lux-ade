@@ -34,10 +34,12 @@ use std::path::Path;
 use std::sync::Mutex;
 
 /// The effect commands the envelope records.
-pub const OPERATIONS: [&str; 25] = [
+pub const OPERATIONS: [&str; 27] = [
+    "conversation.settings.update",
     "conversation.create",
     "queue.pause",
     "agent.cancel",
+    "agent.terminate",
     "agent.resume",
     "agent.disconnect",
     "account.create",
@@ -65,8 +67,9 @@ pub const OPERATIONS: [&str; 25] = [
 /// Commands that stop existing work. When the receipt store refuses writes
 /// (a full disk), they still run, unrecorded: stopping must stay available
 /// (architecture section 4, "Reserve capacity for cancellation").
-const STOPS: [&str; 4] = [
+const STOPS: [&str; 5] = [
     "agent.cancel",
+    "agent.terminate",
     "terminal.stop",
     "service.stop",
     "script.stop",

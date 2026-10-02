@@ -3,7 +3,10 @@
 //!
 //! [`validate`] is the one check every stored definition passes. [`probe`]
 //! reports what an adapter can do right now, and [`spawn`] starts it behind
-//! the ordinary [`Provider`] interface.
+//! the ordinary [`Provider`] interface. An ACP agent runs under the bundled
+//! ACP provider worker (`providers/acp/worker.mjs`), which speaks the agent's
+//! protocol through the official ACP SDK; a definition only names the
+//! executable, its arguments and its environment.
 use crate::provider::{Config, Event, Provider};
 use ade_core::contract::providers::adapters::{
     AdapterDefinition, AdapterKind, ExecutableIdentity, ProbeOutcome,
@@ -14,11 +17,8 @@ use std::{
     path::{Component, Path},
     process::Command,
     sync::{Arc, mpsc},
-    time::Duration,
 };
 
-pub mod acp;
-mod acp_session;
 mod executable;
 
 /// Prefix that keeps adapter provider IDs apart from bundled providers.
@@ -26,8 +26,6 @@ pub const PROVIDER_PREFIX: &str = "adapter:";
 const MAX_ARGS: usize = 64;
 const MAX_ENV: usize = 32;
 const MAX_TEXT: usize = 4096;
-/// A probe must answer well inside a client's 30-second request deadline.
-const PROBE_INITIALIZE_LIMIT: Duration = Duration::from_secs(15);
 
 /// The provider ID a conversation uses for an adapter.
 pub fn provider_id(id: &str) -> String {
@@ -132,8 +130,8 @@ pub fn validate(definition: &AdapterDefinition) -> Result<()> {
     Ok(())
 }
 
-/// The launch command. The daemon's environment is inherited, then the
-/// definition's non-secret variables are added.
+/// The launch command of a custom executable. The daemon's environment is
+/// inherited, then the definition's non-secret variables are added.
 pub(crate) fn command(definition: &AdapterDefinition, cwd: &str) -> Command {
     let mut command = Command::new(&definition.command);
     command
@@ -182,8 +180,9 @@ pub fn check_executable(path: &str) -> Result<ExecutableIdentity> {
     })
 }
 
-/// Checks an adapter now. An ACP agent is launched in `cwd` and asked to
-/// `initialize`, then stopped; a custom executable is inspected but not run.
+/// Checks an adapter now. An ACP agent is started in `cwd` under the ACP
+/// worker, which negotiates `initialize` with it; both are then stopped. A
+/// custom executable is inspected but not run.
 pub fn probe(
     definition: &AdapterDefinition,
     cwd: &str,
@@ -201,26 +200,41 @@ pub fn probe(
     let outcome = match definition.kind {
         AdapterKind::Executable => ProbeOutcome::Ready {
             capabilities: executable_capabilities(),
-            acp: None,
+            worker: None,
         },
-        AdapterKind::Acp => {
-            let (events, _receiver) = mpsc::sync_channel(64);
-            match acp_session::Adapter::spawn(definition, cwd, events, PROBE_INITIALIZE_LIMIT) {
-                Ok(adapter) => {
-                    let handshake = adapter.handshake().clone();
-                    match adapter.stop_confirmed() {
-                        Ok(()) => ProbeOutcome::Ready {
-                            capabilities: acp::capabilities(&handshake),
-                            acp: Some(handshake),
-                        },
-                        Err(error) => failed(error),
-                    }
-                }
-                Err(error) => failed(error),
-            }
-        }
+        AdapterKind::Acp => probe_acp(definition, cwd).unwrap_or_else(failed),
     };
     (Some(identity), outcome)
+}
+
+/// Starts the ACP worker on the agent and keeps what it negotiated. A worker
+/// that cannot open or send on this agent, such as one facing another ACP
+/// version or a malformed `initialize` reply, makes the probe fail with the
+/// worker's own reason, before any session exists.
+fn probe_acp(definition: &AdapterDefinition, cwd: &str) -> Result<ProbeOutcome> {
+    use ade_core::contract::providers::{
+        ProviderWorkerAvailability as Availability, ProviderWorkerMethod as Method,
+    };
+    let (events, receiver) = mpsc::sync_channel(64);
+    let worker = crate::provider::worker::Worker::spawn_acp(definition, cwd, events)?;
+    let _drain = std::thread::spawn(move || while receiver.recv().is_ok() {});
+    let handshake = worker.handshake().clone();
+    worker.stop_confirmed()?;
+    if let Some(operation) = handshake
+        .wire_descriptor
+        .operations
+        .iter()
+        .find(|operation| {
+            matches!(operation.method, Method::Open | Method::Send)
+                && operation.availability != Availability::Available
+        })
+    {
+        bail!("{}", operation.reason);
+    }
+    Ok(ProbeOutcome::Ready {
+        capabilities: handshake.descriptor.capabilities,
+        worker: Some(Box::new(handshake.wire_descriptor)),
+    })
 }
 
 /// Starts an adapter for one conversation run.
@@ -232,7 +246,10 @@ pub fn spawn(
     validate(definition)?;
     Ok(match definition.kind {
         AdapterKind::Acp => {
-            acp_session::Adapter::spawn(definition, cwd, events, Duration::from_secs(45))?
+            // Revalidated at every launch: a recorded probe cannot vouch for
+            // an executable replaced since.
+            check_executable(&definition.command)?;
+            crate::provider::worker::Worker::spawn_acp(definition, cwd, events)?
         }
         AdapterKind::Executable => executable::Adapter::spawn(definition, cwd, events)?,
     })

@@ -135,9 +135,16 @@ fn history_summary(
     removed: &[Message],
     total: u64,
 ) -> ConversationRewindHistory {
+    // A provider with no turn IDs starts a turn at each prompt.
     let turns: std::collections::BTreeSet<&str> = removed
         .iter()
-        .filter_map(|message| message.turn_id.as_deref())
+        .filter_map(
+            |message| match (&message.turn_id, &message.native_message) {
+                (Some(turn), _) => Some(turn.as_str()),
+                (None, Some(native)) if message.role == "user" => Some(native.message_id.as_str()),
+                _ => None,
+            },
+        )
         .collect();
     ConversationRewindHistory {
         before_message_id: first.id.clone(),
@@ -166,17 +173,26 @@ fn history_preview(
         .message(before)?
         .filter(|message| message.conversation_id == conversation_id)
         .with_context(|| format!("Message {before} is not in this Conversation"))?;
-    let turn = first
-        .turn_id
-        .clone()
-        .filter(|_| first.role == "user")
-        .context("Choose the user message that started a turn")?;
-    let all = d.store.messages_from(conversation_id, 0)?;
     ensure!(
-        !all.iter().any(|message| message.sequence < first.sequence
-            && message.turn_id.as_deref() == Some(turn.as_str())),
+        first.role == "user",
         "Choose the user message that started a turn"
     );
+    let all = d.store.messages_from(conversation_id, 0)?;
+    // The boundary is the provider's turn. A provider that reports no turn IDs
+    // (Claude) is rewound at the prompt's own native message, which only a
+    // prompt carries; each prompt starts its own turn there.
+    let turn = match (&first.turn_id, &first.native_message) {
+        (Some(turn), _) => {
+            ensure!(
+                !all.iter().any(|message| message.sequence < first.sequence
+                    && message.turn_id.as_deref() == Some(turn.as_str())),
+                "Choose the user message that started a turn"
+            );
+            turn.clone()
+        }
+        (None, Some(native)) => native.message_id.clone(),
+        (None, None) => bail!("Choose the user message that started a turn"),
+    };
     let removed: Vec<Message> = all
         .iter()
         .filter(|message| message.sequence >= first.sequence)
@@ -293,29 +309,34 @@ struct Live {
     conversation: Conversation,
     run: Option<String>,
     rpc: Option<Arc<dyn Provider>>,
+    /// The operations the provider's worker declares, or why none are known.
+    declared: Result<Vec<ade_core::contract::providers::ProviderWorkerOperation>, String>,
 }
 
 impl Live {
     fn facts(&self) -> Facts<'_> {
         let c = &self.conversation;
         Facts {
-            provider: &c.provider,
             status: &c.status,
             active_turn: c.active_turn_id.as_deref(),
             connected: self.rpc.is_some(),
+            declared: self.declared.as_deref().map_err(String::as_str),
         }
     }
 }
 
-fn live(d: &Data, id: &str) -> Result<Live> {
-    let conversation = d.store.conversation(id)?;
-    // An Agent whose stop is in flight takes no controls.
-    let agent = d.agents.get(id).filter(|agent| !agent.stopping);
-    Ok(Live {
-        conversation,
-        run: agent.map(|a| a.run_id.clone()),
-        rpc: agent.and_then(|a| a.rpc.clone()),
-    })
+impl Sessions {
+    fn live(&self, d: &Data, id: &str) -> Result<Live> {
+        let conversation = d.store.conversation(id)?;
+        // An Agent whose stop is in flight takes no controls.
+        let agent = d.agents.get(id).filter(|agent| !agent.stopping);
+        Ok(Live {
+            declared: self.declared_operations(d, &conversation.provider),
+            conversation,
+            run: agent.map(|a| a.run_id.clone()),
+            rpc: agent.and_then(|a| a.rpc.clone()),
+        })
+    }
 }
 
 /// Whether `op` is one of this module's operations.
@@ -335,11 +356,14 @@ pub(super) fn handles(op: &str) -> bool {
 
 impl Sessions {
     pub(super) fn control_command(self: &Arc<Self>, request: &Value) -> Result<Value> {
+        // A provider plugin's controls come from its worker's declaration; make sure the
+        // current artifact has handshaken (cached per artifact, outside the session lock).
+        self.discover_plugin_providers();
         match request["op"].as_str().unwrap_or("") {
             "conversation.controls" => {
                 let query: ConversationControlsRequest = decode(request)?;
                 let d = self.data.lock().unwrap();
-                let live = live(&d, non_empty("conversation_id", &query.conversation_id)?)?;
+                let live = self.live(&d, non_empty("conversation_id", &query.conversation_id)?)?;
                 let facts = live.facts();
                 reply(&ConversationControls {
                     tag: Default::default(),
@@ -467,7 +491,7 @@ impl Sessions {
         ensure!(steer.text.len() <= STEER_TEXT_LIMIT, "Text exceeds 1 MiB");
         let (workspace_id, current) = {
             let d = self.data.lock().unwrap();
-            let live = live(&d, &steer.conversation_id)?;
+            let live = self.live(&d, &steer.conversation_id)?;
             (live.conversation.workspace_id.clone(), live)
         };
         self.ensure_workspace_bound(&workspace_id)?;
@@ -479,7 +503,7 @@ impl Sessions {
             request,
             current.run.as_deref(),
             |d| {
-                let live = live(d, &steer.conversation_id)?;
+                let live = self.live(d, &steer.conversation_id)?;
                 let decided = availability::decide(&live.facts(), control);
                 if !decided.available {
                     return Ok(Err(unavailable(
@@ -501,7 +525,7 @@ impl Sessions {
         }
         let (rpc, thread) = {
             let d = self.data.lock().unwrap();
-            let live = live(&d, &steer.conversation_id)?;
+            let live = self.live(&d, &steer.conversation_id)?;
             (
                 live.rpc.context("The Agent is no longer connected")?,
                 live.conversation
@@ -543,7 +567,7 @@ impl Sessions {
         check_operation_id(&compact.operation_id)?;
         let (workspace_id, current) = {
             let d = self.data.lock().unwrap();
-            let live = live(&d, &compact.conversation_id)?;
+            let live = self.live(&d, &compact.conversation_id)?;
             (live.conversation.workspace_id.clone(), live)
         };
         self.ensure_workspace_bound(&workspace_id)?;
@@ -555,7 +579,7 @@ impl Sessions {
             request,
             current.run.as_deref(),
             |d| {
-                let live = live(d, &compact.conversation_id)?;
+                let live = self.live(d, &compact.conversation_id)?;
                 let decided = availability::decide(&live.facts(), control);
                 if !decided.available {
                     return Ok(Err(unavailable(
@@ -572,7 +596,7 @@ impl Sessions {
         }
         let (rpc, thread) = {
             let d = self.data.lock().unwrap();
-            let live = live(&d, &compact.conversation_id)?;
+            let live = self.live(&d, &compact.conversation_id)?;
             (
                 live.rpc.context("The Agent is no longer connected")?,
                 live.conversation
@@ -605,7 +629,7 @@ impl Sessions {
         scope: RewindScope,
     ) -> Result<(Conversation, ControlAvailability)> {
         let d = self.data.lock().unwrap();
-        let live = live(&d, conversation_id)?;
+        let live = self.live(&d, conversation_id)?;
         let control = match scope {
             RewindScope::Conversation => ConversationControl::RewindConversation,
             RewindScope::Files => ConversationControl::RewindFiles,
@@ -690,7 +714,7 @@ impl Sessions {
             // The checkpoint receipt, not a run, reconciles file rewind.
             Some(&inner),
             |d| {
-                let live = live(d, &rewind.conversation_id)?;
+                let live = self.live(d, &rewind.conversation_id)?;
                 let decided = availability::decide(&live.facts(), control);
                 if !decided.available {
                     return Ok(Err(unavailable(
@@ -754,7 +778,7 @@ impl Sessions {
         let control = ConversationControl::RewindConversation;
         let current = {
             let d = self.data.lock().unwrap();
-            live(&d, &rewind.conversation_id)?
+            self.live(&d, &rewind.conversation_id)?
         };
         let admitted = self.admit_control(
             &rewind.operation_id,
@@ -763,7 +787,7 @@ impl Sessions {
             request,
             current.run.as_deref(),
             |d| {
-                let live = live(d, &rewind.conversation_id)?;
+                let live = self.live(d, &rewind.conversation_id)?;
                 let decided = availability::decide(&live.facts(), control);
                 if !decided.available {
                     return Ok(Err(unavailable(
@@ -783,19 +807,33 @@ impl Sessions {
         if let Admitted::Reply(done) = admitted {
             return reply(&done);
         }
-        let (rpc, thread, turn) = {
+        let (rpc, thread, turn, native_message) = {
             let d = self.data.lock().unwrap();
-            let live = live(&d, &rewind.conversation_id)?;
+            let live = self.live(&d, &rewind.conversation_id)?;
             let (preview, _) = history_preview(&d, &rewind.conversation_id, before)?;
+            let thread = live
+                .conversation
+                .provider_thread_id
+                .context("The provider session is unknown")?;
+            // ADE keeps the prompt's first locator; a forked session holds it
+            // under the same ID through its aliases, so address the current one.
+            let native_message = preview.native_message.map(|mut native| {
+                native.session = thread.clone();
+                native
+            });
             (
                 live.rpc.context("The Agent is no longer connected")?,
-                live.conversation
-                    .provider_thread_id
-                    .context("The provider session is unknown")?,
+                thread,
                 preview.turn_id,
+                native_message,
             )
         };
-        let forked = match rpc.rewind(&thread, &turn, &rewind.operation_id) {
+        let forked = match rpc.rewind(
+            &thread,
+            &turn,
+            &rewind.operation_id,
+            native_message.as_ref(),
+        ) {
             Ok(forked) => forked.filter(|forked| *forked != thread),
             Err(error) => {
                 let Some(reason) = definite_refusal(&error) else {

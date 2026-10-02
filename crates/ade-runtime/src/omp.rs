@@ -1,197 +1,49 @@
-//! Oh My Pi uses an owned Bun bridge and lossless RPC v2.
-use crate::{
-    model::PendingRequest,
-    provider::{self, Config, Connected, Event, Provider},
-    rpc::Rpc,
-};
-use ade_core::model::AccountExecution;
-use anyhow::{Context, Result, ensure};
-use serde_json::{Value, json};
-use std::{
-    process::Command,
-    sync::{Arc, mpsc},
-};
-pub struct Adapter {
-    rpc: Arc<Rpc>,
-    account: Option<AccountExecution>,
-    cwd: String,
-    /// The `mcpServers` map from the profile MCP catalog (F131). The bridge
-    /// writes it as the `.mcp.json` of an ADE-owned extension package and
-    /// names that package with `--extension` at launch and resume.
-    mcp_servers: std::sync::Mutex<Option<Value>>,
-}
-impl Adapter {
-    pub fn spawn(
-        cwd: &str,
-        account: Option<&AccountExecution>,
-        events: mpsc::SyncSender<Event>,
-    ) -> Result<Arc<Self>> {
-        if let Some(account) = account {
-            provider::omp_probe::ensure_identity(account)?;
-            provider::omp_probe::ensure_workspace_sources(cwd, account)?;
-        }
-        let mut command = if let Ok(mock) = std::env::var("ADE_OMP_BRIDGE_BIN") {
-            Command::new(mock)
-        } else {
-            let mut c = Command::new(std::env::var("ADE_BUN_BIN").unwrap_or_else(|_| "bun".into()));
-            if account.is_some() {
-                c.arg("--no-env-file");
-            }
-            c.arg(std::env::var("ADE_OMP_BRIDGE").unwrap_or_else(|_| {
-                ade_platform::resources::resource("providers/omp/bridge.mjs")
-                    .to_string_lossy()
-                    .into_owned()
-            }));
-            c
+//! Oh My Pi through its public provider worker (`providers/omp/worker.mjs`, run by
+//! Bun): the worker descriptor, capability record and installation requirements.
+/// The public worker metadata for `providers/omp/worker.mjs`. OMP has no
+/// native steer for an identified turn and no conversation rewind; history,
+/// child transcripts and compaction are native RPC operations.
+pub fn worker_descriptor() -> ade_core::contract::providers::ProviderWorkerInitialize {
+    use ade_core::contract::providers::{
+        ProviderWorkerAvailability as Availability, ProviderWorkerCapabilityName as Capability,
+        ProviderWorkerMethod as Method, Support,
+    };
+    let mut descriptor = crate::codex::public_descriptor();
+    descriptor.name = "Oh My Pi".into();
+    descriptor.permission_modes = vec!["default".into()];
+    for capability in &mut descriptor.capabilities {
+        capability.available = match capability.name {
+            Capability::Streaming
+            | Capability::Images
+            | Capability::TextAttachments
+            | Capability::Resume
+            | Capability::Cancel
+            | Capability::Questions
+            | Capability::ChildTranscript => true,
+            // Installed OMP 18.4 ran its built-in bash tool without asking (live probe, ticket 31);
+            // only an extension's confirmation reaches ADE, as a question.
+            Capability::Steering | Capability::ToolApproval => false,
         };
-        command.current_dir(cwd);
-        if let Some(account) = account {
-            provider::omp_probe::managed_environment(&mut command, &account.native_home, "");
-            let identity = account
-                .omp_identity
-                .as_ref()
-                .context("Oh My Pi identity is not pinned")?;
-            command.env("ADE_OMP_EXPECTED_PROVIDER", &identity.provider);
-            if let Ok(bin) = std::env::var("ADE_OMP_BIN") {
-                command.env("ADE_OMP_BIN", bin);
-            }
-        }
-        Ok(Arc::new(Self {
-            rpc: Rpc::spawn(command, events, provider::bridge_event)?,
-            account: account.cloned(),
-            cwd: cwd.into(),
-            mcp_servers: std::sync::Mutex::new(None),
-        }))
-    }
-}
-impl Provider for Adapter {
-    fn child_transcript(
-        &self,
-        session: &str,
-        child: &str,
-        offset: u64,
-        cursor: Option<&str>,
-    ) -> Result<Value> {
-        self.rpc.request(
-            "child_transcript",
-            json!({"session":session,"child":child,"offset":offset,"cursor":cursor}),
-        )
-    }
-    fn pid(&self) -> Option<u32> {
-        Some(self.rpc.pid())
-    }
-    fn descendants(&self) -> Option<Vec<crate::descendants::Identity>> {
-        Some(self.rpc.descendants())
-    }
-    fn configure_mcp(&self, servers: Value) -> Result<()> {
-        ensure!(
-            servers.is_object(),
-            "Oh My Pi MCP servers must be an object"
-        );
-        *self.mcp_servers.lock().unwrap() = Some(servers);
-        Ok(())
-    }
-    fn open(&self, resume: Option<&str>, config: &Config) -> Result<Connected> {
-        if let Some(account) = &self.account {
-            provider::omp_probe::ensure_identity(account)?;
-            provider::omp_probe::ensure_workspace_sources(&self.cwd, account)?;
-        }
-        let servers = self.mcp_servers.lock().unwrap().clone();
-        let Some(servers) = servers else {
-            return provider::response_session(&self.rpc, resume, config);
-        };
-        let connected: Connected = serde_json::from_value(self.rpc.request(
-            "open",
-            json!({"resume":resume,"config":config,"mcp_servers":servers}),
-        )?)?;
-        ensure!(
-            resume.is_none_or(|id| id == connected.session),
-            "Provider resumed a different session; original identity retained"
-        );
-        Ok(connected)
-    }
-    fn send(
-        &self,
-        session: &str,
-        submission: &str,
-        message_id: Option<&str>,
-        prompt: &crate::prompt::Prompt,
-    ) -> Result<String> {
-        if let Some(account) = &self.account {
-            provider::omp_probe::ensure_identity(account)?;
-            provider::omp_probe::ensure_workspace_sources(&self.cwd, account)?;
-        }
-        self.rpc.request(
-            "send",
-            json!({"session":session,"submission":submission,"message_id":message_id,"text":prompt.text,"attachments":prompt.attachments}),
-        )?["turn"]
-            .as_str()
-            .map(str::to_owned)
-            .context("Oh My Pi omitted turn ID")
-    }
-    fn cancel(&self, session: &str, turn: &str) -> Result<()> {
-        self.rpc
-            .request("cancel", json!({"session":session,"turn":turn}))?;
-        Ok(())
-    }
-    fn prepare_submission(&self) -> Option<String> {
-        Some(uuid::Uuid::new_v4().to_string())
-    }
-    fn validate_answer(
-        &self,
-        p: &PendingRequest,
-        decision: &str,
-        answers: Option<&Value>,
-    ) -> Result<()> {
-        ensure!(
-            ["accept", "decline", "answer"].contains(&decision),
-            "Unknown decision"
-        );
-        if p.method == "omp/questions" {
-            ensure!(
-                decision == "answer" || decision == "decline",
-                "Answer the questions or decline"
-            );
-            if decision == "answer" {
-                for q in p.params["questions"]
-                    .as_array()
-                    .context("Malformed Oh My Pi questions")?
-                {
-                    let id = q["id"].as_str().context("Missing question ID")?;
-                    ensure!(
-                        answers
-                            .and_then(|v| v[id].as_str())
-                            .is_some_and(|s| !s.trim().is_empty() && s.len() <= 16384),
-                        "Answer required for {id}"
-                    );
-                }
-            }
+        capability.support = if capability.available {
+            Support::Supported
         } else {
-            ensure!(decision != "answer", "Choose accept or decline");
-        }
-        Ok(())
+            Support::Unsupported
+        };
     }
-    fn answer(&self, p: &PendingRequest, decision: &str, answers: Option<&Value>) -> Result<()> {
-        self.validate_answer(p, decision, answers)?;
-        self.rpc.request(
-            "answer",
-            json!({"id":p.rpc_id,"decision":decision,"answers":answers}),
-        )?;
-        Ok(())
+    for operation in &mut descriptor.operations {
+        let reason = match operation.method {
+            Method::Steer => {
+                "Oh My Pi RPC has steer, but it cannot bind a steered message to the identified running turn and its submission"
+            }
+            Method::Rewind => {
+                "Oh My Pi RPC has branch, but ADE's Oh My Pi worker does not map a branch onto a conversation rewind"
+            }
+            _ => continue,
+        };
+        operation.availability = Availability::Unsupported;
+        operation.reason = reason.into();
     }
-    fn reject(&self, id: Value, message: &str) -> Result<()> {
-        self.rpc.request(
-            "answer",
-            json!({"id":id,"decision":"decline","reason":message}),
-        )?;
-        Ok(())
-    }
-    fn stop(&self) {
-        self.rpc.stop();
-    }
-    fn stop_confirmed(&self) -> Result<()> {
-        self.rpc.stop_confirmed()
-    }
+    descriptor
 }
 
 /// Checked against `@oh-my-pi/pi-coding-agent` 18.3.0 and its `docs/rpc.md`.
@@ -201,14 +53,17 @@ pub fn capabilities() -> crate::capabilities::CapabilityRecord {
     CapabilityRecord {
         provider: "omp".into(),
         name: "Oh My Pi".into(),
-        revision: 1,
+        revision: 2,
         fingerprint: String::new(),
         checked_against: "@oh-my-pi/pi-coding-agent 18.3.0 RPC".into(),
         models: ModelCapabilities {
             selection: capability(Supported, "The --model launch argument"),
             format: ModelFormat::NativeId,
             aliases: vec![],
-            discovery: capability(NativeOnly, "get_available_models; ADE does not call it"),
+            discovery: capability(
+                Supported,
+                "get_available_models when the session opens, as provider/id; get_available_thinking_levels for the model in effect",
+            ),
         },
         reasoning: ReasoningCapabilities {
             selection: capability(
@@ -221,7 +76,7 @@ pub fn capabilities() -> crate::capabilities::CapabilityRecord {
         permission_modes: vec![mode(
             "default",
             Supported,
-            "Tools ask through the extension UI when they need approval",
+            "Built-in tools run without asking; an extension may ask for confirmation, shown as a request",
         )],
         grants: GrantCapabilities {
             once: capability(Supported, "Accept answers one approval request"),
@@ -248,7 +103,7 @@ pub fn capabilities() -> crate::capabilities::CapabilityRecord {
     }
 }
 
-/// Bun runs the bridge and the bundled CLI; `ADE_OMP_BIN` replaces the CLI.
+/// Bun runs the worker and the bundled CLI; `ADE_OMP_BIN` replaces the CLI.
 pub const INSTALLATION: &[crate::capabilities::Executable] = &[
     crate::capabilities::Executable {
         check: "runtime:bun",

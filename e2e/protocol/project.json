@@ -7,7 +7,7 @@
     "@ade/client",
     "@ade/cli",
     "ade-claude-adapter",
-    "ade-opencode-adapter",
+    "@ade/opencode-provider",
     "ade-omp-bridge"
   ],
   "targets": {

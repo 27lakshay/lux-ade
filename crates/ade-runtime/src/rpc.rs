@@ -212,15 +212,17 @@ impl Rpc {
                     }
                 }
             })();
+            // Every closed transport is recorded, even when its owner was
+            // already released by a stop that raced the provider's exit.
+            let failure_code = result
+                .as_ref()
+                .err()
+                .and_then(|error| error.downcast_ref::<TransportError>())
+                .map(|error| error.code())
+                .unwrap_or("provider_transport_failed");
+            tracing::warn!(target: "ade", event = "provider_connection_closed", pid, code = failure_code);
             if let Some(this) = weak.upgrade() {
                 this.closed.store(true, Ordering::SeqCst);
-                let failure_code = result
-                    .as_ref()
-                    .err()
-                    .and_then(|error| error.downcast_ref::<TransportError>())
-                    .map(|error| error.code())
-                    .unwrap_or("provider_transport_failed");
-                tracing::warn!(target: "ade", event = "provider_connection_closed", pid = this.pid, code = failure_code);
                 let failure = result
                     .as_ref()
                     .err()

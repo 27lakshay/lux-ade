@@ -71,6 +71,27 @@ pub struct Conversation {
     pub queue_resumed_during: Option<String>,
     pub runtime_run: Option<String>,
     pub runtime_cursor: u64,
+    /// The latest Stop and how far it got; null when none was requested.
+    #[serde(default)]
+    pub stop: Option<crate::contract::agents::ConversationStop>,
+    /// Rises with each change to `provider_config`; guards the next change.
+    #[serde(default)]
+    pub settings_revision: u64,
+    /// Background work the provider last reported for the open session.
+    /// Null when it has reported none; `active: null` when it is unknown.
+    #[serde(default)]
+    pub background: Option<BackgroundActivity>,
+    /// When output last arrived that no submission of this Conversation
+    /// owns: autonomous work in the native session, never shown as a prompt.
+    #[serde(default)]
+    pub autonomous_output_at_ms: Option<i64>,
+    /// What the open provider session was bound to; null before one opens.
+    #[serde(default)]
+    pub execution: Option<crate::contract::agents::ConversationExecution>,
+    /// What the provider reported in effect when its session opened or later
+    /// (Claude `system/init`); null when it reported nothing or has not opened.
+    #[serde(default)]
+    pub native_settings: Option<crate::provider::NativeSettings>,
     pub runtime_submission: Option<String>,
     pub id: String,
     pub workspace_id: String,
@@ -118,6 +139,18 @@ impl Conversation {
         }
     }
 }
+/// Background work in a provider session, with its evidence. A provider
+/// that stops reporting, or whose process ended, leaves `active` unknown:
+/// silence and a closed transport are not evidence that work settled.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
+pub struct BackgroundActivity {
+    pub source_attempt_id: String,
+    pub active: Option<bool>,
+    pub running: Option<u64>,
+    /// The native evidence, such as `task_lifecycle`, or `provider_exited`.
+    pub source: String,
+    pub observed_at_ms: i64,
+}
 /// Which login a Conversation's Agent runs under.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -143,6 +176,10 @@ pub struct Account {
     pub codex_identity: Option<CodexIdentity>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub omp_identity: Option<OmpIdentity>,
+    /// The identity a provider worker's `account_inspect` reported, pinned for
+    /// a provider without a bundled account probe, such as a plugin's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worker_identity: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
@@ -183,6 +220,23 @@ pub struct AccountExecution {
     pub codex_identity: Option<CodexIdentity>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub omp_identity: Option<OmpIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worker_identity: Option<serde_json::Map<String, serde_json::Value>>,
+}
+impl AccountExecution {
+    /// The pinned identity, in the shape the provider's inspection reported it.
+    pub fn identity(&self) -> Option<serde_json::Map<String, serde_json::Value>> {
+        let value = match self.provider.as_str() {
+            "claude" => serde_json::to_value(&self.claude_identity).ok()?,
+            "codex" => serde_json::to_value(&self.codex_identity).ok()?,
+            "omp" => serde_json::to_value(&self.omp_identity).ok()?,
+            _ => return self.worker_identity.clone(),
+        };
+        match value {
+            serde_json::Value::Object(map) => Some(map),
+            _ => None,
+        }
+    }
 }
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct Draft {

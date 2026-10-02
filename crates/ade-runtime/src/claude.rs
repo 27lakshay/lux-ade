@@ -1,16 +1,5 @@
-//! Claude's official SDK lives in an owned sidecar; its protocol never reaches Sessions.
-use crate::{
-    model::PendingRequest,
-    provider::{self, Config, Connected, Event, Provider},
-    rpc::Rpc,
-};
-use ade_core::model::AccountExecution;
-use anyhow::{Context, Result, ensure};
-use serde_json::{Value, json};
-use std::{
-    process::Command,
-    sync::{Arc, mpsc},
-};
+//! Claude Code through its public provider worker (`providers/claude/worker.mjs`):
+//! the worker descriptor, capability record and installation requirements.
 pub fn worker_descriptor() -> ade_core::contract::providers::ProviderWorkerInitialize {
     use ade_core::contract::providers::{
         ProviderWorkerAvailability as Availability, ProviderWorkerCapabilityName as Capability,
@@ -32,8 +21,9 @@ pub fn worker_descriptor() -> ade_core::contract::providers::ProviderWorkerIniti
             | Capability::Resume
             | Capability::Cancel
             | Capability::ToolApproval
-            | Capability::Questions => true,
-            Capability::Steering | Capability::ChildTranscript => false,
+            | Capability::Questions
+            | Capability::ChildTranscript => true,
+            Capability::Steering => false,
         };
         capability.support = if capability.available {
             Support::Supported
@@ -42,197 +32,17 @@ pub fn worker_descriptor() -> ade_core::contract::providers::ProviderWorkerIniti
         };
     }
     for operation in &mut descriptor.operations {
-        if matches!(
-            operation.method,
-            Method::Steer
-                | Method::History
-                | Method::Compact
-                | Method::Rewind
-                | Method::ChildTranscript
-        ) {
-            operation.availability = Availability::Unsupported;
-            operation.reason = "Claude worker does not implement this operation".into();
-        }
+        let reason = match operation.method {
+            Method::Steer => {
+                "ADE's Claude worker admits one turn at a time; the Agent SDK has no steer for an identified running turn"
+            }
+            Method::Compact => "ADE's Claude worker does not issue Claude Code's /compact command",
+            _ => continue,
+        };
+        operation.availability = Availability::Unsupported;
+        operation.reason = reason.into();
     }
     descriptor
-}
-
-pub struct Adapter {
-    rpc: Arc<Rpc>,
-    /// The `mcpServers` map from the profile MCP catalog (F131).
-    mcp_servers: std::sync::Mutex<Option<Value>>,
-}
-impl Adapter {
-    pub fn spawn(
-        cwd: &str,
-        account: Option<&AccountExecution>,
-        events: mpsc::SyncSender<Event>,
-    ) -> Result<Arc<Self>> {
-        let executable = account
-            .map(provider::account_probe::verify_launch)
-            .transpose()?;
-        let mut command = if let Ok(mock) = std::env::var("ADE_CLAUDE_BRIDGE_BIN") {
-            Command::new(mock)
-        } else {
-            let mut c =
-                Command::new(std::env::var("ADE_NODE_BIN").unwrap_or_else(|_| "node".into()));
-            c.arg(std::env::var("ADE_CLAUDE_BRIDGE").unwrap_or_else(|_| {
-                ade_platform::resources::resource("providers/claude/bridge.mjs")
-                    .to_string_lossy()
-                    .into_owned()
-            }));
-            c
-        };
-        command.current_dir(cwd);
-        if let (Some(account), Some(executable)) = (account, executable.as_deref()) {
-            provider::account_probe::managed_environment(
-                &mut command,
-                &account.native_home,
-                executable,
-            );
-            // ADE's own data directory: task results and fork records, never credentials.
-            if let Some(directory) = std::env::var_os("ADE_DATA_DIR") {
-                command.env("ADE_DATA_DIR", directory);
-            }
-        }
-        Ok(Arc::new(Self {
-            rpc: Rpc::spawn(command, events, provider::bridge_event)?,
-            mcp_servers: std::sync::Mutex::new(None),
-        }))
-    }
-}
-impl Provider for Adapter {
-    fn child_transcript(
-        &self,
-        session: &str,
-        child: &str,
-        offset: u64,
-        cursor: Option<&str>,
-    ) -> Result<Value> {
-        self.rpc.request(
-            "child_transcript",
-            json!({"session":session,"child":child,"offset":offset,"cursor":cursor}),
-        )
-    }
-    fn pid(&self) -> Option<u32> {
-        Some(self.rpc.pid())
-    }
-    fn descendants(&self) -> Option<Vec<crate::descendants::Identity>> {
-        Some(self.rpc.descendants())
-    }
-    /// The bridge passes the map as the Agent SDK's `mcpServers` query option.
-    fn configure_mcp(&self, servers: Value) -> Result<()> {
-        ensure!(servers.is_object(), "Claude MCP servers must be an object");
-        *self.mcp_servers.lock().unwrap() = Some(servers);
-        Ok(())
-    }
-    fn open(&self, resume: Option<&str>, config: &Config) -> Result<Connected> {
-        let servers = self.mcp_servers.lock().unwrap().clone();
-        let Some(servers) = servers else {
-            return provider::response_session(&self.rpc, resume, config);
-        };
-        let result = self.rpc.request(
-            "open",
-            json!({"resume":resume,"config":config,"mcp_servers":servers}),
-        )?;
-        let connected: Connected = serde_json::from_value(result)?;
-        ensure!(
-            resume.is_none_or(|id| id == connected.session),
-            "Provider resumed a different session; original identity retained"
-        );
-        Ok(connected)
-    }
-    fn send(
-        &self,
-        session: &str,
-        submission: &str,
-        message_id: Option<&str>,
-        prompt: &crate::prompt::Prompt,
-    ) -> Result<String> {
-        self.rpc.request(
-            "send",
-            json!({"session":session,"submission":submission,"message_id":message_id,"text":prompt.text,"attachments":prompt.attachments}),
-        )?["turn"]
-            .as_str()
-            .map(str::to_owned)
-            .context("Claude omitted turn ID")
-    }
-    fn cancel(&self, session: &str, turn: &str) -> Result<()> {
-        self.rpc
-            .request("cancel", json!({"session":session,"turn":turn}))?;
-        Ok(())
-    }
-    /// Agent SDK 0.3.281: the bridge forks the session with `forkSession`
-    /// up to the last chain entry before `turn`, the prompt UUID that
-    /// started it, and resumes the fork. The fork is the new native session.
-    fn rewind(&self, session: &str, turn: &str, _operation: &str) -> Result<Option<String>> {
-        let reply = self
-            .rpc
-            .request("rewind", json!({"session":session,"drop_from":turn}))?;
-        let forked = reply["session"]
-            .as_str()
-            .filter(|forked| !forked.is_empty() && *forked != session)
-            .context("Claude rewind did not name its forked session")?;
-        Ok(Some(forked.to_owned()))
-    }
-    fn prepare_submission(&self) -> Option<String> {
-        Some(uuid::Uuid::new_v4().to_string())
-    }
-    fn validate_answer(
-        &self,
-        p: &PendingRequest,
-        decision: &str,
-        answers: Option<&Value>,
-    ) -> Result<()> {
-        ensure!(
-            ["accept", "decline", "answer"].contains(&decision),
-            "Unknown decision"
-        );
-        if p.method == "claude/questions" {
-            ensure!(
-                decision == "answer" || decision == "decline",
-                "Answer the questions or decline"
-            );
-            if decision == "answer" {
-                for q in p.params["questions"]
-                    .as_array()
-                    .context("Malformed Claude questions")?
-                {
-                    let id = q["id"].as_str().context("Missing question ID")?;
-                    ensure!(
-                        answers
-                            .and_then(|v| v[id].as_str())
-                            .is_some_and(|s| !s.trim().is_empty() && s.len() <= 16384),
-                        "Answer required for {id}"
-                    );
-                }
-            }
-        } else {
-            ensure!(decision != "answer", "Choose accept or decline");
-        }
-        Ok(())
-    }
-    fn answer(&self, p: &PendingRequest, decision: &str, answers: Option<&Value>) -> Result<()> {
-        self.validate_answer(p, decision, answers)?;
-        self.rpc.request(
-            "answer",
-            json!({"id":p.rpc_id,"decision":decision,"answers":answers}),
-        )?;
-        Ok(())
-    }
-    fn reject(&self, id: Value, message: &str) -> Result<()> {
-        self.rpc.request(
-            "answer",
-            json!({"id":id,"decision":"decline","reason":message}),
-        )?;
-        Ok(())
-    }
-    fn stop(&self) {
-        self.rpc.stop();
-    }
-    fn stop_confirmed(&self) -> Result<()> {
-        self.rpc.stop_confirmed()
-    }
 }
 
 /// Checked against `@anthropic-ai/claude-agent-sdk` 0.3.281 (`sdk.d.ts`) and
@@ -243,24 +53,27 @@ pub fn capabilities() -> crate::capabilities::CapabilityRecord {
     CapabilityRecord {
         provider: "claude".into(),
         name: "Claude Code".into(),
-        revision: 1,
+        revision: 2,
         fingerprint: String::new(),
         checked_against: "@anthropic-ai/claude-agent-sdk 0.3.281; Claude Code 2.1.x".into(),
         models: ModelCapabilities {
-            selection: capability(Supported, "The bridge passes the model option to the SDK"),
+            selection: capability(Supported, "The worker passes the model option to the SDK"),
             format: ModelFormat::NativeId,
             aliases: strings(&["default", "sonnet", "opus", "haiku", "opusplan"]),
             discovery: capability(
-                NativeOnly,
-                "Query.supportedModels() lists them; the bridge does not call it",
+                Supported,
+                "initializationResult().models (as Query.supportedModels() lists them) when the session opens, with each model's supportedEffortLevels",
             ),
         },
         reasoning: ReasoningCapabilities {
             selection: capability(
-                NativeOnly,
-                "The SDK effort option; ADE launches do not carry a reasoning level yet",
+                Supported,
+                "conversation.settings.update stores a level; the launch passes it as the SDK effort option",
             ),
-            levels: strings(&["low", "medium", "high", "xhigh", "max"]),
+            levels: ade_core::provider::reasoning_efforts("claude")
+                .iter()
+                .map(|level| (*level).to_owned())
+                .collect(),
             varies_by_model: true,
         },
         permission_modes: vec![
@@ -330,7 +143,7 @@ pub fn capabilities() -> crate::capabilities::CapabilityRecord {
     }
 }
 
-/// The Claude Code CLI the SDK drives, and Node for the bridge.
+/// The Claude Code CLI the SDK drives, and Node for the worker.
 pub const INSTALLATION: &[crate::capabilities::Executable] = &[
     crate::capabilities::Executable {
         check: "executable:claude",

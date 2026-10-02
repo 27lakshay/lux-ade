@@ -79,7 +79,7 @@ impl Gathered {
                     "claude" => t.claude_identity.is_some(),
                     "codex" => t.codex_identity.is_some(),
                     "omp" => t.omp_identity.is_some(),
-                    _ => false,
+                    _ => t.worker_identity.is_some(),
                 },
             },
         }

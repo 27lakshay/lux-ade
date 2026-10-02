@@ -949,16 +949,16 @@ mod tests {
             open,
             row("codex", Some("a1"), 2, Some(codex)),
             row("claude", None, 3, Some(claude)),
-            row("opencode", None, 4, None),
+            row("plugin:ade.opencode", None, 4, None),
         ];
         let (groups, total) = aggregate(&rows, UsageGroupBy::Provider, 0);
         let keys: Vec<_> = groups.iter().map(|g| g.key.clone().unwrap()).collect();
-        assert_eq!(keys, ["claude", "codex", "opencode"]);
-        let opencode = &groups[2];
-        assert_eq!(opencode.unreported_turns, 1);
-        assert_eq!(opencode.input.value, None);
-        assert_eq!(opencode.input.unreported_turns, 1);
-        assert_eq!(opencode.cost.value_usd, None);
+        assert_eq!(keys, ["claude", "codex", "plugin:ade.opencode"]);
+        let plugin = &groups[2];
+        assert_eq!(plugin.unreported_turns, 1);
+        assert_eq!(plugin.input.value, None);
+        assert_eq!(plugin.input.unreported_turns, 1);
+        assert_eq!(plugin.cost.value_usd, None);
         assert_eq!(total.turns, 4);
         assert_eq!(total.open_turns, 1);
         assert_eq!(total.unreported_turns, 1);

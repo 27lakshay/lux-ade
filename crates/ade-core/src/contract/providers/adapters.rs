@@ -4,9 +4,10 @@
 //! executable, its arguments and non-secret environment, and the protocol it
 //! speaks: the Agent Client Protocol, or plain text in and text out.
 //!
-//! An adapter's capabilities are never assumed. `adapter.probe` launches an
-//! ACP agent, reads its `initialize` response and records the capabilities it
-//! declared, together with the identity of the executable it probed. A later
+//! An adapter's capabilities are never assumed. `adapter.probe` starts the
+//! bundled ACP provider worker on the agent, which negotiates with the agent
+//! and reports the capabilities and operations that negotiation supports; ADE
+//! records them with the identity of the executable it probed. A later
 //! change to the definition or the executable makes that probe `stale`. A
 //! custom executable is checked without running it, because running it would
 //! send a prompt; its capabilities are the fixed minimum ADE can honour.
@@ -38,7 +39,8 @@ pub fn operations() -> Vec<OperationSpec> {
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum AdapterKind {
-    /// Agent Client Protocol v1: JSON-RPC 2.0, one message per line.
+    /// Agent Client Protocol v1: JSON-RPC 2.0, one message per line, run
+    /// through the bundled ACP provider worker (`providers/acp`).
     Acp,
     /// A plain CLI agent: one process per prompt, standard output is the reply.
     Executable,
@@ -98,27 +100,6 @@ pub struct ExecutableIdentity {
     pub modified_ms: i64,
 }
 
-/// What an ACP agent declared in its `initialize` response.
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq, Default)]
-pub struct AcpHandshake {
-    pub protocol_version: u16,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent_version: Option<String>,
-    /// IDs of the authentication methods the agent offers. ADE runs none of
-    /// them; sign in with the agent's own CLI.
-    pub auth_methods: Vec<String>,
-    pub load_session: bool,
-    pub resume_session: bool,
-    pub list_sessions: bool,
-    pub prompt_image: bool,
-    pub prompt_audio: bool,
-    pub prompt_embedded_context: bool,
-    pub mcp_http: bool,
-    pub mcp_sse: bool,
-}
-
 /// The result of one probe.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
 #[serde(tag = "status", rename_all = "snake_case")]
@@ -126,9 +107,10 @@ pub enum ProbeOutcome {
     Ready {
         /// ADE capability names, in the vocabulary of provider descriptors.
         capabilities: Vec<String>,
-        /// Present for ACP adapters.
+        /// For an ACP adapter, the bundled ACP worker's `initialize` reply,
+        /// including what the agent itself negotiated (`native_peer`).
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        acp: Option<AcpHandshake>,
+        worker: Option<Box<super::ProviderWorkerInitialize>>,
     },
     Failed {
         /// A bounded, secret-free reason. Agent output is never included.

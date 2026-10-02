@@ -163,14 +163,21 @@ impl DeleteBlocker {
 /// Otherwise `starting`, `running`, `responding`, `streaming` and
 /// `cancelling` are running; `error`, `unavailable` and `disconnected` are
 /// errors; anything else is idle.
-pub fn attention(status: &str, open_request: bool) -> crate::model::Attention {
+pub fn attention(
+    status: &str,
+    open_request: bool,
+    background_active: bool,
+) -> crate::model::Attention {
     use crate::model::Attention;
     if open_request || matches!(status, "waiting" | "pending") {
         Attention::NeedsYou
     } else if matches!(
         status,
         "running" | "responding" | "streaming" | "starting" | "cancelling"
-    ) {
+    ) || (background_active
+        && !matches!(status, "error" | "unavailable" | "disconnected"))
+    {
+        // A yielded prompt whose session still reports background work stays running.
         Attention::Running
     } else if matches!(status, "error" | "unavailable" | "disconnected") {
         Attention::Error
@@ -275,20 +282,37 @@ mod tests {
             "starting",
             "cancelling",
         ] {
-            assert_eq!(attention(status, false), Attention::Running, "{status}");
+            assert_eq!(
+                attention(status, false, false),
+                Attention::Running,
+                "{status}"
+            );
         }
         for status in ["waiting", "pending"] {
-            assert_eq!(attention(status, false), Attention::NeedsYou, "{status}");
+            assert_eq!(
+                attention(status, false, false),
+                Attention::NeedsYou,
+                "{status}"
+            );
         }
         for status in ["error", "unavailable", "disconnected"] {
-            assert_eq!(attention(status, false), Attention::Error, "{status}");
+            assert_eq!(
+                attention(status, false, false),
+                Attention::Error,
+                "{status}"
+            );
         }
         for status in ["idle", "ready", "interrupted", "imported"] {
-            assert_eq!(attention(status, false), Attention::Idle, "{status}");
+            assert_eq!(attention(status, false, false), Attention::Idle, "{status}");
         }
         // An open question or approval needs the person whatever the status says.
-        assert_eq!(attention("running", true), Attention::NeedsYou);
-        assert_eq!(attention("idle", true), Attention::NeedsYou);
+        assert_eq!(attention("running", true, false), Attention::NeedsYou);
+        assert_eq!(attention("idle", true, false), Attention::NeedsYou);
+        // A yielded prompt with background work still running stays running; a failed
+        // provider is an error whatever it last reported.
+        assert_eq!(attention("ready", false, true), Attention::Running);
+        assert_eq!(attention("idle", false, true), Attention::Running);
+        assert_eq!(attention("error", false, true), Attention::Error);
     }
 
     #[test]

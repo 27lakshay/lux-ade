@@ -10,7 +10,17 @@
     "apps/desktop/src/**/*.test.mjs",
     "packages/provider-sdk/src/index.ts",
     "packages/provider-sdk/src/node.ts",
-    "packages/provider-sdk/examples/diagnostic-worker.mjs"
+    "packages/provider-sdk/examples/diagnostic-worker.mjs",
+    // The conformance harness (`@ade/provider-sdk/testing`), its CLI and factory host, and the
+    // fixture workers its own tests launch as processes.
+    "packages/provider-sdk/src/testing.ts",
+    "packages/provider-sdk/src/conformance-cli.ts",
+    "packages/provider-sdk/src/conformance-host.ts",
+    "packages/provider-sdk/test-fixtures/*.mjs",
+    "packages/provider-sdk/src/**/*.test.mjs",
+    // The OpenCode plugin's provider entry point (ade-plugin.json) and its Node tests.
+    "plugins/opencode/src/worker.ts",
+    "plugins/opencode/test/**/*.test.mjs"
   ],
   // The stock shadcn/ui kit: installed whole, used piece by piece, so unused parts are expected.
   "ignoreFindings": [
@@ -76,7 +86,8 @@
       { "name": "sdk", "patterns": ["packages/client/**"] },
       { "name": "contracts", "patterns": ["packages/contracts/**"] },
       { "name": "terminal", "patterns": ["packages/terminal/**"] },
-      { "name": "plugin-host", "patterns": ["packages/plugin-host/**"] }
+      { "name": "plugin-host", "patterns": ["packages/plugin-host/**"] },
+      { "name": "opencode-plugin", "patterns": ["plugins/opencode/**"] }
     ],
     "rules": [
       { "from": "desktop-main", "allow": ["desktop-shared", "sdk", "contracts"] },
@@ -90,7 +101,9 @@
       { "from": "sdk", "allow": ["contracts"] },
       { "from": "terminal", "allow": [] },
       { "from": "contracts", "allow": [] },
-      { "from": "plugin-host", "allow": ["sdk", "contracts"] }
+      { "from": "plugin-host", "allow": ["sdk", "contracts"] },
+      // An independently packaged provider: only the provider SDK at run time, contract types at build time.
+      { "from": "opencode-plugin", "allow": [], "allowTypeOnly": ["contracts"] }
     ]
   }
 }

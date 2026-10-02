@@ -30,6 +30,9 @@ pub(super) struct Agent {
     /// A stop is in flight outside the session lock. The stopper owns the
     /// outcome; no new work is admitted to this Agent meanwhile.
     pub(super) stopping: bool,
+    /// The models and dependent settings the open provider session listed;
+    /// they belong to this run and go with it.
+    pub(super) native_choices: Option<ade_core::provider::NativeChoices>,
     pub(super) _lease: crate::worktrees::Lease,
 }
 
@@ -124,6 +127,44 @@ pub(super) fn cancel_refusal(
     }
 }
 
+/// How long `agent.cancel` waits for the provider's acknowledgement.
+pub(super) const STOP_ACK_WINDOW: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// How long an acknowledged Stop waits for terminal evidence before it is
+/// reported unresolved. `ADE_E2E_STOP_SETTLE_MS` shortens it for tests.
+pub(super) fn stop_settle_window() -> std::time::Duration {
+    std::env::var("ADE_E2E_STOP_SETTLE_MS")
+        .ok()
+        .and_then(|ms| ms.parse().ok())
+        .map_or(
+            std::time::Duration::from_secs(30),
+            std::time::Duration::from_millis,
+        )
+}
+
+/// An unresolved Stop leaves the turn in flight: the Conversation shows it
+/// running again, so Stop can be retried and a restart is not held.
+fn resume_unresolved(c: &mut Conversation) {
+    if c.status == "cancelling"
+        && c.stop
+            .as_ref()
+            .is_some_and(|stop| stop.outcome == ade_core::contract::agents::StopOutcome::Unresolved)
+    {
+        c.status = "running".into();
+    }
+}
+
+/// Work the provider says can still run after its interruption, in plain words.
+pub(super) fn remaining_work(
+    evidence: &ade_core::contract::providers::ProviderCancelEvidence,
+) -> Option<String> {
+    match evidence.queued_work_count {
+        Some(1) => Some("1 queued input can still run after this stop".into()),
+        Some(n) if n > 1 => Some(format!("{n} queued inputs can still run after this stop")),
+        _ => None,
+    }
+}
+
 /// Decides a failed Agent's record from its stop. `stop` is `None` when no
 /// provider was attached. Only a confirmed stop releases the worktree lease;
 /// an unconfirmed one keeps it and marks the attempt interrupted, because the
@@ -148,6 +189,26 @@ pub(super) fn e2e_answer_exit(point: &str) {
         std::process::exit(94);
     }
 }
+/// The request ID of the newest prompt whose native outcome is unknown, when
+/// no Agent is connected: reopening its session may continue that work.
+pub(super) fn interrupted_prompt(d: &Data, id: &str) -> Result<Option<String>> {
+    if d.agents.contains_key(id) {
+        return Ok(None);
+    }
+    let newest = d
+        .store
+        .messages(id, None, 32)?
+        .into_iter()
+        .rev()
+        .find_map(|message| message.delivery);
+    Ok(newest
+        .filter(|delivery| {
+            delivery.native_outcome
+                == ade_core::contract::conversations::SubmissionNativeOutcome::Unknown
+        })
+        .map(|delivery| delivery.request_id))
+}
+
 impl Sessions {
     pub(super) fn dispatch_queued(self: &Arc<Self>) -> Result<()> {
         let heads = {
@@ -308,6 +369,7 @@ impl Sessions {
                 submission: None,
                 account_generation: None,
                 stopping: false,
+                native_choices: None,
                 _lease: lease.take().expect("a new Agent's lease was taken above"),
             });
             run.submission = Some(key.into());
@@ -508,6 +570,7 @@ impl Sessions {
                     submission: None,
                     account_generation: None,
                     stopping: false,
+                    native_choices: None,
                     _lease: lease,
                 },
             );
@@ -632,6 +695,13 @@ impl Sessions {
                             "Oh My Pi account identity is not pinned"
                         );
                     }
+                    if !matches!(c.provider.as_str(), "claude" | "codex" | "omp") {
+                        ensure!(
+                            account.worker_identity.is_some(),
+                            "{} account identity is not pinned",
+                            c.provider
+                        );
+                    }
                     Ok::<_, anyhow::Error>(ade_core::model::AccountExecution {
                         id: account.id,
                         provider: account.provider,
@@ -640,6 +710,7 @@ impl Sessions {
                         claude_identity: account.claude_identity,
                         codex_identity: account.codex_identity,
                         omp_identity: account.omp_identity,
+                        worker_identity: account.worker_identity,
                     })
                 })
                 .transpose()?;
@@ -662,7 +733,11 @@ impl Sessions {
         let mcp_servers = if restore {
             None
         } else {
-            super::mcp::launch_servers(&self.data.lock().unwrap().store, &w, &c.provider)?
+            // A plugin's wiring comes from its worker's handshake; gather it outside the lock.
+            self.discover_plugin_providers();
+            let d = self.data.lock().unwrap();
+            let wired = self.mcp_wired(&d, &c.provider);
+            super::mcp::launch_servers(&d.store, &w, &c.provider, wired)?
         };
         let rpc = Remote::new(
             self.runtime.clone(),
@@ -698,7 +773,8 @@ impl Sessions {
                         && current.provider == expected.provider
                         && current.claude_identity == expected.claude_identity
                         && current.codex_identity == expected.codex_identity
-                        && current.omp_identity == expected.omp_identity,
+                        && current.omp_identity == expected.omp_identity
+                        && current.worker_identity == expected.worker_identity,
                     "Account changed before provider session opened"
                 );
             }
@@ -738,6 +814,23 @@ impl Sessions {
             if !unsettled_rewind {
                 current.provider_thread_id = Some(connected.session);
             }
+            current.native_settings = connected.native_settings;
+            // A report beyond ADE's bounds is not used; settings then say discovery is unavailable.
+            d.agents.get_mut(id).unwrap().native_choices = connected
+                .native_choices
+                .filter(|choices| choices.validate().is_ok());
+            // A new provider session reports its own background work.
+            current.background = None;
+            current.execution = Some(ade_core::contract::agents::ConversationExecution {
+                source_attempt_id: run.to_owned(),
+                account_context: current.account_context,
+                account_id: current.account_id.clone(),
+                account_generation: rpc.spec.account.as_ref().map(|account| account.generation),
+                native_session: current.provider_thread_id.clone().unwrap_or_default(),
+                settings_revision: current.settings_revision,
+                reattached: restore,
+                opened_at_ms: now_ms(),
+            });
             current.error = None;
             current.updated_at = now_ms();
             let messages: Vec<_> = if needs_history {
@@ -853,7 +946,15 @@ impl Sessions {
     pub(super) fn fail(&self, id: &str, run: &str, error: String) {
         self.fail_if(id, run, error, None);
     }
-    pub(super) fn fail_if(&self, id: &str, run: &str, error: String, submission: Option<&str>) {
+    /// Fails the run and stops its provider. Returns the provider stop's
+    /// result: `None` when nothing was attached or the run was not this one.
+    pub(super) fn fail_if(
+        &self,
+        id: &str,
+        run: &str,
+        error: String,
+        submission: Option<&str>,
+    ) -> Option<Result<(), String>> {
         let runtime_gone = self.runtime.gone();
         let error = if runtime_gone {
             "Runtime supervisor exited. Restart lux-ade, then resume this Conversation. No prompt was resent.".into()
@@ -865,8 +966,9 @@ impl Sessions {
             || d.agents[id].stopping
             || submission.is_some_and(|key| d.agents[id].submission.as_deref() != Some(key))
         {
-            return;
+            return None;
         }
+        let mut stopped = None;
         let outcome = match d.agents[id].rpc.clone() {
             // No provider is attached yet: remove the Agent in this same lock
             // hold, so a concurrent attach sees it gone and stops its own run.
@@ -879,8 +981,9 @@ impl Sessions {
                 let stop = rpc.stop_confirmed().map_err(|error| format!("{error:#}"));
                 d = self.data.lock().unwrap();
                 if !Self::owns(&d, id, run) {
-                    return;
+                    return Some(stop);
                 }
+                stopped = Some(stop.clone());
                 failed_agent(Some(stop))
             }
         };
@@ -925,12 +1028,40 @@ impl Sessions {
             let mut c = current.context("Missing Conversation")?;
             c.status = outcome.status.into();
             c.queue_paused = true;
+            // The provider can no longer report: its background work is unknown.
+            if let Some(background) = c.background.as_mut() {
+                background.active = None;
+                background.source = "provider_exited".into();
+                background.observed_at_ms = now_ms();
+            }
             c.error = Some(match &outcome.hold {
                 Some(reason) => format!("{error}. {reason}"),
                 None => error,
             });
             c.active_turn_id = None;
             c.updated_at = now_ms();
+            // A Stop of this attempt settles on the process evidence.
+            if let Some(stop) = c.stop.as_mut().filter(|stop| {
+                stop.source_attempt_id == run
+                    && stop.outcome != ade_core::contract::agents::StopOutcome::Confirmed
+            }) {
+                match &stopped {
+                    Some(Ok(())) => stop.confirm(
+                        ade_core::contract::agents::StopConfirmation::ProcessExit,
+                        None,
+                        now_ms(),
+                    ),
+                    Some(Err(error)) => stop.unresolve(format!(
+                        "The runtime could not confirm the provider process exited: {error}"
+                    )),
+                    None => {
+                        stop.outcome = ade_core::contract::agents::StopOutcome::Confirmed;
+                        stop.reason = Some("No provider process had started".into());
+                        stop.escalation = None;
+                        stop.settled_at_ms = Some(now_ms());
+                    }
+                }
+            }
             let mut requests = d.store.pending(id)?;
             for p in &mut requests {
                 p.status = "interrupted".into();
@@ -965,8 +1096,7 @@ impl Sessions {
             // Without a confirmed stop, or with the runtime gone, nothing
             // proves how a turn in flight ended: its outcome is unknown.
             if runtime_gone || outcome.hold.is_some() {
-                d.store.commit_conversation(&c, &delivery, &requests)?;
-                d.store.commit_lost_run(&c, &requests)?;
+                d.store.commit_lost_run(&c, &delivery, &requests)?;
             } else {
                 d.store.commit_conversation(&c, &delivery, &requests)?;
             }
@@ -975,6 +1105,7 @@ impl Sessions {
         if let Err(error) = result {
             eprintln!("Could not persist Agent failure: {error}");
         }
+        stopped
     }
     pub(super) fn events(&self, id: &str, run: &str, batch: Vec<Envelope>) -> Result<()> {
         let lock_started = std::time::Instant::now();
@@ -1059,6 +1190,14 @@ impl Sessions {
                                 terminal.correlated = true;
                             }
                         }
+                        // Another native turn ending after this prompt's own turn, such
+                        // as a compaction, is not this prompt's terminal.
+                        Event::Finished {
+                            turn: Some(turn), ..
+                        } if delivery
+                            .native_turn_id
+                            .as_ref()
+                            .is_some_and(|own| own != turn) => {}
                         Event::Finished {
                             turn,
                             status,
@@ -1106,9 +1245,17 @@ impl Sessions {
                     admitted,
                     ..
                 } => {
+                    // Native events can precede the send reply: a turn that already
+                    // finished, or is being cancelled, keeps its state.
                     if c.runtime_submission.as_deref() == Some(&submission) && admitted {
-                        c.status = "running".into();
-                        c.active_turn_id = turn;
+                        if c.status == "starting" {
+                            c.status = "running".into();
+                            c.active_turn_id = turn;
+                        } else if matches!(c.status.as_str(), "running" | "waiting" | "cancelling")
+                            && c.active_turn_id.is_none()
+                        {
+                            c.active_turn_id = turn;
+                        }
                     }
                 }
                 Event::Exited { error } => {
@@ -1137,7 +1284,13 @@ impl Sessions {
                             .as_deref()
                             .is_some_and(|t| c.active_turn_id.as_deref() != Some(t))
                     {
-                        rpc.reject(rpc_id, "Request does not belong to this Conversation")?;
+                        // Refusing a stale request is best effort: its failure says
+                        // nothing about the current turn and must not fail it.
+                        if let Err(error) =
+                            rpc.reject(rpc_id, "Request does not belong to this Conversation")
+                        {
+                            eprintln!("Could not refuse a stale provider request: {error:#}");
+                        }
                         continue;
                     }
                     let source_attempt_id = (submission.is_some() || turn.is_some())
@@ -1209,7 +1362,10 @@ impl Sessions {
                         continue;
                     }
                     c.active_turn_id = turn;
-                    c.status = "running".into();
+                    // A Stop requested before the native start stays in progress.
+                    if c.status != "cancelling" {
+                        c.status = "running".into();
+                    }
                     c.error = None;
                     changed = true;
                 }
@@ -1246,11 +1402,23 @@ impl Sessions {
                     }
                     c.queue_resumed_during = None;
                     c.active_turn_id = None;
-                    if let Some(turn) = turn.as_ref() {
-                        usage.push((
-                            envelope.sequence,
-                            crate::usage::Observed::Finished { turn: turn.clone() },
-                        ));
+                    // Native terminal evidence settles a Stop of this exact submission.
+                    let finished_submission = c.runtime_submission.clone();
+                    if let Some(stop) = c.stop.as_mut().filter(|stop| {
+                        stop.source_attempt_id == run
+                            && Some(&stop.submission_id) == finished_submission.as_ref()
+                            && stop.outcome == ade_core::contract::agents::StopOutcome::Requested
+                    }) {
+                        stop.confirm(
+                            ade_core::contract::agents::StopConfirmation::NativeTerminal,
+                            Some(status.clone()),
+                            now_ms(),
+                        );
+                    }
+                    // A provider that names no turn (Claude) has its usage keyed
+                    // by the submission the turn ran.
+                    if let Some(turn) = turn.clone().or_else(|| finished_submission.clone()) {
+                        usage.push((envelope.sequence, crate::usage::Observed::Finished { turn }));
                     }
                     for r in requests.values_mut() {
                         let request_session = r
@@ -1306,6 +1474,21 @@ impl Sessions {
                     let mut item = item;
                     if item.role != "user" {
                         item.client_id = None;
+                        // Output no submission owns is the native session's own
+                        // work; it is kept as session-attributed, never a prompt.
+                        if submission.is_none()
+                            && !matches!(
+                                c.status.as_str(),
+                                "starting"
+                                    | "running"
+                                    | "responding"
+                                    | "streaming"
+                                    | "waiting"
+                                    | "cancelling"
+                            )
+                        {
+                            c.autonomous_output_at_ms = Some(now_ms());
+                        }
                     }
                     let mut m = item.message(id);
                     if m.role == "user" {
@@ -1426,9 +1609,53 @@ impl Sessions {
                     c.error = Some(error);
                     changed = true;
                 }
+                Event::Background {
+                    session,
+                    active,
+                    running,
+                    source,
+                } => {
+                    if session.is_empty()
+                        || Some(session.as_str()) != c.provider_thread_id.as_deref()
+                    {
+                        continue;
+                    }
+                    c.background = Some(ade_core::model::BackgroundActivity {
+                        source_attempt_id: run.into(),
+                        active,
+                        running,
+                        source,
+                        observed_at_ms: now_ms(),
+                    });
+                }
+                Event::Settings { session, settings } => {
+                    if Some(session.as_str()) != c.provider_thread_id.as_deref() {
+                        continue;
+                    }
+                    // The newest report wins for each value it names; a value
+                    // it leaves out keeps what the session reported before.
+                    let mut reported = c.native_settings.clone().unwrap_or_default();
+                    let bounded = |value: Option<String>| {
+                        value.filter(|v| !v.is_empty() && v.len() <= 256 && !v.contains('\0'))
+                    };
+                    for (slot, value) in [
+                        (&mut reported.model, settings.model),
+                        (&mut reported.reasoning_effort, settings.reasoning_effort),
+                        (&mut reported.permission_mode, settings.permission_mode),
+                    ] {
+                        if let Some(value) = bounded(value) {
+                            *slot = Some(value);
+                        }
+                    }
+                    if c.native_settings.as_ref() != Some(&reported) {
+                        c.native_settings = Some(reported);
+                        changed = true;
+                    }
+                }
                 Event::Usage {
                     session,
                     turn,
+                    submission,
                     source,
                     report,
                 } => {
@@ -1440,7 +1667,7 @@ impl Sessions {
                     usage.push((
                         envelope.sequence,
                         crate::usage::Observed::Report {
-                            turn,
+                            turn: turn.or(submission),
                             source,
                             report,
                         },
@@ -1487,6 +1714,12 @@ impl Sessions {
     /// Cancels the active turn. With `expected_turn`, only while that turn is
     /// still the active one: a late or retried cancel never stops a successor.
     ///
+    /// The reply waits at most [`STOP_ACK_WINDOW`] for the provider's
+    /// acknowledgement, so a slow or wedged provider never holds the caller.
+    /// The Conversation's `stop` record carries the operation on to its
+    /// confirmed or unresolved outcome. A refused cancellation leaves the
+    /// work running and offers termination; it never kills the provider.
+    ///
     /// Stopping existing work must not depend on storage: when the
     /// cancellation cannot be recorded, the provider is still asked to stop
     /// the turn, and the reply reports that the state was not recorded.
@@ -1498,6 +1731,9 @@ impl Sessions {
         submission_id: &str,
         expected_turn: Option<&str>,
     ) -> Result<ade_core::contract::agents::AgentCancelOutcome> {
+        use ade_core::contract::agents::{
+            AgentCancelOutcome, AgentCancelOutcomeTag, ConversationStop, StopDelivery, StopOutcome,
+        };
         let (run, rpc, thread, turn, submission, unrecorded) = {
             let mut d = self.data.lock().unwrap();
             let mut c = d.store.conversation(id)?;
@@ -1532,6 +1768,21 @@ impl Sessions {
             let turn = c.active_turn_id.clone();
             c.status = "cancelling".into();
             c.queue_paused = true;
+            c.stop = Some(ConversationStop {
+                operation_id: operation_id.into(),
+                source_attempt_id: run.clone(),
+                submission_id: submission.clone(),
+                turn_id: turn.clone(),
+                requested_at_ms: now_ms(),
+                delivery: StopDelivery::Pending,
+                outcome: StopOutcome::Requested,
+                confirmation: None,
+                native_status: None,
+                evidence: None,
+                reason: None,
+                escalation: None,
+                settled_at_ms: None,
+            });
             let unrecorded = match d.store.commit_conversation(&c, &[], &[]) {
                 Ok(()) => {
                     self.changed(&mut d, &c, &[])?;
@@ -1541,13 +1792,43 @@ impl Sessions {
             };
             (run, rpc, thread, turn, submission, unrecorded)
         };
-        let evidence = if let (Some(rpc), Some(thread)) = (rpc, thread) {
-            match rpc.cancel_target(&thread, &run, &submission, turn.as_deref()) {
-                Ok(evidence) => evidence,
-                Err(error) => {
-                    self.fail_if(id, &run, error.to_string(), Some(&submission));
-                    return Err(error);
+        let reply = if let (Some(rpc), Some(thread)) = (rpc, thread) {
+            let (sent, received) = std::sync::mpsc::channel();
+            let sessions = Arc::clone(self);
+            let (id_, operation, run_, submission_, turn_) = (
+                id.to_owned(),
+                operation_id.to_owned(),
+                run.clone(),
+                submission.clone(),
+                turn.clone(),
+            );
+            // The provider call runs on its own thread: its reply settles the
+            // stop record whenever it arrives, while the caller waits only
+            // for the bounded acknowledgement window.
+            std::thread::spawn(move || {
+                let result = rpc
+                    .cancel_target(&thread, &run_, &submission_, turn_.as_deref())
+                    .map_err(|error| format!("{error:#}"));
+                sessions.record_stop_reply(&id_, &operation, &result);
+                let _ = sent.send(result);
+            });
+            let sessions = Arc::clone(self);
+            let (id_, operation) = (id.to_owned(), operation_id.to_owned());
+            std::thread::spawn(move || {
+                std::thread::sleep(stop_settle_window());
+                sessions.expire_stop(&id_, &operation);
+            });
+            match received.recv_timeout(STOP_ACK_WINDOW) {
+                Ok(Ok(evidence)) => (StopDelivery::Acknowledged, Some(evidence)),
+                Ok(Err(error)) => {
+                    if unrecorded.is_none() {
+                        bail!(
+                            "The provider refused the cancellation ({error}); the turn may still be running. Terminate the provider process to stop it"
+                        );
+                    }
+                    (StopDelivery::Refused, None)
                 }
+                Err(_) => (StopDelivery::Pending, None),
             }
         } else {
             self.fail(
@@ -1556,29 +1837,171 @@ impl Sessions {
                 "Cancelled while the Agent was starting; resume the Conversation to continue."
                     .into(),
             );
-            ade_core::contract::providers::ProviderCancelEvidence {
-                scope: ade_core::contract::providers::ProviderCancelScope::Unknown,
-                interruption_requested: false,
-                termination: ade_core::contract::providers::ProviderCancelTermination::Unknown,
-                active_work_remaining: None,
-                queued_work_count: None,
-                background_work_remaining: None,
-                observed_at_ms: None,
-            }
+            (StopDelivery::Unknown, None)
         };
         if let Some(error) = unrecorded {
             bail!(
                 "ADE asked the provider to stop this turn but could not record the cancellation ({error:#}); the Conversation updates once storage accepts writes again"
             );
         }
-        Ok(ade_core::contract::agents::AgentCancelOutcome {
-            tag: ade_core::contract::agents::AgentCancelOutcomeTag::AgentCancelOutcome,
+        Ok(AgentCancelOutcome {
+            tag: AgentCancelOutcomeTag::AgentCancelOutcome,
             operation_id: operation_id.into(),
             conversation_id: id.into(),
             source_attempt_id: run,
             submission_id: submission,
             turn_id: turn,
-            evidence,
+            delivery: reply.0,
+            evidence: reply.1,
+        })
+    }
+    /// Records the provider's reply to the cancellation `operation`, unless a
+    /// later Stop replaced it. Queued native input that can still run, or a
+    /// provider that could not interrupt, leaves the Stop unresolved.
+    fn record_stop_reply(
+        &self,
+        id: &str,
+        operation: &str,
+        result: &std::result::Result<ade_core::contract::providers::ProviderCancelEvidence, String>,
+    ) {
+        use ade_core::contract::agents::{StopDelivery, StopOutcome};
+        use ade_core::contract::providers::ProviderCancelTermination;
+        self.update_stop(id, operation, |c| {
+            let stop = c.stop.as_mut().unwrap();
+            match result {
+                Ok(evidence) => {
+                    stop.delivery = StopDelivery::Acknowledged;
+                    stop.evidence = Some(evidence.clone());
+                    if let Some(reason) = remaining_work(evidence) {
+                        stop.unresolve(reason);
+                    } else if stop.outcome == StopOutcome::Requested {
+                        if !evidence.interruption_requested {
+                            stop.unresolve("The provider could not interrupt this work".into());
+                        } else if evidence.termination == ProviderCancelTermination::Confirmed {
+                            stop.confirm(
+                                ade_core::contract::agents::StopConfirmation::NativeTerminal,
+                                None,
+                                now_ms(),
+                            );
+                        }
+                    }
+                }
+                Err(error) => {
+                    stop.delivery = StopDelivery::Refused;
+                    if stop.outcome == StopOutcome::Requested {
+                        stop.unresolve(format!("The provider refused the cancellation: {error}"));
+                    }
+                }
+            }
+            resume_unresolved(c);
+        });
+    }
+    /// Marks the Stop `operation` unresolved when no terminal evidence
+    /// arrived within the settlement window.
+    pub(super) fn expire_stop(&self, id: &str, operation: &str) {
+        use ade_core::contract::agents::StopOutcome;
+        self.update_stop(id, operation, |c| {
+            let stop = c.stop.as_mut().unwrap();
+            if stop.outcome == StopOutcome::Requested {
+                stop.unresolve(format!(
+                    "The provider did not report the turn ending within {} seconds",
+                    stop_settle_window().as_secs_f32()
+                ));
+            }
+            resume_unresolved(c);
+        });
+    }
+    /// Applies `change` to the Conversation while its `stop` is still `operation`.
+    fn update_stop(&self, id: &str, operation: &str, change: impl FnOnce(&mut Conversation)) {
+        let mut d = self.data.lock().unwrap();
+        let Ok(mut c) = d.store.conversation(id) else {
+            return;
+        };
+        if c.stop
+            .as_ref()
+            .is_none_or(|stop| stop.operation_id != operation)
+        {
+            return;
+        }
+        let before = c.clone();
+        change(&mut c);
+        if serde_json::to_value(&before).ok() == serde_json::to_value(&c).ok() {
+            return;
+        }
+        c.updated_at = now_ms();
+        match d.store.commit_conversation(&c, &[], &[]) {
+            Ok(()) => {
+                if let Err(error) = self.changed(&mut d, &c, &[]) {
+                    eprintln!("Could not publish the Stop outcome: {error:#}");
+                }
+            }
+            Err(error) => eprintln!("Could not record the Stop outcome: {error:#}"),
+        }
+    }
+    /// `agent.terminate`: ends the provider process the runtime owns for
+    /// `source_attempt_id`, whether or not a turn runs. The runtime's
+    /// confirmation of the exit is the evidence; work the provider started
+    /// outside that process is not covered.
+    pub(super) fn terminate(
+        self: &Arc<Self>,
+        operation_id: &str,
+        id: &str,
+        source_attempt_id: &str,
+    ) -> Result<ade_core::contract::agents::AgentTerminateOutcome> {
+        {
+            let d = self.data.lock().unwrap();
+            let c = d.store.conversation(id)?;
+            ensure!(
+                c.runtime_run.as_deref() == Some(source_attempt_id),
+                "Termination targets a different source attempt; nothing was stopped"
+            );
+            let a = d
+                .agents
+                .get(id)
+                .ok_or_else(|| anyhow!("No provider process runs for this attempt"))?;
+            ensure!(
+                a.run_id == source_attempt_id,
+                "Termination targets a different source attempt; nothing was stopped"
+            );
+            ensure!(!a.stopping, "The provider process is already stopping");
+        }
+        let stopped = self.fail_if(
+            id,
+            source_attempt_id,
+            "Stopped by terminating the provider process".into(),
+            None,
+        );
+        let background = {
+            let d = self.data.lock().unwrap();
+            d.store.conversation(id).ok().and_then(|c| {
+                c.stop
+                    .and_then(|stop| stop.evidence)
+                    .and_then(|evidence| evidence.background_work_remaining)
+            })
+        };
+        let process_exited = matches!(stopped, Some(Ok(())));
+        let mut limits = Vec::new();
+        if !process_exited {
+            limits.push(match stopped {
+                Some(Err(error)) => {
+                    format!("The runtime could not confirm the provider process exited: {error}")
+                }
+                _ => "The provider process was already gone or was being stopped elsewhere".into(),
+            });
+        }
+        if background != Some(false) {
+            limits.push(
+                "Child or background processes the provider started may survive the provider process"
+                    .into(),
+            );
+        }
+        Ok(ade_core::contract::agents::AgentTerminateOutcome {
+            tag: Default::default(),
+            operation_id: operation_id.into(),
+            conversation_id: id.into(),
+            source_attempt_id: source_attempt_id.into(),
+            process_exited,
+            limits,
         })
     }
     pub(super) fn answer_typed(
@@ -1758,153 +2181,6 @@ impl Sessions {
             resolution: p.resolution,
             error,
         })
-    }
-    pub(super) fn answer(
-        &self,
-        id: &str,
-        request_id: &str,
-        decision: &str,
-        answers: Option<&Value>,
-    ) -> Result<()> {
-        let mut payload = json!({"decision":decision,"answers":answers.unwrap_or(&Value::Null)});
-        payload.sort_all_objects();
-        let fingerprint = format!("{:x}", Sha256::digest(serde_json::to_vec(&payload)?));
-        let (rpc, native, native_resolved) = {
-            let d = self.data.lock().unwrap();
-            let c = d.store.conversation(id)?;
-            let mut p = d
-                .store
-                .interaction(id, request_id)?
-                .ok_or_else(|| anyhow!("Request is stale or already answered"))?;
-            if let Some(prior) = &p.answer_fingerprint {
-                ensure!(
-                    prior == &fingerprint,
-                    "Answer conflicts with the recorded decision"
-                );
-            }
-            if p.answer_dispatched {
-                return Ok(());
-            }
-            ensure!(
-                matches!(p.status.as_str(), "pending" | "responding" | "resolved")
-                    && (p.status != "resolved" || p.answer_fingerprint.is_some()),
-                "Request ended before answer delivery was confirmed; its outcome is unknown"
-            );
-            ensure!(
-                Self::owns(&d, id, &p.run_id),
-                "Request belongs to a previous Agent run"
-            );
-            let native_resolved = p.status == "resolved";
-            if !native_resolved {
-                ensure!(
-                    p.params["threadId"].as_str() == c.provider_thread_id.as_deref()
-                        && p.params["turnId"].as_str() == c.active_turn_id.as_deref(),
-                    "Request no longer belongs to the active turn"
-                );
-            }
-            let rpc = d.agents[id]
-                .rpc
-                .as_ref()
-                .ok_or_else(|| anyhow!("Agent is unavailable"))?
-                .clone();
-            if !native_resolved {
-                rpc.validate_answer(&p, decision, answers)?;
-            }
-            if p.status == "pending" {
-                p.answer_fingerprint = Some(fingerprint.clone());
-                p.status = "responding".into();
-                d.store.commit_conversation(&c, &[], &[p.clone()])?;
-            }
-            // The runtime fingerprints the whole command. Preserve one exact
-            // native request across daemon retries even as local state advances.
-            p.status = "pending".into();
-            p.answer_dispatched = false;
-            (rpc, p, native_resolved)
-        };
-        if native_resolved {
-            let agents: ade_core::contract::agents::AgentList =
-                serde_json::from_value(self.runtime.agent(AgentOp::List)?)?;
-            let key = native.answer_command_key();
-            let present = agents
-                .agents
-                .iter()
-                .any(|item| item.spec.run == native.run_id && item.commands.contains(&key));
-            ensure!(
-                present,
-                "Native request ended without a recorded answer receipt; outcome is unknown"
-            );
-        }
-        e2e_answer_exit("before_delivery");
-        // An uncertain daemon/runtime reply leaves the durable intent intact.
-        // The runtime receipt admits this exact answer only once.
-        if let Err(error) = rpc.answer(&native, decision, answers) {
-            if native_resolved
-                && error
-                    .downcast_ref::<crate::agent_runtime::AnswerNotSent>()
-                    .is_some()
-            {
-                bail!(
-                    "Native request ended before ADE delivered this answer; inspect the provider turn"
-                );
-            }
-            if error
-                .downcast_ref::<crate::agent_runtime::AnswerNotSent>()
-                .is_some()
-            {
-                e2e_answer_exit("after_not_sent_receipt");
-                let mut d = self.data.lock().unwrap();
-                let mut c = d.store.conversation(id)?;
-                let mut p = d
-                    .store
-                    .interaction(id, request_id)?
-                    .ok_or_else(|| anyhow!("Answer request disappeared before native delivery"))?;
-                ensure!(
-                    p.answer_fingerprint.as_deref() == Some(fingerprint.as_str()),
-                    "Answer intent changed before retry"
-                );
-                if p.answer_attempt == native.answer_attempt
-                    && p.status == "responding"
-                    && Self::owns(&d, id, &p.run_id)
-                {
-                    ensure!(
-                        p.answer_attempt < 32,
-                        "Answer retry limit reached; inspect the provider request"
-                    );
-                    p.answer_attempt += 1;
-                    p.status = "pending".into();
-                    c.error = Some(error.to_string());
-                    c.updated_at = now_ms();
-                    d.store.commit_conversation(&c, &[], &[p])?;
-                    e2e_answer_exit("after_attempt_advance");
-                    self.changed(&mut d, &c, &[])?;
-                }
-            }
-            return Err(error);
-        }
-        e2e_answer_exit("after_delivery");
-        let mut d = self.data.lock().unwrap();
-        let mut c = d.store.conversation(id)?;
-        let mut p = d
-            .store
-            .interaction(id, request_id)?
-            .ok_or_else(|| anyhow!("Answer request disappeared after delivery"))?;
-        ensure!(
-            p.answer_fingerprint.as_deref() == Some(fingerprint.as_str()),
-            "Answer intent changed after delivery"
-        );
-        p.answer_dispatched = true;
-        if p.status == "responding" {
-            p.status = "resolved".into();
-        }
-        if c.status == "waiting" && !d.store.pending(id)?.iter().any(|r| r.id != p.id) {
-            c.status = "running".into();
-        }
-        if c.error.as_deref() == Some(&crate::agent_runtime::AnswerNotSent.to_string()) {
-            c.error = None;
-        }
-        c.updated_at = now_ms();
-        d.store.commit_conversation(&c, &[], &[p])?;
-        self.changed(&mut d, &c, &[])
     }
 }
 

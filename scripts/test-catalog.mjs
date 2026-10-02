@@ -13,16 +13,16 @@ export const pythonChecks = [
 ]
 export const externalTests = {
   'provider-installed': [
-    'providers/opencode/loopback.test.mjs',
-    'providers/opencode/live.test.mjs',
-    'providers/omp/live.test.mjs',
-    'providers/omp/loopback.test.mjs',
     'scripts/test_codex_loopback.py',
-    'scripts/test_claude_loopback.py',
     'providers/claude/loopback.test.mjs',
     'scripts/test_agent_handoff_loopback.py',
   ],
-  'provider-live': ['scripts/test_agent_handoff_live.py', 'scripts/live_provider_check.py'],
+  'provider-live': [
+    'scripts/test_agent_handoff_live.py',
+    'scripts/live_provider_check.py',
+    // Sends one real prompt through an installed ACP executable; opt-in with ADE_ACP_LIVE_BIN.
+    'providers/acp/live.test.mjs',
+  ],
 }
 // Retain these historical checks as migration references. Exclusion never claims parity.
 // Their old setup/contract assumptions must be ported before treating them as current acceptance.
@@ -38,7 +38,7 @@ export const historicalTests = {
   'test_gui_only.py':
     'Requires a caller-provided socket and asserts old session-operation error text; not an isolated current acceptance entry point.',
   'test_providers.py':
-    'Uses release binaries and old automatically opened workspace/conversation envelopes; deterministic provider and protocol suites own current execution, parity remains unverified.',
+    'Uses release binaries and old automatically opened workspace/conversation envelopes; its OpenCode cases target the removed bundled adapter, now covered by e2e/protocol/adapters/opencode-plugin.spec.ts. Deterministic provider and protocol suites own current execution, parity remains unverified.',
   'test_reconnect_memory.py':
     'Measures the old unscoped input/ping/subscribe terminal protocol; retain workload for the performance ticket, not a current performance result.',
   'test_recovery.py':

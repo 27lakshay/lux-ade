@@ -63,7 +63,36 @@ const daemonConversationOperations = [
   'agent.send',
   'agent.answer',
   'agent.cancel',
+  'agent.terminate',
   'agent.resume',
+  'queue.enqueue',
+  'queue.cancel',
+  'queue.pause',
+  'conversation.steer',
+  'conversation.controls',
+  'conversation.settings',
+  'conversation.settings.update',
+  'context.plan',
+  'context.get',
+  'conversation.rewind.preview',
+  'conversation.rewind',
+  'usage.turns',
+  'usage.limits',
+  'agent.child_transcript',
+  'runtime.recovery',
+  'conversation.compact',
+  'command.list',
+  'command.invoke',
+  'mcp.server.list',
+  'mcp.server.add',
+  'mcp.server.remove',
+  'mcp.resolve',
+  'plugin.list',
+  'plugin.generation.list',
+  'plugin.enable',
+  'plugin.disable',
+  'plugin.command.invoke',
+  'runtime.recovery.release',
   'draft.get',
   'draft.save',
   'draft.stash.list',
@@ -71,10 +100,18 @@ const daemonConversationOperations = [
 ] as const satisfies readonly DailyUseOperation[]
 
 /**
- * Conversation requests, including two main answers from its own draft and send journal with no
- * daemon operation of the same name: `agent.retry_send` and `draft.flush`.
+ * Conversation requests, including those main answers from its own draft and send journal with no
+ * daemon operation of the same name: `agent.retry_send`, `draft.flush`, and `draft.attach` and
+ * `draft.detach`, which change the draft's attachments.
  */
-export const conversationOperations = [...daemonConversationOperations, 'agent.retry_send', 'draft.flush'] as const
+export const conversationOperations = [
+  ...daemonConversationOperations,
+  'agent.retry_send',
+  'draft.flush',
+  'draft.attach',
+  'draft.detach',
+  'conversation.export.file',
+] as const
 
 export type FileOperation = (typeof fileOperations)[number]
 export type ReviewOperation = (typeof reviewOperations)[number]

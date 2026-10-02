@@ -45,11 +45,9 @@ def main():
             'ADE_ROOT': str(root), 'ADE_RUNTIME_SOCKET': str(root / 'runtime.sock'), 'ADE_RUNTIME_HOME': str(root / 'runtime'), 'SHELL': '/bin/sh',
             'ADE_CODEX_BIN': str(PROJECT_ROOT / 'scripts/fixtures/codex_mock.py'),
             'ADE_CODEX_TRANSPORT': 'stdio', 'ADE_MOCK_DIR': str(root / 'codex'),
-            'ADE_CLAUDE_BRIDGE_BIN': str(PROJECT_ROOT / 'scripts/fixtures/claude_mock.mjs'),
-            'ADE_MOCK_CLAUDE_DIR': str(root / 'claude'),
-            'ADE_OMP_BIN': str(PROJECT_ROOT / 'providers/omp/mock-cli.mjs'),
-            'ADE_OPENCODE_BIN': str(PROJECT_ROOT / 'providers/opencode/mock-server.mjs'),
-            'ADE_MOCK_OPENCODE_DIR': str(root / 'opencode')}
+            'ADE_E2E_CLAUDE_SDK': str(PROJECT_ROOT / 'providers/claude/worker-test-sdk.mjs'),
+            'ADE_CLAUDE_WORKER_TEST_DIR': str(root / 'claude'),
+            'ADE_OMP_BIN': str(PROJECT_ROOT / 'providers/omp/mock-cli.mjs')}
         for key in list(env):
             if key.startswith('ADE_BENCH') or key in ('ADE_UI_SHOWCASE', 'ADE_GPU_BENCH_LOG'):
                 env.pop(key)

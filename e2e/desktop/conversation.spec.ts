@@ -121,7 +121,8 @@ test('opening another view keeps one retained conversation and closing one leave
 
   const firstTab = window.locator(`[role="tab"][data-tab-id="${tabIds[0]}"]`)
   await firstTab.hover()
-  await firstTab.getByRole('button', { name: 'Close tab' }).click()
+  // The close mark is pointer-only; keyboard and assistive technology close a tab with Delete.
+  await firstTab.locator('[data-tab-close]').click()
   await expect(tabs).toHaveCount(1)
   await expect(views).toHaveCount(1)
   await expect(views.first()).toHaveAttribute('data-conversation-id', conversationId)

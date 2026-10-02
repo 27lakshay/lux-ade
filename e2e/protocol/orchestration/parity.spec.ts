@@ -37,7 +37,8 @@ const samples: Record<string, Sample> = {
   // No turn is active, so both surfaces must refuse the cancel with the same rule.
   agents: {
     op: 'agent.cancel',
-    request: (c) => ({ conversation_id: c.conversation }),
+    // The daemon refuses an idle Conversation before it checks the attempt identity.
+    request: (c) => ({ conversation_id: c.conversation, source_attempt_id: 'none', submission_id: 'none' }),
     cli: (c) => ['conversation', 'cancel', c.conversation],
   },
   accounts: { op: 'account.list', request: () => ({}), cli: () => ['account', 'list'] },

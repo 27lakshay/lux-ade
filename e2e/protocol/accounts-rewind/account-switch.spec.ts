@@ -12,7 +12,7 @@ import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { expect, send, test, waitForIdle, type ScratchProfile } from '../fixtures'
 import { sendAndLoseReply } from '../fixtures/lost-reply'
-import type { MockCall } from '../fixtures/providers'
+import { claudePrompt, type MockCall } from '../fixtures/providers'
 import { conversationOn, profileWithClis, record, verifiedAccount, type Account } from '../providers/steps'
 
 async function conversation(profile: ScratchProfile, id: string) {
@@ -20,7 +20,7 @@ async function conversation(profile: ScratchProfile, id: string) {
 }
 
 async function texts(profile: ScratchProfile, id: string): Promise<string[]> {
-  return (await profile.call('conversation.get', { conversation_id: id, limit: 200 })).messages.map((m) => m.text)
+  return (await profile.call('conversation.get', { conversation_id: id, limit: 32 })).messages.map((m) => m.text)
 }
 
 /** The prompts a Claude session transcript in `home` holds, or null when the home has no such session. */
@@ -33,12 +33,10 @@ async function transcript(home: string, session: string): Promise<{ path: string
     const entries = text
       .split('\n')
       .filter(Boolean)
-      .map((line) => JSON.parse(line) as { type: string; message?: { content?: unknown } })
+      .map((line) => JSON.parse(line) as Parameters<typeof claudePrompt>[0])
     return {
       path,
-      prompts: entries
-        .filter((entry) => entry.type === 'user' && typeof entry.message?.content === 'string')
-        .map((entry) => entry.message!.content as string),
+      prompts: entries.map(claudePrompt).filter((prompt) => prompt !== null),
     }
   }
   return null

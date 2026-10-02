@@ -1,0 +1,53 @@
+{
+  "manifest_version": 1,
+  "id": "e2e.ui",
+  "name": "E2E UI",
+  "version": "1.0.0",
+  "api_version": 1,
+  "data_schema": 1,
+  "description": "Desktop E2E fixture: a provider worker that emits a custom timeline item, and a UI entry point with its timeline renderer and composer transform.",
+  "entry_points": {
+    "provider": "worker.mjs",
+    "ui": "ui.mjs",
+    "backend": "backend.mjs"
+  },
+  "contributes": {
+    "timeline": [
+      {
+        "id": "e2e.ui.card",
+        "version": 1,
+        "item_kind": "e2e.ui.card",
+        "title": "Check card",
+        "required_fields": ["title", "passed"],
+        "actions": [
+          {
+            "title": "Recheck",
+            "command": "e2e.ui.recheck"
+          }
+        ]
+      }
+    ],
+    "composer": [
+      {
+        "id": "e2e.ui.snippet",
+        "version": 1,
+        "node_kind": "e2e.ui.snippet",
+        "title": "Snippets"
+      }
+    ],
+    "commands": [
+      {
+        "id": "e2e.ui.recheck",
+        "title": "Recheck"
+      }
+    ],
+    "settings": [
+      {
+        "key": "out_dir",
+        "title": "Where the fixture writes what it saw",
+        "kind": "string",
+        "default": ""
+      }
+    ]
+  }
+}

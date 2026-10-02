@@ -166,6 +166,60 @@ pub struct PluginContributions {
     /// Lifecycle events delivered to the backend entry point after they commit (F058).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hooks: Vec<super::hooks::HookEvent>,
+    /// Timeline renderers the UI entry point registers, one per message kind.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub timeline: Vec<PluginTimelineContribution>,
+    /// Composer contributions the UI entry point registers, one per context node kind.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub composer: Vec<PluginComposerContribution>,
+}
+
+/// A renderer for timeline messages of one kind. Its ID and `item_kind` start
+/// with the plugin ID and a dot. A message of that kind keeps its canonical
+/// text, which every client shows when the renderer is missing or fails.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct PluginTimelineContribution {
+    pub id: String,
+    /// The renderer's payload version, from 1.
+    pub version: u32,
+    /// The message `kind` this renders.
+    pub item_kind: String,
+    pub title: String,
+    /// Top-level payload fields the renderer needs. A payload without them is
+    /// not passed to the renderer; the canonical text shows instead.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required_fields: Vec<String>,
+    /// Actions offered on an item of this kind, shown whether or not the
+    /// renderer is available. Each runs a command this plugin declares, through
+    /// `plugin.command.invoke` (an effect command with a receipt), with
+    /// `{conversation_id, message_id}` as its arguments.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<PluginTimelineAction>,
+}
+
+/// One action on a timeline item: a readable title and a declared command.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct PluginTimelineAction {
+    pub title: String,
+    /// A command ID from this plugin's `contributes.commands`.
+    pub command: String,
+}
+
+/// A composer contribution: context nodes of one kind in a draft, and a
+/// side-effect-free transform that prepares the prompt before it is sent. Its
+/// ID and `node_kind` start with the plugin ID and a dot. A node of that kind
+/// keeps a plain-text fallback in `data.text`.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct PluginComposerContribution {
+    pub id: String,
+    /// The node and transform version, from 1.
+    pub version: u32,
+    /// The draft context node `kind` this contribution owns.
+    pub node_kind: String,
+    pub title: String,
 }
 
 /// A command. Its ID starts with the plugin ID and a dot.
@@ -453,6 +507,8 @@ pub enum PluginStatus {
 pub enum PluginRegistrationKind {
     Command,
     Panel,
+    Timeline,
+    Composer,
 }
 
 /// One registration owned by an activation.

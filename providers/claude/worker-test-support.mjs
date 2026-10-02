@@ -48,10 +48,14 @@ export function startWorker({ env = {}, cwd, fixture = true, limits = {} } = {})
     requirements: SDK_REQUIREMENTS,
   }
   const worker = fileURLToPath(new URL('./worker.mjs', import.meta.url))
-  const loader = fileURLToPath(new URL('./worker-test-loader.mjs', import.meta.url))
-  const child = spawn(process.execPath, [...(fixture ? ['--experimental-loader', loader] : []), worker], {
+  const sdk = fileURLToPath(new URL('./worker-test-sdk.mjs', import.meta.url))
+  const child = spawn(process.execPath, [worker], {
     cwd,
-    env: { ...env, ADE_CLAUDE_WORKER_DESCRIPTOR: JSON.stringify(descriptor) },
+    env: {
+      ...env,
+      ...(fixture ? { ADE_E2E_CLAUDE_SDK: sdk } : {}),
+      ADE_CLAUDE_WORKER_DESCRIPTOR: JSON.stringify(descriptor),
+    },
     stdio: ['pipe', 'pipe', 'pipe'],
   })
   const frames = []

@@ -19,6 +19,8 @@ import type {
   ProviderWorkerRewindResult,
   ProviderWorkerConfigureMcpRequest,
   ProviderWorkerChildTranscriptRequest,
+  ProviderWorkerAccountInspectRequest,
+  ProviderWorkerAccountInspection,
   ProviderWorkerAck,
   ProviderWorkerCancelResult,
   ChildTranscriptPage,
@@ -26,7 +28,13 @@ import type {
 import type { Effect, Layer, Scope, Stream } from 'effect'
 
 export const MAX_FRAME_BYTES = 1024 * 1024
-export const MAX_INPUT_FRAME_BYTES = MAX_FRAME_BYTES
+/**
+ * Input frames carry a prompt with ADE's 8 MiB of attachments per prompt, base64-encoded
+ * (about 10.7 MiB), with its text and envelope.
+ */
+export const MAX_INPUT_FRAME_BYTES = 16 * MAX_FRAME_BYTES
+/** Output frames may carry a full 1 MiB message with its tool output and envelope. */
+export const MAX_OUTPUT_FRAME_BYTES = 4 * MAX_FRAME_BYTES
 export const PROTOCOL_VERSION = 2
 
 export const SDK_REQUIREMENTS = {
@@ -41,7 +49,7 @@ export const DEFAULT_LIMITS = {
   max_input_frame_bytes: MAX_INPUT_FRAME_BYTES,
   max_initialize_ms: 15_000,
   max_input_entries: 1_024,
-  max_output_frame_bytes: MAX_INPUT_FRAME_BYTES,
+  max_output_frame_bytes: MAX_FRAME_BYTES,
   max_history_page_items: 32,
   max_output_entries: 32,
   max_concurrency: 4,
@@ -86,6 +94,10 @@ export type ProviderWorker<R = never> = {
   readonly history?: (
     params: ProviderWorkerHistoryRequest,
   ) => Effect.Effect<ProviderWorkerHistoryPage, WorkerFailure, R | Scope.Scope>
+  /** Reports which native login the worker's managed account context holds; see `accountContext`. */
+  readonly account_inspect?: (
+    params: ProviderWorkerAccountInspectRequest,
+  ) => Effect.Effect<ProviderWorkerAccountInspection, WorkerFailure, R | Scope.Scope>
   readonly events?: Stream.Stream<ProviderEvent, WorkerFailure, R | Scope.Scope>
   readonly close?: Effect.Effect<void, WorkerFailure, R | Scope.Scope>
 }

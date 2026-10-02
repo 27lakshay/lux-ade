@@ -1,16 +1,20 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
-import { debounce } from 'es-toolkit/function'
 import { useStore } from 'zustand'
-import { useEditor, useEditorState } from '@tiptap/react'
-import StarterKit from '@tiptap/starter-kit'
+import { useEditorState } from '@tiptap/react'
 import type { ConversationsBridge, DraftState, PendingSendState } from '../../../shared/bridge/conversations'
 import type { ConversationState, ConversationStore } from '../state/conversation-store'
 import type { DraftStash } from '@ade/contracts'
 import { ConversationComposerForm } from './ConversationComposerForm'
-import { documentFor, hasDeliveryEvidence, messageOf, recoveryAdvice } from './ConversationComposerSupport'
+import { deliveryOf, documentFor, hasDeliveryEvidence, messageOf, recoveryAdvice } from './ConversationComposerSupport'
+import { useFollowUpInput } from './useFollowUpInput'
+import { useDraftAttachments } from './useDraftAttachments'
+import { usePromptEditor } from './promptEditor'
+import { draftRecovery } from './draftRecovery'
+import { usePreparedSend } from './usePreparedSend'
+import { latestSave } from './latestSave'
+import type { LatestSave } from './latestSave'
 type Attempt = { requestId: string; text: string }
 type Delivery = 'sending' | 'pending' | 'unknown' | 'rejected'
-type DebouncedSave = { (text: string): void; cancel: () => void; flush: () => void }
 
 export function ConversationComposer({
   conversationId,
@@ -44,7 +48,9 @@ export function ConversationComposer({
   const focusAfterUnlock = useRef(false)
   const submitRef = useRef<() => Promise<void>>(async () => undefined)
   const textRef = useRef('')
-  const debouncedSaveRef = useRef<DebouncedSave | null>(null)
+  const draftWriterRef = useRef<LatestSave | null>(null)
+  const draft = usePreparedSend({ conversations, conversationId })
+  const { contextNodes, settle, restore } = draft
   const isActiveContext = useCallback(
     () => sessionRef.current.active && isContextCurrent(profileIdentity, accountIdentity),
     [accountIdentity, isContextCurrent, profileIdentity],
@@ -57,12 +63,12 @@ export function ConversationComposer({
           if (!isContextCurrent(profileIdentity, accountIdentity)) return
           return conversations
             .request('draft.save', { conversation_id: conversationId, text, view_id: viewId })
-            .then(() => undefined)
+            .then(() => settle(text))
         })
       writerRef.current.tail = next
       return next
     },
-    [accountIdentity, conversationId, conversations, isContextCurrent, profileIdentity, viewId],
+    [accountIdentity, conversationId, conversations, isContextCurrent, profileIdentity, settle, viewId],
   )
   const saveDraftRef = useRef(saveDraft)
   useLayoutEffect(() => {
@@ -72,16 +78,17 @@ export function ConversationComposer({
     const session = sessionRef.current
     const writer = writerRef.current
     session.active = true
-    const debouncedSave = debounce((text: string) => {
-      void saveDraftRef.current(text).catch((error: unknown) => {
+    // Each edit reaches main at once, so a renderer crash right after typing loses nothing.
+    const draftWriter = latestSave((text: string) =>
+      saveDraftRef.current(text).catch((error: unknown) => {
         if (session.active) setDetail('Draft saving failed; the prompt remains in the editor. ' + messageOf(error))
-      })
-    }, 250)
-    debouncedSaveRef.current = debouncedSave
+      }),
+    )
+    draftWriterRef.current = draftWriter
     return () => {
       session.active = false
-      debouncedSave.flush()
-      debouncedSave.cancel()
+      draftWriter.flush()
+      draftWriter.cancel()
       void writer.tail.catch((error: unknown) => {
         console.error('Conversation draft persistence failed after its view closed.', error)
       })
@@ -90,39 +97,36 @@ export function ConversationComposer({
   const scheduleSave = useCallback((text: string): void => {
     textRef.current = text
     if (sessionRef.current.active) setDetail(null)
-    debouncedSaveRef.current?.(text)
+    draftWriterRef.current?.(text)
   }, [])
   const scheduleSaveRef = useRef(scheduleSave)
   useLayoutEffect(() => {
     scheduleSaveRef.current = scheduleSave
   }, [scheduleSave])
 
-  const editor = useEditor({
-    extensions: [StarterKit],
-    content: '',
-    editable: false,
-    editorProps: {
-      attributes: {
-        id: promptId,
-        role: 'textbox',
-        'aria-label': 'Prompt',
-        'aria-multiline': 'true',
-        class:
-          'min-h-12 max-h-48 overflow-y-auto rounded-md border border-input bg-background px-3 py-2 outline-none focus-visible:ring-3 focus-visible:ring-ring/50',
-      },
-      handleKeyDown: (_view, event) => {
-        if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return false
-        event.preventDefault()
-        void submitRef.current()
-        return true
-      },
-    },
-    onUpdate: ({ editor: updated }) => scheduleSaveRef.current(updated.getText({ blockSeparator: '\n' })),
-  })
+  const editor = usePromptEditor(promptId, submitRef, scheduleSaveRef)
   const canSubmit = useEditorState({
     editor,
     selector: ({ editor: currentEditor }) => Boolean(currentEditor?.getText({ blockSeparator: '\n' }).trim()),
   })
+  const followUp = useFollowUpInput({
+    conversations,
+    conversationId,
+    store,
+    isActiveContext,
+    // Queue and Steer deliver the same prepared prompt Send would, never the raw editor text.
+    takeText: () => draft.resolve(editor?.getText({ blockSeparator: '\n' }) ?? ''),
+    clear: async () => {
+      draftWriterRef.current?.cancel()
+      textRef.current = ''
+      editor?.commands.setContent(documentFor(''), { emitUpdate: false })
+      await saveDraft('')
+    },
+  })
+  // The request ID of a prompt restored from the daemon when this view opened.
+  const restoredRef = useRef<string | null>(null)
+  const draftAttachments = useDraftAttachments({ conversations, conversationId, viewId, isActiveContext })
+  const { load: loadAttachments, clear: clearAttachments } = draftAttachments
   const updateAttempt = useCallback((next: Attempt | null): void => {
     if (!sessionRef.current.active) return
     attemptRef.current = next
@@ -133,17 +137,31 @@ export function ConversationComposer({
     (state: ConversationState): void => {
       const current = attemptRef.current
       if (!current || !isActiveContext()) return
-      const message = state.snapshot?.messages.find(
-        (item) => item.delivery?.request_id === current.requestId && item.id === item.delivery.recoverable_message_id,
-      )
-      const evidence = message?.delivery
+      const evidence = deliveryOf(state, current.requestId)
       if (!evidence) return
 
       if (evidence.native_outcome === 'accepted') {
+        // A prompt restored after a restart is still an open intent in the daemon. Native
+        // acceptance settles it: reconcile under the same request ID, which the daemon
+        // answers from its receipt without starting another turn.
+        if (restoredRef.current === current.requestId) {
+          restoredRef.current = null
+          void conversations
+            .request('agent.retry_send', {
+              conversation_id: conversationId,
+              view_id: viewId,
+              request_id: current.requestId,
+            })
+            .catch((error: unknown) => {
+              if (isActiveContext()) setDetail("Couldn't settle the restored prompt. " + messageOf(error))
+            })
+        }
         updateAttempt(null)
         setDelivery(null)
         setDetail(null)
         textRef.current = ''
+        restore('', [])
+        clearAttachments()
         editor?.commands.clearContent(false)
       } else if (evidence.native_outcome === 'rejected') {
         setDelivery('rejected')
@@ -159,18 +177,10 @@ export function ConversationComposer({
         setDetail(null)
       }
     },
-    [editor, isActiveContext, updateAttempt],
+    [clearAttachments, conversationId, conversations, editor, isActiveContext, restore, updateAttempt, viewId],
   )
 
-  const submissionDelivery = useStore(store, (state) =>
-    attempt
-      ? (state.snapshot?.messages.find(
-          (message) =>
-            message.delivery?.request_id === attempt.requestId &&
-            message.id === message.delivery.recoverable_message_id,
-        )?.delivery ?? null)
-      : null,
-  )
+  const submissionDelivery = useStore(store, (state) => (attempt ? deliveryOf(state, attempt.requestId) : null))
 
   useEffect(() => store.subscribe((state) => applyStoreDelivery(state)), [applyStoreDelivery, store])
 
@@ -193,7 +203,10 @@ export function ConversationComposer({
         const pending = state.send_pending
         const text = pending?.text ?? state.draft.text
         textRef.current = text
+        restore(state.draft.text, state.draft.context_nodes ?? [])
+        loadAttachments(state)
         if (pending) {
+          restoredRef.current = pending.request_id
           updateAttempt({ requestId: pending.request_id, text: pending.text })
           setDelivery(pending.state === 'rejected' ? 'rejected' : 'unknown')
         }
@@ -211,7 +224,18 @@ export function ConversationComposer({
       active = false
       unsubscribe()
     }
-  }, [applyStoreDelivery, conversationId, conversations, editor, isActiveContext, store, updateAttempt, viewId])
+  }, [
+    applyStoreDelivery,
+    conversationId,
+    conversations,
+    editor,
+    isActiveContext,
+    loadAttachments,
+    restore,
+    store,
+    updateAttempt,
+    viewId,
+  ])
 
   useEffect(() => {
     const editable = ready && !busy && !recoveryBusy && attempt === null
@@ -240,7 +264,7 @@ export function ConversationComposer({
     }
   }
 
-  const checkExistingAttempt = async (current: Attempt): Promise<void> => {
+  const checkExistingAttempt = async (current: Attempt, failure?: string): Promise<void> => {
     try {
       const state = await conversations.request('draft.get', { conversation_id: conversationId, view_id: viewId })
       if (!isActiveContext() || attemptRef.current?.requestId !== current.requestId) return
@@ -249,6 +273,11 @@ export function ConversationComposer({
         const rejected = pending.state === 'rejected'
         setDelivery(rejected ? 'rejected' : 'unknown')
         if (rejected) setDetail('The prompt was rejected before admission. Edit or retry it.')
+      } else if (failure !== undefined && !pending && !hasDeliveryEvidence(store, current.requestId)) {
+        // The send failed and main holds no intent for it: the daemon refused it before
+        // admission and the pipeline released it. Nothing was sent; the draft is unchanged.
+        setDelivery('rejected')
+        setDetail('This prompt was not sent. ' + failure)
       } else {
         setDelivery('unknown')
       }
@@ -262,16 +291,24 @@ export function ConversationComposer({
     if (!isActiveContext() || !editor || !ready || busyRef.current || attemptRef.current) return
     const text = editor.getText({ blockSeparator: '\n' })
     if (!text.trim()) return
+    if (followUp.sendBlocked) {
+      // Enter only sends; it never picks Queue or Steer on the person's behalf.
+      setDetail('A turn is running or prompts are queued. Choose Queue prompt or Steer turn.')
+      return
+    }
     busyRef.current = true
     setBusy(true)
     setDetail(null)
     let sending = false
     try {
-      debouncedSaveRef.current?.flush()
-      debouncedSaveRef.current?.cancel()
+      draftWriterRef.current?.flush()
+      draftWriterRef.current?.cancel()
       await writerRef.current.tail
       if (!isActiveContext()) return
-      const current = { requestId: crypto.randomUUID(), text }
+      // Plugin composer contributions prepare what the provider receives; the draft stays as written.
+      const prepared = draft.resolve(text)
+      if ('refused' in prepared) return setDetail(prepared.refused)
+      const current = { requestId: crypto.randomUUID(), text: prepared.text }
       textRef.current = text
       updateAttempt(current)
       setDelivery('sending')
@@ -289,7 +326,7 @@ export function ConversationComposer({
       if (current) {
         setDelivery('unknown')
         setDetail('Delivery cannot be confirmed. This prompt and its request ID remain here. ' + messageOf(error))
-        void checkExistingAttempt(current)
+        void checkExistingAttempt(current, messageOf(error))
       } else if (!sending) {
         setDetail("Couldn't save the prompt before sending. " + messageOf(error))
       }
@@ -332,61 +369,30 @@ export function ConversationComposer({
     }
   }
 
-  const openDraftRecovery = async (): Promise<void> => {
-    if (!isActiveContext() || busyRef.current || attemptRef.current) return
-    busyRef.current = true
-    setRecoveryBusy(true)
-    try {
-      debouncedSaveRef.current?.flush()
-      debouncedSaveRef.current?.cancel()
-      await writerRef.current.tail
-      const result = await conversations.request('draft.stash.list', {
-        conversation_id: conversationId,
-        view_id: viewId,
-      })
-      if (!isActiveContext()) return
-      setDraftStashes(result.stashes)
-      setDetail(
-        result.stashes.length ? 'Choose a saved draft to restore.' : 'No saved draft recovery copies are available.',
-      )
-    } catch (error) {
-      if (isActiveContext()) setDetail('Could not load saved draft recovery. ' + messageOf(error))
-    } finally {
-      busyRef.current = false
-      if (sessionRef.current.active) setRecoveryBusy(false)
-    }
-  }
-
-  const restoreDraftRecovery = async (stash: DraftStash): Promise<void> => {
-    if (!isActiveContext() || busyRef.current || attemptRef.current) return
-    busyRef.current = true
-    setRecoveryBusy(true)
-    try {
-      debouncedSaveRef.current?.flush()
-      debouncedSaveRef.current?.cancel()
-      await writerRef.current.tail
-      const state = await conversations.request('draft.stash.restore', {
-        conversation_id: conversationId,
-        view_id: viewId,
-        name: stash.name,
-        stash_revision: stash.revision,
-      })
-      if (!isActiveContext()) return
-      if (state.error) {
-        setDetail(state.error)
-        return
-      }
-      textRef.current = state.draft.text
-      editor?.commands.setContent(documentFor(state.draft.text), { emitUpdate: false })
-      setDraftStashes(null)
-      setDetail('Saved draft restored. The displaced draft remains available in recovery.')
-    } catch (error) {
-      if (isActiveContext()) setDetail('Could not restore the saved draft. ' + messageOf(error))
-    } finally {
-      busyRef.current = false
-      if (sessionRef.current.active) setRecoveryBusy(false)
-    }
-  }
+  // Built when a recovery action runs, so render never reads the composer's refs.
+  const recovery = () =>
+    draftRecovery({
+      conversations,
+      conversationId,
+      viewId,
+      editor,
+      isActiveContext,
+      isMounted: () => sessionRef.current.active,
+      busyRef,
+      attemptRef,
+      textRef,
+      flushPendingSave: async () => {
+        draftWriterRef.current?.flush()
+        draftWriterRef.current?.cancel()
+        await writerRef.current.tail
+      },
+      setRecoveryBusy,
+      setDraftStashes,
+      setContextNodes: (nodes) => restore(textRef.current, nodes),
+      setDetail,
+    })
+  const openDraftRecovery = (): Promise<void> => recovery().openDraftRecovery()
+  const restoreDraftRecovery = (stash: DraftStash): Promise<void> => recovery().restoreDraftRecovery(stash)
   const unlockRejected = (): void => {
     if (!sessionRef.current.active || delivery !== 'rejected') return
     focusAfterUnlock.current = true
@@ -413,6 +419,10 @@ export function ConversationComposer({
       draftStashes={draftStashes}
       onOpenDraftRecovery={openDraftRecovery}
       onRestoreDraftRecovery={restoreDraftRecovery}
+      followUp={followUp}
+      contextNodes={contextNodes}
+      prepared={draft}
+      draftAttachments={draftAttachments}
     />
   )
 }

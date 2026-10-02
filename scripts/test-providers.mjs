@@ -5,13 +5,15 @@ import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
-const providers = ['claude', 'opencode', 'omp']
+const providers = ['claude', 'opencode', 'omp', 'acp']
+// The OpenCode provider is a plugin package; its deterministic tests sit beside it.
+const testDirectories = { opencode: 'plugins/opencode/test' }
 // These files require an installed provider or credentials, even when backed by loopback HTTP.
 const externalFiles = new Set(['live.test.mjs', 'loopback.test.mjs'])
 
 export function deterministicEnvironment(source) {
   const env = { ...source }
-  for (const name of ['ADE_OPENCODE_LIVE_BIN', 'ADE_OPENCODE_LOOPBACK_BIN', 'ADE_OMP_LIVE', 'ADE_OMP_LOOPBACK']) {
+  for (const name of ['ADE_OPENCODE_LIVE_BIN', 'ADE_OPENCODE_LOOPBACK_BIN', 'ADE_OMP_LOOPBACK', 'ADE_ACP_LIVE_BIN']) {
     delete env[name]
   }
   return env
@@ -26,7 +28,7 @@ export function providerCommands(args, directory = root) {
     if (arg === '--list') list = true
     else if (arg === '--provider') {
       const name = args[++i]
-      if (!providers.includes(name)) throw new Error('Expected --provider claude, opencode or omp')
+      if (!providers.includes(name)) throw new Error('Expected --provider claude, opencode, omp or acp')
       selected = [name]
     } else if (arg === '--test-name-pattern') {
       const pattern = args[++i]
@@ -37,7 +39,7 @@ export function providerCommands(args, directory = root) {
   return {
     list,
     commands: selected.map((name) => {
-      const cwd = resolve(directory, 'providers', name)
+      const cwd = resolve(directory, testDirectories[name] ?? `providers/${name}`)
       const files = readdirSync(cwd)
         .filter((file) => file.endsWith('.test.mjs') && !externalFiles.has(file))
         .sort()

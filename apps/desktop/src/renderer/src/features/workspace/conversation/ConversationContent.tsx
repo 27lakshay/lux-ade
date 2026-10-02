@@ -1,6 +1,5 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { startNativeHistoryProjection, type NativeHistoryState } from '@ade/client/history'
-import type { AgentCancelOutcome } from '@ade/contracts'
 import { createStore } from 'zustand/vanilla'
 import { useStore } from 'zustand'
 import { Meta, Text, Title } from '@/components/Typography'
@@ -17,8 +16,15 @@ import type { DaemonState } from '../../../state/daemon-store'
 import type { TabTarget } from '../model/layout'
 import { openTabInAnother } from '../model/layout-store'
 import type { ProfileState } from '../../../../../shared/bridge/types'
-import { CancelOutcomeEvidence, PaneState } from './ConversationContentStates'
+import { StopStatus } from '@/provisional/StopStatus'
+import { QueuedPrompts } from '@/provisional/QueuedPrompts'
+import { ExecutionBinding } from '@/provisional/ExecutionBinding'
+import { RewindScope } from '@/provisional/Rewind'
+import { ProviderSettingsPanel } from '@/provisional/ProviderSettingsPanel'
+import type { QueuedPrompt } from '@ade/contracts'
+import { PaneState } from './ConversationContentStates'
 import { ConversationHistorySections } from './ConversationHistorySections'
+import { useStopControls } from './useStopControls'
 
 const EMPTY_MESSAGES: ConversationMessage[] = []
 
@@ -136,52 +142,22 @@ function LoadedConversation({
   }, [host, conversationId, store, attempt])
   const state = useStore(store, (value) => value)
   const conversation = state.snapshot?.conversation ?? catalogConversation
-  const [cancelOutcome, setCancelOutcome] = useState<AgentCancelOutcome | null>(null)
-  const [cancelError, setCancelError] = useState<string | null>(null)
-  const [cancelPending, setCancelPending] = useState(false)
-  const cancelPendingRef = useRef(false)
   const contextCurrent = isContextCurrent(profileIdentity, accountIdentity)
-  const cancelConversation = state.snapshot?.conversation
-  const hasStopTarget = Boolean(cancelConversation?.runtime_run && cancelConversation.runtime_submission)
-  const requestStop = useCallback(async (): Promise<void> => {
-    if (cancelPendingRef.current || !isContextCurrent(profileIdentity, accountIdentity)) return
-    const latest = store.getState()
-    const active = latest.snapshot?.conversation
-    const sourceAttemptId = active?.runtime_run
-    const submissionId = active?.runtime_submission
-    if (
-      latest.status !== 'current' ||
-      typeof sourceAttemptId !== 'string' ||
-      !sourceAttemptId ||
-      typeof submissionId !== 'string' ||
-      !submissionId
-    ) {
-      setCancelError('The active cancellation target is unavailable; refresh the conversation before trying again.')
-      return
-    }
-    cancelPendingRef.current = true
-    setCancelPending(true)
-    setCancelOutcome(null)
-    setCancelError(null)
-    try {
-      const turnId = active.active_turn_id
-      const outcome = await host.conversations.request('agent.cancel', {
-        conversation_id: conversationId,
-        operation_id: globalThis.crypto.randomUUID(),
-        source_attempt_id: sourceAttemptId,
-        submission_id: submissionId,
-        ...(turnId == null ? {} : { turn_id: turnId }),
-      })
-      if (isContextCurrent(profileIdentity, accountIdentity)) setCancelOutcome(outcome)
-    } catch (error) {
-      if (isContextCurrent(profileIdentity, accountIdentity)) {
-        setCancelError(error instanceof Error ? error.message : String(error))
-      }
-    } finally {
-      cancelPendingRef.current = false
-      if (isContextCurrent(profileIdentity, accountIdentity)) setCancelPending(false)
-    }
-  }, [accountIdentity, conversationId, host, isContextCurrent, profileIdentity, store])
+  const isCurrent = useCallback(
+    () => isContextCurrent(profileIdentity, accountIdentity),
+    [accountIdentity, isContextCurrent, profileIdentity],
+  )
+  const {
+    hasStopTarget,
+    stop,
+    cancelPending,
+    cancelError,
+    requestStop,
+    terminating,
+    terminateOutcome,
+    terminateError,
+    requestTerminate,
+  } = useStopControls(conversationId, store, state, isCurrent)
   const historyEpoch = state.snapshot?.history_epoch
   const [nativeHistoryState, setNativeHistoryState] = useState<NativeHistoryState | null>(null)
   const nativeHistoryController = useRef<{ historyEpoch: number; loadMore: () => Promise<void> } | null>(null)
@@ -280,14 +256,19 @@ function LoadedConversation({
         <div className="flex items-start justify-between gap-3">
           <Title>{conversation.title || 'Conversation'}</Title>
           <div className="flex items-center gap-2">
-            {(conversation.status === 'running' || conversation.status === 'waiting' || hasStopTarget) && (
+            {hasStopTarget && (
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => void requestStop()}
-                disabled={!hasStopTarget || state.status !== 'current' || !contextCurrent || cancelPending}
+                disabled={
+                  state.status !== 'current' ||
+                  !contextCurrent ||
+                  cancelPending ||
+                  (conversation.status === 'cancelling' && stop?.outcome === 'requested')
+                }
               >
-                {cancelPending ? 'Requesting stop…' : 'Stop current turn'}
+                {cancelPending || conversation.status === 'cancelling' ? 'Stopping…' : 'Stop current turn'}
               </Button>
             )}
             <Button variant="outline" size="sm" onClick={() => void openTabInAnother(target)}>
@@ -296,7 +277,22 @@ function LoadedConversation({
           </div>
         </div>
         {cancelError && <div role="alert">Cancellation request failed: {cancelError}</div>}
-        {cancelOutcome && <CancelOutcomeEvidence outcome={cancelOutcome} />}
+        {stop && (
+          <StopStatus
+            stop={stop}
+            terminating={terminating}
+            terminateOutcome={terminateOutcome}
+            terminateError={terminateError}
+            onTerminate={contextCurrent && state.status === 'current' ? () => void requestTerminate() : null}
+            queuedPrompts={state.snapshot?.queued?.length ?? 0}
+            queuePaused={state.snapshot?.conversation.queue_paused ?? false}
+          />
+        )}
+        <ProviderSettingsPanel
+          conversationId={conversationId}
+          conversations={host.conversations}
+          version={state.snapshot?.conversation.updated_at ?? 0}
+        />
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1" role="group" aria-label="Conversation context">
           <Text>{workspace?.name ?? 'Workspace unavailable'}</Text>
           <Meta>·</Meta>
@@ -312,6 +308,7 @@ function LoadedConversation({
               : 'Ambient account'}
           </Text>
           {project && <Meta>Project: {project.name}</Meta>}
+          <ExecutionBinding state={state} />
         </div>
         {state.error && (
           <div className="flex flex-wrap items-center gap-2" role="status" aria-live="polite">
@@ -368,14 +365,16 @@ function LoadedConversation({
           </div>
         )}
       </div>
-      <ConversationHistorySections
-        store={store}
-        provider={conversation.provider}
-        nativeMessages={nativeTimeline?.messages ?? null}
-        currentMessages={currentMessages}
-        historyAnchorCapture={historyAnchorCapture}
-        currentAnchorCapture={currentAnchorCapture}
-      />
+      <RewindScope conversationId={conversationId} conversations={host.conversations}>
+        <ConversationHistorySections
+          store={store}
+          provider={conversation.provider}
+          nativeMessages={nativeTimeline?.messages ?? null}
+          currentMessages={currentMessages}
+          historyAnchorCapture={historyAnchorCapture}
+          currentAnchorCapture={currentAnchorCapture}
+        />
+      </RewindScope>
       <div className="mx-auto w-full max-w-[640px] shrink-0 px-4 pb-4">
         <NativeRequests
           conversationId={conversationId}
@@ -386,6 +385,12 @@ function LoadedConversation({
           profileIdentity={profileIdentity}
           accountIdentity={accountIdentity}
           isContextCurrent={isContextCurrent}
+        />
+        <QueuedPrompts
+          conversationId={conversationId}
+          queued={(state.snapshot?.queued ?? []) as QueuedPrompt[]}
+          paused={state.snapshot?.conversation.queue_paused ?? false}
+          conversations={host.conversations}
         />
         <ConversationComposer
           conversationId={conversationId}

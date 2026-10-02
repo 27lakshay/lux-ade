@@ -285,18 +285,27 @@ export const envelopeCases: EnvelopeCase[] = [
     setup: async (ctx) => {
       const { conversationId } = await startConversation(ctx.profile, 'codex')
       await send(ctx.profile, conversationId, prompts.hold)
-      let turnId = ''
+      let target = { turnId: '', sourceAttemptId: '', submissionId: '' }
       await expect
         .poll(async () => {
           const current = await conversation(ctx, conversationId)
-          turnId = current.active_turn_id ?? ''
-          return current.status === 'running' && turnId !== ''
+          target = {
+            turnId: current.active_turn_id ?? '',
+            sourceAttemptId: current.runtime_run ?? '',
+            submissionId: current.runtime_submission ?? '',
+          }
+          return current.status === 'running' && target.turnId !== ''
         })
         .toBe(true)
-      return { conversationId, turnId }
+      return { conversationId, ...target }
     },
-    request: (state: { conversationId: string; turnId: string }, altered) => ({
+    request: (
+      state: { conversationId: string; turnId: string; sourceAttemptId: string; submissionId: string },
+      altered,
+    ) => ({
       conversation_id: state.conversationId,
+      source_attempt_id: state.sourceAttemptId,
+      submission_id: state.submissionId,
       turn_id: altered ? 'turn-another' : state.turnId,
     }),
     observe: (ctx) => mockCount(ctx, 'turn/interrupt'),

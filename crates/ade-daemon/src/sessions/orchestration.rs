@@ -193,6 +193,8 @@ fn insert_child(tx: &Connection, store: &Store, child: NewChild) -> Result<Conve
             child.title,
             descriptor,
             child.provider_config,
+            // `policy::registered_account` already refused an account for a provider without them.
+            child.account,
         )?,
     };
     let task = new_id("message");
@@ -431,6 +433,10 @@ impl Sessions {
         // Adapters and plugin providers are validated through the provider
         // registry, as `conversation.create` does, outside the store lock.
         let registered = self.registered_descriptor(&delegate.provider)?;
+        // A plugin whose worker declares account inspection runs on managed accounts as a
+        // bundled provider does; any other registered provider uses its own login.
+        let own_login =
+            registered.is_some() && self.ensure_managed_accounts(&delegate.provider).is_err();
 
         let mut d = self.data.lock().unwrap();
         ensure!(!d.draining, "Application daemon is restarting");
@@ -477,11 +483,7 @@ impl Sessions {
                 &parent.provider,
                 parent.account_id.as_deref(),
             )?;
-            policy::registered_account(
-                &delegate.provider,
-                registered.is_some(),
-                account.as_deref(),
-            )?;
+            policy::registered_account(&delegate.provider, own_login, account.as_deref())?;
             let child = insert_child(
                 &tx,
                 &d.store,
@@ -633,12 +635,27 @@ impl Sessions {
                 .context("Conversation is not a delegated child")?;
             policy::authorize_message(&answer.caller, &record.parent_conversation_id)?
         };
-        self.answer(
-            child_id,
-            request_id,
-            non_empty("decision", &answer.decision)?,
-            answer.answers.as_ref(),
-        )?;
+        let decision = non_empty("decision", &answer.decision)?;
+        let pending = self
+            .data
+            .lock()
+            .unwrap()
+            .store
+            .interaction(child_id, request_id)?
+            .context("Request is stale or already answered")?;
+        let typed = child_request_answer(&pending, decision, answer.answers.as_ref())?;
+        // The same decision retried converges on one operation; another decision conflicts.
+        let mut payload = serde_json::json!({"decision": decision, "answers": answer.answers});
+        payload.sort_all_objects();
+        let digest = format!("{:x}", Sha256::digest(serde_json::to_vec(&payload)?));
+        self.answer_typed(&ade_core::requests::AgentAnswerRequest {
+            operation_id: format!("child-answer:{request_id}:{}", &digest[..32]),
+            conversation_id: child_id.to_owned(),
+            request_id: request_id.to_owned(),
+            source_attempt_id: pending.source_attempt_id.clone(),
+            request_revision: pending.revision,
+            answer: typed,
+        })?;
         reply(&ChildAnswered {
             tag: Default::default(),
             child_conversation_id: child_id.to_owned(),
@@ -793,5 +810,70 @@ impl Sessions {
             done,
             deadline_ms: deadline,
         })
+    }
+}
+
+/// The typed native answer a parent's `decision` and `answers` stand for,
+/// read against the child request's declared schema. A decision with no
+/// declared native counterpart is refused rather than guessed.
+fn child_request_answer(
+    pending: &ade_core::model::PendingRequest,
+    decision: &str,
+    answers: Option<&Value>,
+) -> Result<ade_core::requests::RequestAnswer> {
+    use ade_core::requests::{RequestAnswer, RequestSchema};
+    let schema = &pending
+        .metadata
+        .as_ref()
+        .context("This request declares no answer schema")?
+        .schema;
+    let choice = |value: &str| -> Result<RequestAnswer> {
+        let choices: &[ade_core::requests::RequestChoice] = match schema {
+            RequestSchema::Choices { choices } => choices,
+            RequestSchema::Questions {
+                decline: Some(decline),
+                ..
+            } => std::slice::from_ref(decline),
+            _ => &[],
+        };
+        let found = choices
+            .iter()
+            .find(|choice| choice.value.as_str() == Some(value))
+            .with_context(|| format!("This request offers no native choice named {value}"))?;
+        Ok(RequestAnswer::Choice {
+            value: found.value.clone(),
+        })
+    };
+    match (schema, decision) {
+        (RequestSchema::Questions { .. }, "answer") => {
+            let answers = answers
+                .and_then(Value::as_object)
+                .context("Answers are required")?;
+            Ok(RequestAnswer::Questions {
+                answers: answers
+                    .iter()
+                    .map(|(id, value)| {
+                        let values = match value {
+                            Value::Array(values) => values.clone(),
+                            other => vec![other.clone()],
+                        };
+                        (id.clone(), values)
+                    })
+                    .collect(),
+            })
+        }
+        (
+            RequestSchema::Questions {
+                decline: Some(decline),
+                ..
+            },
+            "decline" | "cancel",
+        ) => Ok(RequestAnswer::Choice {
+            value: decline.value.clone(),
+        }),
+        (RequestSchema::Unsupported { reason }, _) => {
+            bail!("This request cannot be answered: {reason}")
+        }
+        (_, value) => choice(value),
     }
 }

@@ -1004,7 +1004,12 @@ fn fence(data: &Path, final_data: &Path, plan: &Plan) -> Result<()> {
         record["native_home"] = json!(final_data.join("provider-accounts").join(id));
         record["state"] = json!("unverified");
         record["generation"] = json!(record["generation"].as_i64().unwrap_or(0) + 1);
-        for key in ["claude_identity", "codex_identity", "omp_identity"] {
+        for key in [
+            "claude_identity",
+            "codex_identity",
+            "omp_identity",
+            "worker_identity",
+        ] {
             record[key] = Value::Null;
         }
         Ok(())

@@ -3,6 +3,11 @@ import type { SubmissionDelivery } from '@ade/contracts'
 import { Body, Caption, Meta } from '@/components/Typography'
 import { selectMessage, type ConversationMessage, type ConversationStore } from '../../../state/conversation-store'
 import { useStore } from 'zustand'
+import { RewindAction } from '@/provisional/Rewind'
+import { ChildTranscripts } from '@/provisional/ChildTranscripts'
+import { PluginTimelineItem } from '@/provisional/PluginTimelineItem'
+import { ToolOutput } from '@/provisional/ToolOutput'
+import { useTimelineView } from '../../../plugins/ui-host'
 import { TranscriptMarkdown } from './TranscriptMarkdown'
 
 const SUMMARY_LIMIT = 4_000
@@ -169,15 +174,7 @@ function ToolSummary({ message }: { message: ConversationMessage }) {
           <Meta className="whitespace-pre-wrap break-words">{input.text}</Meta>
         </div>
       )}
-      {output && (
-        <div className="min-w-0">
-          <Meta>
-            {failed ? 'Failure output' : 'Output'}
-            {output.truncated ? ' excerpt (bounded; full output not shown)' : ''}
-          </Meta>
-          <Body className="whitespace-pre-wrap [overflow-wrap:anywhere]">{output.text}</Body>
-        </div>
-      )}
+      {output && <ToolOutput label={failed ? 'Failure output' : 'Output'} output={details.output} excerpt={output} />}
     </div>
   )
 }
@@ -193,9 +190,11 @@ function SubmissionStatus({ delivery }: { delivery: SubmissionDelivery }) {
         ? 'Native agent rejected this prompt'
         : delivery.native_outcome === 'unknown'
           ? 'Delivery outcome unknown'
-          : delivery.admitted
-            ? 'Admitted; awaiting native confirmation'
-            : 'Delivery pending'
+          : !delivery.admitted
+            ? 'Delivery pending'
+            : delivery.dispatch === 'pending'
+              ? 'Held by the provider adapter; the native agent has not taken it yet'
+              : 'Sent to the native agent; awaiting its acceptance'
   return (
     <div className="flex flex-wrap gap-x-2" data-request-id={delivery.request_id}>
       <Meta>{status}</Meta>
@@ -204,6 +203,15 @@ function SubmissionStatus({ delivery }: { delivery: SubmissionDelivery }) {
       {correlatedTerminal && <Meta>Correlated native turn terminal status: {terminal.status}</Meta>}
       {correlatedTerminal && terminal.error && <Meta>Terminal failure: {terminal.error.replaceAll('_', ' ')}</Meta>}
     </div>
+  )
+}
+
+function isSubagents(content: unknown): content is { type: 'subagents'; agents: unknown[] } {
+  return (
+    content !== null &&
+    typeof content === 'object' &&
+    (content as Record<string, unknown>).type === 'subagents' &&
+    Array.isArray((content as Record<string, unknown>).agents)
   )
 }
 
@@ -223,6 +231,7 @@ export const MessageRow = memo(function MessageRow({
     useMemo(() => selectMessage(id), [id]),
   )
   const message = liveMessage ?? fallbackMessage
+  const pluginView = useTimelineView(message.kind)
   const text = readableMessage(message)
   const content = message.content
   const isReasoning =
@@ -250,6 +259,16 @@ export const MessageRow = memo(function MessageRow({
       </Caption>
       {isTool ? (
         <ToolSummary message={message} />
+      ) : pluginView ? (
+        <PluginTimelineItem
+          message={message}
+          view={pluginView}
+          canonical={
+            <Body as="div" className="min-w-0 whitespace-pre-wrap [overflow-wrap:anywhere]">
+              <TranscriptMarkdown text={message.text} streaming={message.status === 'streaming'} />
+            </Body>
+          }
+        />
       ) : (
         text && (
           <Body as="div" className="min-w-0 whitespace-pre-wrap [overflow-wrap:anywhere]">
@@ -258,6 +277,10 @@ export const MessageRow = memo(function MessageRow({
         )
       )}
       {message.delivery?.recoverable_message_id === message.id && <SubmissionStatus delivery={message.delivery} />}
+      {message.role === 'user' && <RewindAction messageId={message.id} />}
+      {isSubagents(content) && (
+        <ChildTranscripts conversationId={message.conversation_id} messageId={message.id} agents={content.agents} />
+      )}
     </article>
   )
 })

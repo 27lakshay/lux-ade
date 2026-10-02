@@ -53,7 +53,7 @@ untrusted remote-data protocol. See [native notes](../native/README.md).
 | --- | --- | --- |
 | GPUI Kit and macOS platform | Actual fetched source, with lux-ade modifications above | Original notices retained; packaged inventory records found notice paths and hashes |
 | Herdr vendored libghostty-vt | Actual fetched parser and renderer source, including inherited snapshot implementation | Ghostty MIT retained; enumerate nested native dependencies and resource licenses before distribution |
-| OpenCode `protocol-fixture.mjs` | Reduced schema contracts derived from evaluated API source and installed schema | Upstream MIT notice now retained beside fixture; exact audited checkout/files and missing original schema capture documented in [provider provenance](../providers/opencode/PROVENANCE.md) |
+| OpenCode plugin `test/fixtures/protocol-fixture.mjs` | Reduced schema contracts derived from evaluated API source and installed schema | Upstream MIT notice retained in the plugin; audited checkout/files, the v2.0.22 schema capture hash and the missing v2.0.3 capture documented in [plugin provenance](../plugins/opencode/PROVENANCE.md) |
 | `crates/ade-platform/native/terminal.m` | Native README identifies original lux-ade integration using Ghostty's embedding API; Ghostex surface ownership is a design reference | This is recorded authorship, not a completed line-by-line originality audit |
 | Orca, Paseo, T3Code, Ghostex and OpenCode architectural patterns | Design references for docking/focus, connection lifecycle, diagnostics, renderer isolation and client/server boundaries | References do not establish copied source. If code is imported later, record repository revision, file, modifications and notice at import time |
 | Oh My Pi, Claude SDK and other provider packages | Actual packaged dependencies identified by provider package manifests/lockfiles | Dependency/source/resource notice audit still needed; package presence does not license lux-ade's own code |
@@ -73,9 +73,9 @@ untrusted remote-data protocol. See [native notes](../native/README.md).
 - Determine which optional/static native dependencies are linked in the actual
   macOS artifact. The historical libghostty-spm notice mentions libintl; that is
   not evidence that the current build links it.
-- Preserve the original OpenCode v2.0.3 schema and checksum on the next fixture
-  refresh. The audited checkout is known, but the original installed schema's
-  exact build revision is not recoverable from this fixture alone.
+- The original OpenCode v2.0.3 schema capture is not recoverable; the v2.0.22
+  capture hash is recorded in the plugin provenance. Preserve each capture and its
+  checksum on the next fixture refresh.
 - Complete a source-origin review for lux-ade-authored files before claiming no other
   copied code. This audit inspected explicit provenance markers and build inputs;
   it was not a whole-codebase similarity comparison against every contender.

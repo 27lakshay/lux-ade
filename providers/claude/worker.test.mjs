@@ -149,7 +149,12 @@ test('matching admission can interrupt a native callback before its user echo, w
 })
 
 test('open rejects resume identity mismatch before returning Connected', async () => {
-  const worker = startWorker({ env: { CLAUDE_WORKER_SCENARIO: 'resume-mismatch' } })
+  const worker = startWorker({
+    env: {
+      CLAUDE_WORKER_SCENARIO: 'resume-mismatch',
+      CLAUDE_WORKER_HISTORY: JSON.stringify({ 'requested-native-session': [] }),
+    },
+  })
   try {
     await worker.initialize()
     const response = await worker.open('requested-native-session')
@@ -279,6 +284,25 @@ test('interrupt receipt does not relabel a native execution failure or discard t
       worker.events().find((event) => event.type === 'item' && event.item.id === 'native-trailing:0').item.text,
       'after interrupt',
     )
+  })
+})
+
+test('an interrupt that leaves the input queued reports the queue instead of claiming a stop', async () => {
+  await fixture(async (worker, session) => {
+    await worker.send(session, 'interrupt-queued')
+    await worker.wait((events) =>
+      events.find((event) => event.type === 'submitted' && event.submission === 'interrupt-queued'),
+    )
+    const interruption = await worker.rpc('cancel', {
+      session,
+      turn: null,
+      source_attempt_id: 'attempt',
+      submission_id: 'interrupt-queued',
+    })
+    assert.equal(interruption.error, undefined)
+    assert.equal(interruption.result.evidence.termination, 'requested')
+    assert.equal(interruption.result.evidence.queued_work_count, 1)
+    assert.equal(interruption.result.evidence.active_work_remaining, true)
   })
 })
 

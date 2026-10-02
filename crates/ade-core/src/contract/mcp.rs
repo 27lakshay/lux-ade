@@ -120,7 +120,7 @@ pub struct ProviderSupport {
     pub native: Option<Value>,
     /// Why the provider cannot express the entry; null when it can.
     pub unsupported_reason: Option<String>,
-    /// True only when the provider's adapter passes the catalog at launch.
+    /// True only when the provider's worker declares `configure_mcp` available.
     pub wired: bool,
 }
 
@@ -146,15 +146,18 @@ pub struct McpResolution {
     /// protocol version, capabilities and authorization on that one leg. ADE
     /// runs no MCP gateway yet.
     pub delivery: String,
-    /// True only when the provider's adapter passes `document` at launch. When
-    /// false, this is what ADE would pass; the provider does not see it.
+    /// True only when the provider's worker declares `configure_mcp`
+    /// available, so `document` reaches it at launch and resume. When false,
+    /// this is what ADE would pass; the provider does not see it.
     pub wired: bool,
     pub servers: Vec<Projected>,
     pub excluded: Vec<Excluded>,
-    /// The provider's native configuration document; null when the provider has no projection.
-    pub document: Option<Value>,
-    /// `claude_mcp_json`, `codex_config_toml` (the TOML tables as JSON) or `omp_mcp_json`.
-    pub format: Option<String>,
+    /// The provider's native configuration document.
+    pub document: Value,
+    /// `claude_mcp_json`, `codex_config_toml` (the TOML tables as JSON),
+    /// `omp_mcp_json`, or `worker_mcp_json`: the provider-neutral projection a
+    /// worker without a native one receives (`docs/provider-authoring.md`).
+    pub format: String,
     pub protocol_versions: Vec<String>,
 }
 

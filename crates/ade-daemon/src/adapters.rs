@@ -245,6 +245,33 @@ impl Adapters {
         Ok(descriptor(&record))
     }
 
+    /// The operations adapter `id`'s worker declared at its last probe, or
+    /// why it has none: a custom executable adapter is not a provider worker,
+    /// and an ACP adapter declares nothing until a probe has run.
+    pub fn declared_operations(
+        &self,
+        id: &str,
+    ) -> std::result::Result<Vec<ade_core::contract::providers::ProviderWorkerOperation>, String>
+    {
+        let row = match read(&self.db.lock().unwrap(), id) {
+            Ok(Some(row)) => row,
+            Ok(None) => return Err(format!("Adapter {id} was removed")),
+            Err(error) => return Err(format!("Adapter definitions are unavailable: {error}")),
+        };
+        if row.definition.kind == AdapterKind::Executable {
+            return Err("A custom executable adapter is not a provider worker: it runs one prompt per process and has no steer, compaction or conversation rewind".into());
+        }
+        match row.probe.map(|probe| probe.outcome) {
+            Some(ProbeOutcome::Ready {
+                worker: Some(worker),
+                ..
+            }) => Ok(worker.operations),
+            _ => Err(format!(
+                "Adapter {id} has no successful probe; probe it to learn its controls"
+            )),
+        }
+    }
+
     /// Descriptors of the adapters that are ready now, by ID.
     pub fn ready_descriptors(&self) -> Result<Vec<ade_core::provider::Descriptor>> {
         let rows: Vec<Row> = {
@@ -486,7 +513,7 @@ mod tests {
             outcome: if ready {
                 ProbeOutcome::Ready {
                     capabilities: vec!["streaming".into()],
-                    acp: None,
+                    worker: None,
                 }
             } else {
                 ProbeOutcome::Failed { error: "no".into() }

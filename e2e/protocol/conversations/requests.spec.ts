@@ -297,18 +297,10 @@ for (const failpoint of ['before_delivery', 'after_delivery'] as const) {
           conversation_id: conversationId,
           source_attempt_id: active.conversation.runtime_run,
           submission_id: active.conversation.runtime_submission,
-          evidence: {
-            active_work_remaining: null,
-            queued_work_count: null,
-            background_work_remaining: null,
-            observed_at_ms: null,
-          },
         })
-        if (cancellation.evidence.scope === 'unknown') {
-          expect(cancellation.evidence).toMatchObject({
-            interruption_requested: false,
-            termination: 'unknown',
-          })
+        if (cancellation.delivery === 'unknown') {
+          // No provider was attached: nothing received the interruption.
+          expect(cancellation.evidence).toBeNull()
           expect(await requests(profile, conversationId)).toEqual([
             expect.objectContaining({
               id: approval.id,
@@ -317,7 +309,12 @@ for (const failpoint of ['before_delivery', 'after_delivery'] as const) {
             }),
           ])
         } else {
+          expect(cancellation.delivery).toBe('acknowledged')
           expect(cancellation.evidence).toMatchObject({
+            active_work_remaining: null,
+            queued_work_count: null,
+            background_work_remaining: null,
+            observed_at_ms: null,
             scope: 'turn',
             interruption_requested: true,
             termination: 'requested',

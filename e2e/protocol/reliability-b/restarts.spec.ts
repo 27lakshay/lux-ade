@@ -148,7 +148,7 @@ test('a closed view, a daemon kill and a graceful restart leave the run, its too
         /^(idle|ready)$/.test(snapshot.conversation.status) &&
         JSON.stringify(snapshot.messages).includes('tool completed once'),
     )
-    const fresh = await worker.call('conversation.get', { conversation_id: conversationId, limit: 200 })
+    const fresh = await worker.call('conversation.get', { conversation_id: conversationId, limit: 32 })
     expect(viewDigest(done)).toEqual(viewDigest(fresh))
     expect(fresh.messages.filter((message) => JSON.stringify(message).includes('tool completed once'))).toHaveLength(1)
     expect(await turnStarts(worker)).toEqual([codexPrompts.heldTool])

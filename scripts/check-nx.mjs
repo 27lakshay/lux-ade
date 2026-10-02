@@ -30,7 +30,7 @@ export function checkNxGraph(graph, cargo) {
       'ade-runtime',
       '@ade/cli',
       'ade-claude-adapter',
-      'ade-opencode-adapter',
+      '@ade/opencode-provider',
       'ade-omp-bridge',
     ])
       requires(project, dependency)

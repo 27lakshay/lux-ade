@@ -13,11 +13,10 @@
 //!   runs a skill while `skills.enableSkillCommands` is on (its default).
 //! - Codex 0.157.0 app-server: takes a skill as a `skill` turn input item and
 //!   has no slash commands; custom prompts are expanded by the Codex TUI only.
-//! - OpenCode v2: runs commands through its session command path and takes
-//!   skills in the prompt's `skills` field.
 //!
-//! ADE's Codex and OpenCode adapters send neither form, so those entries are
-//! unavailable. ADE never turns a command into an ordinary prompt of its own.
+//! ADE's Codex adapter sends neither form, so those entries are unavailable.
+//! Plugin providers, such as the OpenCode plugin, have no catalogued form.
+//! ADE never turns a command into an ordinary prompt of its own.
 use ade_core::contract::commands::{
     CommandEntry, CommandKind, CommandNativeCatalog, CommandProvenance, CommandSource,
 };
@@ -31,18 +30,13 @@ pub const ARGUMENTS_LIMIT: usize = 16 * 1024;
 /// Command directories, relative to the home or workspace directory.
 ///
 /// Sources: Claude Code reads `.claude/commands`; Oh My Pi reads `commands`
-/// under `~/.omp/agent` and `.omp` (oh-my-pi `discovery/builtin.ts`); OpenCode
-/// reads `command` and `commands` under its config directories (oh-my-pi
-/// `discovery/opencode.ts`); Codex reads custom prompts from `~/.codex/prompts`.
+/// under `~/.omp/agent` and `.omp` (oh-my-pi `discovery/builtin.ts`); Codex
+/// reads custom prompts from `~/.codex/prompts`.
 const COMMAND_ROOTS: &[(&str, SkillScope, &str)] = &[
     ("claude", SkillScope::Global, ".claude/commands"),
     ("claude", SkillScope::Workspace, ".claude/commands"),
     ("omp", SkillScope::Global, ".omp/agent/commands"),
     ("omp", SkillScope::Workspace, ".omp/commands"),
-    ("opencode", SkillScope::Global, ".config/opencode/command"),
-    ("opencode", SkillScope::Global, ".config/opencode/commands"),
-    ("opencode", SkillScope::Workspace, ".opencode/command"),
-    ("opencode", SkillScope::Workspace, ".opencode/commands"),
     ("codex", SkillScope::Global, ".codex/prompts"),
 ];
 
@@ -118,14 +112,6 @@ pub fn mechanism(provider: &str, kind: CommandKind) -> Result<&'static str, Stri
             "Codex takes a skill as a skill turn input item, which ADE's Codex adapter does not send yet"
                 .into(),
         ),
-        ("opencode", Command) => Err(
-            "OpenCode runs commands through its session command path, which ADE's OpenCode bridge does not call yet"
-                .into(),
-        ),
-        ("opencode", Skill) => Err(
-            "OpenCode takes skills in the prompt's skills field, which ADE's OpenCode bridge does not send yet"
-                .into(),
-        ),
         (other, _) => Err(format!("Unknown provider {other}")),
     }
 }
@@ -198,7 +184,6 @@ pub fn native_catalog(provider: &str) -> CommandNativeCatalog {
             "Oh My Pi's built-in, extension and MCP commands",
         ),
         "codex" => (Some("skills/list"), "Codex's plugin and system skills"),
-        "opencode" => (None, "OpenCode's configured and plugin commands"),
         _ => (None, "The provider's own commands"),
     };
     CommandNativeCatalog {
@@ -446,13 +431,13 @@ mod tests {
                 },
             ]
         );
-        let managed = command_roots("opencode", None, Path::new("/w"));
+        let managed = command_roots("omp", None, Path::new("/w"));
         assert!(
             managed
                 .iter()
                 .all(|root| root.scope == SkillScope::Workspace)
         );
-        assert_eq!(managed.len(), 2);
+        assert_eq!(managed.len(), 1);
         assert!(command_roots("codex", None, Path::new("/w")).is_empty());
     }
 
@@ -506,7 +491,7 @@ mod tests {
 
     #[test]
     fn providers_without_a_native_form_report_it_and_never_offer_a_prompt() {
-        for provider in ["codex", "opencode", "gemini"] {
+        for provider in ["codex", "plugin:ade.opencode", "gemini"] {
             let facts = Facts {
                 provider,
                 setting_sources: &[],
@@ -723,7 +708,7 @@ mod tests {
 
     #[test]
     fn every_provider_names_what_it_does_not_list() {
-        for provider in ["claude", "omp", "codex", "opencode"] {
+        for provider in ["claude", "omp", "codex", "plugin:ade.opencode"] {
             let native = native_catalog(provider);
             assert!(!native.queried);
             assert!(native.reason.contains("not listed"));

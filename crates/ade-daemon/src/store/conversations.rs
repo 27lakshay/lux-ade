@@ -1,25 +1,38 @@
 use super::*;
 
-fn bounded_message_rows(mut rows: rusqlite::Rows<'_>) -> Result<Vec<Message>> {
+/// The largest stored message and the largest retained message window. One
+/// message holds up to 1 MiB of text and 1 MiB of tool output (F031), plus its
+/// envelope.
+const MESSAGE_BUDGET: usize = 4 * 1024 * 1024;
+const WINDOW_BUDGET: usize = 4 * 1024 * 1024;
+
+/// Decodes message rows within the item and byte budgets. With `newest_first`
+/// the rows run newest to oldest, and the window stops before the first older
+/// message that would exceed the byte budget: the reply keeps the newest
+/// messages and the caller pages older ones. Otherwise every row must fit.
+fn bounded_message_rows(mut rows: rusqlite::Rows<'_>, newest_first: bool) -> Result<Vec<Message>> {
     let mut messages = Vec::new();
     let mut aggregate = ade_core::json_budget::Usage { bytes: 2, nodes: 1 };
     while let Some(row) = rows.next()? {
         ensure!(messages.len() < 32, ade_core::error::Failure::ResourceLimit);
         // Borrow SQLite text; admit all unknown fields before allocating a decoded row.
         let raw = row.get_ref(0)?.as_str()?;
-        let mut usage = ade_core::json_budget::usage(raw.as_bytes(), 524288)
+        let mut usage = ade_core::json_budget::usage(raw.as_bytes(), MESSAGE_BUDGET)
             .context(ade_core::error::Failure::ResourceLimit)?;
         usage.bytes += usize::from(!messages.is_empty());
-        ensure!(
-            aggregate.fits_with(usage, 524288),
-            ade_core::error::Failure::ResourceLimit
-        );
+        if !aggregate.fits_with(usage, WINDOW_BUDGET) {
+            ensure!(
+                newest_first && !messages.is_empty(),
+                ade_core::error::Failure::ResourceLimit
+            );
+            break;
+        }
         aggregate.add(usage);
         let message: Message = serde_json::from_str(raw)?;
         messages.push(message);
     }
     ensure!(
-        ade_core::json_budget::encoded_usage(&messages, 524288)?.is_some(),
+        ade_core::json_budget::encoded_usage(&messages, WINDOW_BUDGET)?.is_some(),
         ade_core::error::Failure::ResourceLimit
     );
     Ok(messages)
@@ -234,16 +247,24 @@ impl Store {
     }
     /// Creates a Conversation on a provider outside the static catalogue: a
     /// generic adapter or a plugin provider, validated against the descriptor
-    /// its registry entry publishes. Such providers manage no accounts.
+    /// its registry entry publishes. An account belongs to a plugin provider
+    /// whose worker inspects managed accounts; the caller has checked that.
     pub fn create_registered(
         &self,
         workspace_id: &str,
         title: &str,
         descriptor: &crate::provider::Descriptor,
         provider_config: crate::provider::Config,
+        account_id: Option<&str>,
     ) -> Result<Conversation> {
         provider_config.validate_against(descriptor)?;
-        self.insert_conversation(workspace_id, title, &descriptor.id, provider_config, None)
+        self.insert_conversation(
+            workspace_id,
+            title,
+            &descriptor.id,
+            provider_config,
+            account_id,
+        )
     }
     fn insert_conversation(
         &self,
@@ -266,6 +287,12 @@ impl Store {
         let conversation = Conversation {
             queue_paused: false,
             queue_resumed_during: None,
+            stop: None,
+            settings_revision: 0,
+            native_settings: None,
+            execution: None,
+            background: None,
+            autonomous_output_at_ms: None,
             runtime_run: None,
             runtime_cursor: 0,
             runtime_submission: None,
@@ -300,8 +327,10 @@ impl Store {
     pub fn messages(&self, id: &str, before: Option<i64>, limit: usize) -> Result<Vec<Message>> {
         self.conversation(id)?;
         let mut statement = self.connection.prepare("SELECT data FROM messages WHERE conversation_id=?1 AND (?2 IS NULL OR sequence<?2) ORDER BY sequence DESC LIMIT ?3")?;
-        let mut messages =
-            bounded_message_rows(statement.query(params![id, before, limit.min(32) as i64])?)?;
+        let mut messages = bounded_message_rows(
+            statement.query(params![id, before, limit.min(32) as i64])?,
+            true,
+        )?;
         messages.reverse();
         Ok(messages)
     }
@@ -323,11 +352,37 @@ impl Store {
         Ok(epoch.unwrap_or(0).max(0) as u64)
     }
     /// A complete rewind preview, refused rather than truncated beyond the shared page budget.
+    /// Up to `limit` (at most 32) messages after `after`, oldest first, cut to
+    /// the window budget, and whether later messages remain.
+    pub fn messages_after(
+        &self,
+        id: &str,
+        after: i64,
+        limit: usize,
+    ) -> Result<(Vec<Message>, bool)> {
+        self.conversation(id)?;
+        let mut statement = self.connection.prepare(
+            "SELECT data FROM messages WHERE conversation_id=?1 AND sequence>?2 ORDER BY sequence LIMIT ?3",
+        )?;
+        // `true`: a page may stop early at the budget instead of being refused.
+        let messages = bounded_message_rows(
+            statement.query(params![id, after, limit.min(32) as i64])?,
+            true,
+        )?;
+        let last = messages.last().map_or(after, |message| message.sequence);
+        let more = self.connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM messages WHERE conversation_id=?1 AND sequence>?2)",
+            params![id, last],
+            |row| row.get::<_, bool>(0),
+        )?;
+        Ok((messages, more))
+    }
     pub fn messages_from(&self, conversation: &str, sequence: i64) -> Result<Vec<Message>> {
         let mut statement = self.connection.prepare(
             "SELECT data FROM messages WHERE conversation_id=?1 AND sequence>=?2 ORDER BY sequence",
         )?;
-        let messages = bounded_message_rows(statement.query(params![conversation, sequence])?)?;
+        let messages =
+            bounded_message_rows(statement.query(params![conversation, sequence])?, false)?;
         Ok(messages)
     }
     /// Removes every message from `sequence` on and moves the history epoch,
@@ -751,9 +806,10 @@ impl Store {
     pub fn commit_lost_run(
         &self,
         conversation: &Conversation,
+        messages: &[Message],
         requests: &[PendingRequest],
     ) -> Result<()> {
-        self.commit_conversation_as(conversation, &[], requests, true)
+        self.commit_conversation_as(conversation, messages, requests, true)
     }
     fn commit_conversation_as(
         &self,
@@ -826,6 +882,15 @@ impl Store {
                     message.text = existing.text;
                     message.attachments = existing.attachments;
                     message.review_feedback = existing.review_feedback;
+                    // A native echo carries no delivery record; keep the submission's.
+                    if message.delivery.is_none() {
+                        message.delivery = existing.delivery;
+                    }
+                }
+                // An item belongs to the turn that first reported it. A provider that repeats
+                // earlier items later (for example while compacting) does not move them.
+                if existing.turn_id.is_some() {
+                    message.turn_id = existing.turn_id;
                 }
                 message.id = existing.id;
                 message.sequence = existing.sequence;

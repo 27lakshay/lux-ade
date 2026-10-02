@@ -107,8 +107,6 @@ impl Capability {
 pub enum ModelFormat {
     /// Any ID or alias the provider accepts, such as `sonnet` or `gpt-5.5`.
     NativeId,
-    /// `provider/model`, such as `anthropic/claude-sonnet-5`.
-    ProviderQualified,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
@@ -290,6 +288,8 @@ pub enum ProviderWorkerMethod {
     Compact,
     Rewind,
     ChildTranscript,
+    /// Reads which native login the worker's managed account context holds.
+    AccountInspect,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
@@ -312,14 +312,16 @@ pub struct ProviderWorkerOperation {
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProviderWorkerLimits {
-    #[schemars(range(min = 1, max = 1048576))]
+    #[schemars(range(min = 1, max = 16777216))]
     pub max_input_frame_bytes: u32,
     /// Maximum immediate child values in any input JSON object or array.
     #[schemars(range(min = 1, max = 1024))]
     pub max_input_entries: u32,
     #[schemars(range(min = 1, max = 15000))]
     pub max_initialize_ms: u32,
-    #[schemars(range(min = 1, max = 1048576))]
+    /// Output frames may exceed input frames: a stored message is up to
+    /// 1 MiB, and an item carries it with its tool output and envelope.
+    #[schemars(range(min = 1, max = 4194304))]
     pub max_output_frame_bytes: u32,
     /// Maximum visible transcript items returned by open, history or child transcript.
     #[schemars(range(min = 1, max = 32))]
@@ -556,6 +558,65 @@ pub struct ProviderWorkerRewindResult {
 pub struct ProviderWorkerConfigureMcpRequest {
     pub servers: serde_json::Map<String, serde_json::Value>,
 }
+/// `account_inspect` takes no parameters: the account is the worker's launch
+/// context ([`ProviderWorkerAccountContext`]).
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderWorkerAccountInspectRequest {}
+
+/// Whether a managed account's native login can run.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderWorkerAccountState {
+    /// Signed in; `identity` names the login.
+    Ready,
+    /// No usable login in the account's native home.
+    SignedOut,
+    /// The login cannot be checked now, such as a missing or incompatible executable.
+    Unavailable,
+}
+
+/// The `account_inspect` result. ADE pins `identity` when the account is
+/// verified and compares it again before each launch on the account, so a
+/// login that changed underneath ADE is refused rather than used.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderWorkerAccountInspection {
+    pub state: ProviderWorkerAccountState,
+    /// Why the account is not ready; empty when it is.
+    pub reason: String,
+    /// The native executable's version, when the worker read it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    /// What identifies the signed-in login, such as an email and an
+    /// organization. Never a credential. Required when `state` is `ready`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
+/// The managed account a worker runs on. A worker launched on a managed
+/// account receives it as JSON in the `ADE_ACCOUNT_CONTEXT` environment
+/// variable, in an environment ADE has cleared of everything except a few
+/// locale and path variables, so no ambient credential reaches it. Every
+/// worker receives the same fields, bundled or installed. Without a managed
+/// account the variable is absent and the worker uses the agent's own login.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderWorkerAccountContext {
+    pub account_id: String,
+    pub provider: String,
+    /// Increases whenever the account is verified again or disabled.
+    pub generation: u64,
+    /// The account's own directory, private to this user. The worker keeps the
+    /// agent's login, configuration and sessions for this account here, and
+    /// nowhere else.
+    pub native_home: String,
+    /// The identity ADE pinned when it verified the account, in the shape the
+    /// provider's inspection reported it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct ProviderWorkerChildTranscriptRequest {
@@ -691,7 +752,8 @@ pub struct ProviderWorkerRequirements {
     pub node_engine: String,
 }
 
-/// Exact JSON-RPC initialize reply; every field is required and unknown fields are rejected.
+/// Exact JSON-RPC initialize reply; every field except `native_peer` is
+/// required and unknown fields are rejected.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProviderWorkerInitialize {
@@ -703,6 +765,34 @@ pub struct ProviderWorkerInitialize {
     pub operations: Vec<ProviderWorkerOperation>,
     pub limits: ProviderWorkerLimits,
     pub requirements: ProviderWorkerRequirements,
+    /// What the native peer reported when the worker negotiated with it
+    /// before answering `initialize`. Absent when the worker starts its
+    /// native peer lazily or bridges no negotiated protocol.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_peer: Option<ProviderWorkerNativePeer>,
+}
+
+/// A native peer's negotiation report, as the worker observed it. It is
+/// evidence for diagnostics and readiness, never a grant: operations and
+/// capabilities remain authoritative.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq, Default)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderWorkerNativePeer {
+    /// The native protocol's short name, such as `acp`.
+    pub protocol: String,
+    /// The protocol version the peer stated, even when the worker refused it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protocol_version: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    /// Native features the peer declared, as lowercase snake_case names.
+    #[schemars(length(max = 32))]
+    pub features: Vec<String>,
+    /// IDs of sign-in methods the peer offers. ADE runs none of them.
+    #[schemars(length(max = 16))]
+    pub auth_methods: Vec<String>,
 }
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ProviderInspect {

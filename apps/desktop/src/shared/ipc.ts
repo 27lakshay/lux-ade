@@ -36,6 +36,7 @@ export interface InvokeChannels {
   'ade:pending-sends': ConversationsBridge['listPendingSends']
   'ade:send-journal-export': ConversationsBridge['exportSendJournal']
   'ade:send-journal-import': ConversationsBridge['importSendJournal']
+  'ade:plugin-ui-entries': ConversationsBridge['pluginUiEntries']
 
   'ade:workspace-open': WorkspacesBridge['open']
   'ade:workspace-choose': WorkspacesBridge['choose']

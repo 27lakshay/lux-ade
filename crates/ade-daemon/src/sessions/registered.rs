@@ -48,7 +48,7 @@ fn conflict(message: String) -> Value {
 }
 
 impl Sessions {
-    fn live_workers(&self) -> Result<Vec<(String, ProviderWorker)>> {
+    pub(super) fn live_workers(&self) -> Result<Vec<(String, ProviderWorker)>> {
         match &self.plugins {
             Ok(plugins) => plugins.provider_workers(),
             Err(error) => Err(anyhow!("Plugin registry is unavailable: {error}")),
@@ -98,8 +98,10 @@ impl Sessions {
                 .registered_descriptor(provider)?
                 .ok_or_else(|| ade_core::error::ProviderNotFound(provider.to_owned()))?,
         };
+        let declared = self.declared_operations(&self.data.lock().unwrap(), provider);
         Ok(Some(crate::capabilities::core::registered_record(
             &descriptor,
+            declared.as_deref().ok(),
         )))
     }
 
@@ -107,10 +109,14 @@ impl Sessions {
     pub(super) fn registered_records(
         &self,
     ) -> Vec<ade_core::contract::providers::CapabilityRecord> {
+        let d = self.data.lock().unwrap();
         self.provider_descriptors()
             .iter()
             .filter(|descriptor| !matches!(named(&descriptor.id), Named::Other))
-            .map(crate::capabilities::core::registered_record)
+            .map(|descriptor| {
+                let declared = self.declared_operations(&d, &descriptor.id);
+                crate::capabilities::core::registered_record(descriptor, declared.as_deref().ok())
+            })
             .collect()
     }
 
@@ -183,6 +189,31 @@ impl Sessions {
         descriptors
     }
 
+    /// The operations `provider`'s worker declares, which decide its
+    /// conversation controls, or why none are known. Every worker-backed
+    /// provider answers the same way: a bundled provider with the descriptor
+    /// its worker answers `initialize` with, a plugin with what its worker
+    /// declared at its last handshake, and a generic ACP adapter with what its
+    /// probe recorded.
+    pub(super) fn declared_operations(
+        &self,
+        d: &Data,
+        provider: &str,
+    ) -> std::result::Result<Vec<ade_core::contract::providers::ProviderWorkerOperation>, String>
+    {
+        match named(provider) {
+            Named::Other => ade_runtime::provider::registry::bundled()
+                .get(provider)
+                .and_then(|registered| registered.entry.worker_descriptor())
+                .map(|descriptor| descriptor.operations)
+                .ok_or_else(|| format!("Unknown provider {provider}")),
+            Named::Adapter(id) => self.adapters.declared_operations(id),
+            Named::Plugin(_) => d.worker_operations.get(provider).cloned().ok_or_else(|| {
+                "The provider plugin's worker has not completed its handshake; its controls are unknown".into()
+            }),
+        }
+    }
+
     /// Discovers the capabilities of each live plugin provider whose artifact
     /// has not been handshaken yet: the worker is started, answers
     /// `initialize` and is stopped. Call it without the session lock.
@@ -200,10 +231,15 @@ impl Sessions {
             let descriptor = match ade_runtime::provider::worker::Worker::spawn(
                 &worker,
                 &cwd.to_string_lossy(),
+                None,
                 events,
             ) {
                 Ok(started) => {
                     let descriptor = started.handshake().descriptor.clone();
+                    self.data.lock().unwrap().worker_operations.insert(
+                        worker.provider.clone(),
+                        started.handshake().wire_descriptor.operations.clone(),
+                    );
                     match started.stop_confirmed() {
                         Ok(()) => Some(descriptor),
                         Err(error) => {

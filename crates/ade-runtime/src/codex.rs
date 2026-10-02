@@ -46,14 +46,17 @@ pub fn approval_result(
                     .ok_or_else(|| anyhow!("Missing question ID"))?;
                 let values = match answers.get(id) {
                     Some(Value::String(text)) => vec![text.as_str()],
-                    Some(Value::Array(values)) if q["multiSelect"] == true => values
-                        .iter()
-                        .map(|value| {
-                            value
-                                .as_str()
-                                .ok_or_else(|| anyhow!("Invalid answer for {id}"))
-                        })
-                        .collect::<Result<Vec<_>>>()?,
+                    // Typed answers are lists; a single-select question takes exactly one.
+                    Some(Value::Array(values)) if q["multiSelect"] == true || values.len() == 1 => {
+                        values
+                            .iter()
+                            .map(|value| {
+                                value
+                                    .as_str()
+                                    .ok_or_else(|| anyhow!("Invalid answer for {id}"))
+                            })
+                            .collect::<Result<Vec<_>>>()?
+                    }
                     _ => bail!("Answer required for {id}"),
                 };
                 ensure!(
@@ -304,6 +307,8 @@ struct NativeClient {
     identity: Option<CodexIdentity>,
     /// The `mcp_servers` table from the profile MCP catalog (F131).
     mcp_servers: Mutex<Option<Value>>,
+    /// The requested reasoning level, sent as `effort` on each `turn/start`.
+    reasoning_effort: Mutex<Option<String>>,
     initialized: Mutex<bool>,
 }
 impl NativeClient {
@@ -318,6 +323,36 @@ impl NativeClient {
             *initialized = true;
         }
         Ok(())
+    }
+
+    /// The models `model/list` offers this session's account, each with its
+    /// `supportedReasoningEfforts`. Hidden models are left out, as in Codex's
+    /// own picker. A failed or unbounded listing reports no choices.
+    fn discover_models(&self) -> Option<ade_core::provider::NativeChoices> {
+        let mut models = Vec::new();
+        let mut cursor: Option<String> = None;
+        for _ in 0..8 {
+            let page = self
+                .rpc
+                .request_within(
+                    "model/list",
+                    json!({"cursor":cursor,"includeHidden":false}),
+                    Some(std::time::Duration::from_secs(10)),
+                )
+                .ok()?;
+            for model in page["data"].as_array()? {
+                models.push(codex_model(model)?);
+            }
+            cursor = page["nextCursor"].as_str().map(str::to_owned);
+            if cursor.is_none() {
+                let choices = ade_core::provider::NativeChoices {
+                    source: "model/list".into(),
+                    models,
+                };
+                return choices.validate().is_ok().then_some(choices);
+            }
+        }
+        None
     }
 
     fn verify_identity(&self) -> Result<()> {
@@ -366,7 +401,7 @@ impl NativeClient {
             .as_array()
             .context("Codex omitted the thread's turns; nothing was rewound")?;
         let turn = turn_for_user_message(turns, &locator.message_id)?;
-        Provider::rewind(self, session, turn, operation)
+        Provider::rewind(self, session, turn, operation, None)
     }
 
     fn spawn(
@@ -422,7 +457,9 @@ impl NativeClient {
             events,
             crate::rpc::Framing::Bare,
             decode,
-            1024 * 1024,
+            // A native item may exceed one stored message; ADE reads it and
+            // truncates it with a marker rather than dropping the session (F031).
+            4 * 1024 * 1024,
         ) {
             Ok(rpc) => rpc,
             Err(error) => {
@@ -439,6 +476,7 @@ impl NativeClient {
             session: Mutex::new(None),
             identity: account.and_then(|value| value.codex_identity.clone()),
             mcp_servers: Mutex::new(None),
+            reasoning_effort: Mutex::new(None),
             initialized: Mutex::new(false),
         }))
     }
@@ -523,10 +561,22 @@ impl Provider for NativeClient {
             }
         }
         *self.session.lock().unwrap() = Some(session.clone());
+        *self.reasoning_effort.lock().unwrap() = config.reasoning_effort.clone();
+        // The thread start/resume reply names the model and reasoning level in effect.
+        let reported = |key: &str| result[key].as_str().map(str::to_owned);
+        let native_settings = (result.get("model").is_some()
+            || result.get("reasoningEffort").is_some())
+        .then(|| ade_core::provider::NativeSettings {
+            model: reported("model"),
+            reasoning_effort: reported("reasoningEffort"),
+            permission_mode: None,
+        });
         Ok(Connected {
             session,
             history,
             rewound_from: None,
+            native_settings,
+            native_choices: self.discover_models(),
         })
     }
     fn send(
@@ -538,10 +588,11 @@ impl Provider for NativeClient {
     ) -> Result<String> {
         self.verify_identity()?;
         let input = user_input(prompt)?;
-        let r = self.rpc.request(
-            "turn/start",
-            json!({"threadId":session,"clientUserMessageId":submission,"input":input}),
-        )?;
+        let mut params = json!({"threadId":session,"clientUserMessageId":submission,"input":input});
+        if let Some(effort) = self.reasoning_effort.lock().unwrap().clone() {
+            params["effort"] = json!(effort);
+        }
+        let r = self.rpc.request("turn/start", params)?;
         r["turn"]["id"]
             .as_str()
             .map(str::to_owned)
@@ -584,7 +635,13 @@ impl Provider for NativeClient {
     /// the fork; the earlier thread stays unchanged. `thread/revert` rewrites
     /// only paginated threads and `thread/rollback` was removed, so neither is
     /// used. Files are not touched; they rewind through ADE checkpoints.
-    fn rewind(&self, session: &str, turn: &str, _operation: &str) -> Result<Option<String>> {
+    fn rewind(
+        &self,
+        session: &str,
+        turn: &str,
+        _operation: &str,
+        _native_message: Option<&ade_core::provider::NativeMessageLocator>,
+    ) -> Result<Option<String>> {
         let read = self.rpc.request(
             "thread/read",
             json!({"threadId":session,"includeTurns":true}),
@@ -923,6 +980,7 @@ fn decode(wire: WireEvent) -> Result<Option<Event>> {
             // Usage is forwarded as reported; the daemon normalizes it and
             // never fills in a figure Codex left out.
             "thread/tokenUsage/updated" => Event::Usage {
+                submission: None,
                 session: text(&p, "threadId"),
                 turn: p["turnId"].as_str().map(str::to_owned),
                 source: method.clone(),
@@ -930,6 +988,7 @@ fn decode(wire: WireEvent) -> Result<Option<Event>> {
             },
             // Account-wide and sparse: it names no thread.
             "account/rateLimits/updated" => Event::Usage {
+                submission: None,
                 session: String::new(),
                 turn: None,
                 source: method.clone(),
@@ -1188,6 +1247,32 @@ fn item(value: &Value, turn: Option<&str>, completed: bool) -> Option<Item> {
     })
 }
 
+/// One `model/list` entry (codex-cli 0.159 `Model`): `model` is the value
+/// `thread/start` takes; `supportedReasoningEfforts` lists `reasoningEffort`s.
+/// Codex reports no per-model permission modes, so none are listed.
+fn codex_model(value: &Value) -> Option<ade_core::provider::NativeModel> {
+    let text = |key: &str| value[key].as_str().map(str::to_owned);
+    let id = text("model").or_else(|| text("id"))?;
+    let efforts = value["supportedReasoningEfforts"].as_array().map(|levels| {
+        levels
+            .iter()
+            .filter_map(|level| level["reasoningEffort"].as_str().map(str::to_owned))
+            .collect()
+    });
+    Some(ade_core::provider::NativeModel {
+        aliases: text("id")
+            .filter(|alias| *alias != id)
+            .into_iter()
+            .collect(),
+        id,
+        display_name: text("displayName"),
+        is_default: value["isDefault"].as_bool().unwrap_or(false),
+        reasoning_efforts: efforts,
+        default_reasoning_effort: text("defaultReasoningEffort"),
+        permission_modes: None,
+    })
+}
+
 /// Checked against the `codex app-server generate-json-schema` output of
 /// codex-cli 0.157.0, the build the account probe validates.
 pub fn capabilities() -> crate::capabilities::CapabilityRecord {
@@ -1196,22 +1281,28 @@ pub fn capabilities() -> crate::capabilities::CapabilityRecord {
     CapabilityRecord {
         provider: "codex".into(),
         name: "Codex".into(),
-        revision: 1,
+        revision: 2,
         fingerprint: String::new(),
         checked_against: "codex-cli 0.157.0 app-server protocol v2".into(),
         models: ModelCapabilities {
             selection: capability(Supported, "thread/start carries the model"),
             format: ModelFormat::NativeId,
             aliases: vec![],
-            discovery: capability(NativeOnly, "model/list; ADE does not call it"),
+            discovery: capability(
+                Supported,
+                "model/list when the session opens; conversation.settings offers the listed models and each one's supportedReasoningEfforts",
+            ),
         },
         reasoning: ReasoningCapabilities {
             selection: capability(
-                NativeOnly,
-                "turn/start effort; ADE launches do not carry a reasoning level yet",
+                Supported,
+                "conversation.settings.update stores a level; each turn/start carries it as effort",
             ),
             // Each model advertises its own supportedReasoningEfforts.
-            levels: vec![],
+            levels: ade_core::provider::reasoning_efforts("codex")
+                .iter()
+                .map(|level| (*level).to_owned())
+                .collect(),
             varies_by_model: true,
         },
         permission_modes: vec![
@@ -1307,6 +1398,26 @@ fn mcp_overrides(servers: &Value) -> Value {
 mod tests {
 
     #[test]
+    fn a_model_list_row_keeps_its_launch_value_and_its_own_reasoning_levels() {
+        use super::*;
+        let row = json!({
+            "id": "preset-id", "model": "gpt-fixture", "displayName": "GPT Fixture",
+            "isDefault": true, "hidden": false, "defaultReasoningEffort": "medium",
+            "supportedReasoningEfforts": [
+                {"reasoningEffort": "low", "description": ""},
+                {"reasoningEffort": "high", "description": ""}
+            ]
+        });
+        let model = codex_model(&row).unwrap();
+        assert_eq!(model.id, "gpt-fixture");
+        assert_eq!(model.aliases, ["preset-id"]);
+        assert!(model.is_default);
+        assert_eq!(model.reasoning_efforts.unwrap(), ["low", "high"]);
+        assert_eq!(model.permission_modes, None);
+        assert!(codex_model(&json!({"displayName": "no id"})).is_none());
+    }
+
+    #[test]
     fn rewind_forks_through_the_turn_before_and_checks_the_fork() {
         use super::*;
         let turns = vec![
@@ -1377,6 +1488,7 @@ mod tests {
             session: Mutex::new(None),
             identity: None,
             mcp_servers: Mutex::new(None),
+            reasoning_effort: Mutex::new(None),
             initialized: Mutex::new(false),
         };
         adapter.stop_confirmed().unwrap();

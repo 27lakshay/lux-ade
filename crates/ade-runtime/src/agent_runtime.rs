@@ -546,7 +546,9 @@ impl Run {
                 }
                 "compact" => { self.adapter.compact(string("session")?, string("operation")?)?; Ok(json!({"type":"ack"})) }
                 "rewind" => {
-                    let forked = self.adapter.rewind(string("session")?, string("turn")?, string("operation")?)?;
+                    let native_message: Option<ade_core::provider::NativeMessageLocator> =
+                        serde_json::from_value(request["native_message"].clone())?;
+                    let forked = self.adapter.rewind(string("session")?, string("turn")?, string("operation")?, native_message.as_ref())?;
                     if let Some(forked) = &forked {
                         *self.session.lock().unwrap() = Some((forked.clone(), string("session")?.to_owned()));
                     }
@@ -621,9 +623,9 @@ impl Drop for Run {
 /// compaction or cancellation does not: the cancel names one turn, and by the
 /// time its failure arrives a successor may be running in the same run. Its
 /// caller reads the failure from the command receipt and decides for the turn
-/// it cancelled.
+/// it cancelled. Refusing a stale native request names only that request.
 fn failure_ends_run(method: &str) -> bool {
-    !matches!(method, "steer" | "compact" | "cancel" | "rewind")
+    !matches!(method, "steer" | "compact" | "cancel" | "rewind" | "reject")
 }
 
 pub fn read(reader: &mut BufReader<UnixStream>) -> Result<Value> {
@@ -767,7 +769,6 @@ impl Provider for Remote {
     fn prepare_submission(&self) -> Option<String> {
         match self.spec.provider.as_str() {
             "claude" | "omp" => Some(uuid::Uuid::new_v4().to_string()),
-            "opencode" => Some(format!("msg_{}", uuid::Uuid::new_v4())),
             provider if provider::worker::is_plugin_provider(provider) => {
                 Some(uuid::Uuid::new_v4().to_string())
             }
@@ -823,11 +824,17 @@ impl Provider for Remote {
         ensure!(result["type"] == "ack", "Invalid compaction receipt");
         Ok(())
     }
-    fn rewind(&self, session: &str, turn: &str, operation: &str) -> Result<Option<String>> {
+    fn rewind(
+        &self,
+        session: &str,
+        turn: &str,
+        operation: &str,
+        native_message: Option<&ade_core::provider::NativeMessageLocator>,
+    ) -> Result<Option<String>> {
         let result = self.call(
             "rewind",
             format!("rewind:{operation}"),
-            json!({"session":session,"turn":turn,"operation":operation}),
+            json!({"session":session,"turn":turn,"operation":operation,"native_message":native_message}),
         )?;
         ensure!(result["type"] == "ack", "Invalid rewind receipt");
         Ok(result["session"].as_str().map(str::to_owned))
@@ -918,6 +925,8 @@ mod tests {
                 session: "session".into(),
                 history: vec![],
                 rewound_from: None,
+                native_settings: None,
+                native_choices: None,
             })
         }
         fn send(

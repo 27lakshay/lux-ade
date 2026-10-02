@@ -33,6 +33,12 @@ ade CLI ────────────────────────
   `@ade/client/sync` and `@ade/client/history`. The latter contains pure bounded
   history projection state and type-only contract imports. Other SDK entry points
   remain type-only in the renderer; sockets and effects stay behind preload.
+- **Plugin UI** entry points are trusted code loaded into the renderer. The daemon installs and
+  activates plugins; main serves only each enabled plugin's current activation generation on
+  `ade-plugin://` (`src/main/plugin-ui.ts`), and `src/renderer/src/plugins/ui-host.ts` imports
+  them and keeps their declared timeline renderers and composer transforms per generation.
+  Messages keep canonical text as their fallback; safe mode (`?safeMode=1`, set by main after a
+  hang or crash) loads no plugin UI.
 - **The stream bridge** is an Electron utility process. A MessagePort carries conversation feed
   frames and terminal output directly to each window, batched once per frame. Ordinary commands
   remain on the typed request bridge.
@@ -49,6 +55,7 @@ ade CLI ────────────────────────
 | A CLI command or client retry/reconciliation rule | `apps/cli/src/`, `packages/client/src/` |
 | An Electron window, native menu or browser page | `apps/desktop/src/main/` |
 | A renderer request or stream | `apps/desktop/src/shared/`, `src/preload/`, `src/main/` or `src/stream-bridge/` |
+| A plugin UI contribution or its loading | `crates/ade-core/src/contract/plugins.rs`, `apps/desktop/src/renderer/src/plugins/` |
 | A workspace gesture or component | `apps/desktop/src/renderer/src/features/workspace/` |
 | A terminal view or restore | `packages/terminal/src/`, `apps/desktop/src/renderer/src/features/workspace/terminals/` |
 

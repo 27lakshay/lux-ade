@@ -42,7 +42,7 @@ test('F035: steering a running Codex turn is acknowledged natively and a retry r
   const controls = await profile.call('conversation.controls', { conversation_id: conversationId })
   expect(controls.controls.find((control) => control.control === 'steer')).toMatchObject({
     available: false,
-    mechanism: 'turn/steer',
+    mechanism: 'worker.steer',
     reason: expect.stringContaining('No turn is running'),
   })
 
@@ -134,9 +134,17 @@ test('F040: Codex compaction is acknowledged and its native record appears in th
     conversation_id: conversationId,
     source_attempt_id: beforeCancel.conversation.runtime_run,
     submission_id: beforeCancel.conversation.runtime_submission,
+    delivery: 'acknowledged',
     evidence: { scope: 'turn', interruption_requested: true, termination: 'requested' },
   })
   await expect.poll(() => conversationStatus(profile, conversationId)).toBe('interrupted')
+  // The acknowledgement was not the stop: native terminal evidence confirmed it.
+  expect((await snapshot(profile, conversationId)).conversation.stop).toMatchObject({
+    operation_id: cancelled.json!.operation_id,
+    outcome: 'confirmed',
+    confirmation: 'native_terminal',
+    native_status: 'interrupted',
+  })
 
   const compact = { operation_id: 'compact-1', conversation_id: conversationId }
   const reply = await profile.call('conversation.compact', compact)
@@ -176,14 +184,14 @@ test('F035 and F040: Claude reports steering and compaction as unavailable with 
     expect(controls.controls.find((control) => control.control === name)).toMatchObject({
       available: false,
       mechanism: null,
-      reason: expect.stringContaining('Claude adapter'),
+      reason: expect.stringContaining("ADE's Claude worker"),
     })
   }
   const turn = (await snapshot(profile, conversationId)).conversation.active_turn_id ?? 'unknown-turn'
   const steer = { operation_id: 'claude-steer', conversation_id: conversationId, turn_id: turn, text: 'redirect' }
   expect(await profile.call('conversation.steer', steer)).toMatchObject({
     outcome: 'unavailable',
-    reason: expect.stringContaining('no native steer path'),
+    reason: expect.stringContaining('no steer for an identified running turn'),
   })
   // The steer text is not relabelled as a queued or sent message.
   const state = await snapshot(profile, conversationId)

@@ -3,7 +3,7 @@
 Status: ready-for-agent
 Type: implementation ticket index
 
-The user approved this 32-ticket breakdown and its blocking edges on 2026-09-30. Each ticket is a separate verifiable slice of the [provider SDK and conversation UI specification](../../provider-sdk-conversation-ui.md). Publication prepares implementation work; it does not authorize starting that work, committing or spawning agents. Tickets 01, 02, 03, 04 and 12 are accepted; each ticket's Comments record its evidence. All other tickets remain unaccepted.
+The user approved this 32-ticket breakdown and its blocking edges on 2026-09-30. Each ticket is a separate verifiable slice of the [provider SDK and conversation UI specification](../../provider-sdk-conversation-ui.md). Publication prepares implementation work; it does not authorize starting that work, committing or spawning agents. Tickets 01–31 are complete; each ticket's Comments record its evidence. Ticket 32 reconciled all acceptance rows and stories and published the authoring contract, but did not freeze it: installed/live evidence (PC30) still needs managed accounts signed in by a person, so it is `ready-for-human`.
 
 ## Tickets and blocking edges
 
@@ -132,6 +132,27 @@ These groupings describe delivery, not additional blocking edges. A native adapt
 
 ## Comments
 
+2026-10-02: Ticket 09 is complete: sessions record their account binding, and Codex readiness failures keep their reason.
+2026-10-02: Ticket 08 is complete: requested and provider-reported settings, revisioned updates and Codex reasoning levels.
+2026-10-02: Ticket 07 is complete: OMP runs through its public worker under Bun, with agent_start-anchored completion attribution.
+2026-10-02: Ticket 31 (native conformance evidence) is complete: live evidence for Codex, Claude and Oh My Pi, two Oh My Pi defects fixed, and plugin providers now get the controls their workers declare.
+2026-10-02: Tickets 20 (generic ACP on the official SDK), 21 (OpenCode as an independent plugin; bundled adapter deleted) and 24–26 (plugin timeline and composer contributions, safe mode) are complete; built in parallel worktrees and integrated here.
+2026-10-02: Ticket 30 (responsive under load) is complete with numeric budgets in a new conversation performance workload.
+2026-10-02: Ticket 29 (accessible reading) is complete; the pane tab's nested close button was an accessibility defect and is now pointer-only with Delete as its keyboard path.
+2026-10-02: Ticket 23 (plugin leased executions) is complete; a plugin lifecycle lock held across plugin calls caused seven plugin failures that also failed on HEAD.
+2026-10-02: Ticket 28 (retained history access) is complete; exports disclose provider continuity and attachment state.
+2026-10-02: Ticket 22 (provider MCP) is complete with direct delivery; the ticket's gateway wording disagrees with the code and is recorded there.
+2026-10-02: Ticket 17 (provider commands and skills) is complete; the desktop lists and runs them.
+2026-10-02: Ticket 18 (native compaction) is complete; a compaction no longer overwrites the previous prompt's terminal.
+2026-10-02: Ticket 14 (uncertain execution recovery) is complete; resuming after an unknown outcome needs an explicit choice.
+2026-10-02: Ticket 27 (child, usage and quota evidence) is complete; Claude usage is keyed by submission.
+2026-10-02: Ticket 19 (rewind and native lineage) is complete; Claude rewinds by native message.
+2026-10-02: Ticket 32 reconciled every acceptance row and story, built the missing pieces (see its comment) and published the authoring contract. It is `ready-for-human` and not frozen. Installed/live evidence (PC30) still lacks several behaviours and any managed-account live run. Story 18 waits for ADE's file and diff surfaces. Story 70 cannot be made true retroactively.
+2026-10-02: Tickets 13 (reconnect and live merge) and 16 (prepared context and attachments) are complete.
+2026-10-02: Ticket 15 (recoverable drafts) is complete; the two desktop draft failures recorded on ticket 05 are fixed.
+2026-10-02: Ticket 11 (yielded, background and autonomous activity) is complete; Claude reports task lifecycle evidence, Codex and OMP report none.
+2026-10-02: Ticket 06 (Claude through the public SDK) is complete. Claude rewind and per-turn usage need ADE to key work by submission when a provider reports no turn ID; tickets 19 and 27 own that change.
+2026-10-02: Tickets 05 (identified Stop) and 10 (queue, remove and steer) are complete; their tickets record decisions, evidence and the full-suite failures that belong to other tickets (Claude fake-SDK coverage to 06, draft-restart cases to 15, a pre-existing plugin/descendant set).
 2026-10-02: Corrected stale status. Tickets 01, 02, 03 and 12 had recorded acceptance but still said `ready-for-agent`; they and the opening paragraph now say they are accepted. PC rows remain unverified as stated above.
 2026-10-02: Ticket 04 is complete with real-process protocol and built Electron acceptance. Its ticket records the static gate report and coverage limits. Other tickets retain their own acceptance status.
 2026-09-30: Published the user-approved breakdown on agent-work-2. No implementation, completion claims or commit were added. The parent specification and existing account-context ticket remain unchanged.

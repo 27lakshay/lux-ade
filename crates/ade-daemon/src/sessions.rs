@@ -51,6 +51,7 @@ mod mcp;
 mod orchestration;
 mod placement;
 mod projects;
+mod provider_settings;
 mod recovery;
 mod registered;
 mod remote;
@@ -122,6 +123,12 @@ struct Data {
     health_attempts: HashMap<(String, String), HealthAttempt>,
     active_health_samples: usize,
     subscribers: HashMap<String, mpsc::SyncSender<Value>>,
+    /// Each provider plugin's operations as its worker declared them at its
+    /// latest handshake; they decide its conversation controls.
+    worker_operations: HashMap<String, Vec<ade_core::contract::providers::ProviderWorkerOperation>>,
+    /// Subscribers removed because their queue was full; their stream ends
+    /// with a `feed_overflow` frame so the client can tell it from a disconnect.
+    overflowed: HashSet<String>,
     revision: u64,
     /// Runtime appearance projection must be retried after an unconfirmed commit.
     appearance_pending: bool,
@@ -220,6 +227,8 @@ impl Sessions {
                 health_attempts: HashMap::new(),
                 active_health_samples: 0,
                 subscribers: HashMap::new(),
+                worker_operations: HashMap::new(),
+                overflowed: HashSet::new(),
                 revision: 0,
                 appearance_pending: false,
                 activity_published: None,
@@ -341,8 +350,15 @@ impl Sessions {
         let mut d = self.data.lock().unwrap();
         for id in d.agents.keys() {
             let c = d.store.conversation(id)?;
+            // A delivered Stop survives restart: recovery reads the runtime's
+            // receipt. Only a Stop whose delivery is still pending blocks it.
+            let stop_in_flight = c.status == "cancelling"
+                && c.stop.as_ref().is_none_or(|stop| {
+                    stop.delivery == ade_core::contract::agents::StopDelivery::Pending
+                });
             ensure!(
-                !matches!(c.status.as_str(), "starting" | "cancelling")
+                c.status != "starting"
+                    && !stop_in_flight
                     && !d
                         .store
                         .pending(id)?
@@ -493,6 +509,7 @@ impl Sessions {
                                     .as_ref()
                                     .map(|account| account.generation),
                                 stopping: false,
+                                native_choices: None,
                                 _lease: lease,
                             },
                         );
@@ -542,16 +559,37 @@ impl Sessions {
                     if c.status == "starting" && c.runtime_submission.is_none() {
                         c.status = "ready".into();
                     }
+                    // The runtime keys a cancellation by source attempt and submission.
                     if c.status == "cancelling"
-                        && c.active_turn_id.as_ref().is_some_and(|t| {
+                        && c.runtime_submission.as_ref().is_some_and(|s| {
                             !commands
                                 .as_array()
                                 .unwrap()
-                                .contains(&json!(format!("cancel:{t}")))
+                                .contains(&json!(format!("cancel:{}:{s}", spec.run)))
                         })
                     {
                         c.status = "running".into();
                         c.error = Some("Cancellation was not delivered before daemon loss; cancel again if needed.".into());
+                        if let Some(stop) = c.stop.as_mut().filter(|stop| {
+                            stop.outcome == ade_core::contract::agents::StopOutcome::Requested
+                        }) {
+                            stop.delivery = ade_core::contract::agents::StopDelivery::Unknown;
+                            stop.unresolve(
+                                "The cancellation was not delivered before the daemon stopped"
+                                    .into(),
+                            );
+                        }
+                    }
+                    // A delivered Stop still awaiting evidence gets a fresh settlement window.
+                    if let Some(stop) = c.stop.as_ref().filter(|stop| {
+                        stop.outcome == ade_core::contract::agents::StopOutcome::Requested
+                    }) {
+                        let sessions = Arc::clone(self);
+                        let (id, operation) = (c.id.clone(), stop.operation_id.clone());
+                        std::thread::spawn(move || {
+                            std::thread::sleep(agents::stop_settle_window());
+                            sessions.expire_stop(&id, &operation);
+                        });
                     }
                     let mut requests = d.store.pending(&c.id)?;
                     for p in &mut requests {
@@ -578,8 +616,12 @@ impl Sessions {
         d.revision += 1;
         event["revision"] = json!(d.revision);
         event["boot_id"] = json!(self.boot_id);
-        d.subscribers
-            .retain(|_, tx| self.deliver(tx, event.clone()));
+        let Data {
+            subscribers,
+            overflowed,
+            ..
+        } = d;
+        subscribers.retain(|id, tx| self.deliver(id, tx, event.clone(), overflowed));
         self.subscribers
             .store(d.subscribers.len(), Ordering::Relaxed);
     }
@@ -626,7 +668,21 @@ impl Sessions {
         let string = required_str(request);
         let op = request["op"].as_str().unwrap_or("");
         if op.starts_with("plugin.") {
-            let _lifecycle = self.plugin_lifecycle.lock().unwrap();
+            // Only a mutation of the installed or enabled set changes theme
+            // contributions, so only it holds the lifecycle lock, through its
+            // own theme sync. Invocations, host status and host restarts wait
+            // on plugin code; holding the lock there would let one slow or
+            // frozen host block every other plugin operation.
+            let mutation = matches!(
+                op,
+                "plugin.install"
+                    | "plugin.uninstall"
+                    | "plugin.enable"
+                    | "plugin.disable"
+                    | "plugin.dev.enter"
+                    | "plugin.dev.leave"
+            );
+            let lifecycle = mutation.then(|| self.plugin_lifecycle.lock().unwrap());
             let reply = match &self.plugins {
                 Ok(plugins) if op == "plugin.uninstall" => self.uninstall_plugin(plugins, request),
                 Ok(plugins) => plugins.command(request),
@@ -634,16 +690,8 @@ impl Sessions {
             };
             // Activations may have changed; registrations and theme definitions follow them.
             self.refresh_hook_subscriptions();
-            if matches!(
-                op,
-                "plugin.install"
-                    | "plugin.uninstall"
-                    | "plugin.enable"
-                    | "plugin.disable"
-                    | "plugin.host.restart"
-                    | "plugin.dev.enter"
-                    | "plugin.dev.leave"
-            ) {
+            if mutation || op == "plugin.host.restart" {
+                let _lifecycle = lifecycle.unwrap_or_else(|| self.plugin_lifecycle.lock().unwrap());
                 let sync = self.sync_plugin_themes();
                 return match reply {
                     Err(error) => Err(error),
@@ -681,7 +729,9 @@ impl Sessions {
         {
             self.ensure_workspace_bound(string("workspace_id")?)?;
         }
-        if op.starts_with("agent.") && op != "agent.disconnect"
+        // Stopping existing work never waits for a workspace rebind.
+        if op.starts_with("agent.")
+            && !matches!(op, "agent.disconnect" | "agent.cancel" | "agent.terminate")
             || matches!(
                 op,
                 "attachment.import" | "draft.send.prepare" | "queue.enqueue"
@@ -887,6 +937,7 @@ impl Sessions {
             | "conversation.create"
             | "conversation.get"
             | "conversation.history"
+            | "conversation.export"
             | "conversation.mark_seen"
             | "agent.child_transcript"
             | "draft.get"
@@ -904,7 +955,9 @@ impl Sessions {
             | "agent.disconnect"
             | "agent.resume"
             | "agent.cancel"
+            | "agent.terminate"
             | "agent.answer" => self.conversation_command(request),
+            op if provider_settings::handles(op) => self.provider_settings_command(request),
             op if layouts::handles(op) => self.layout_command(request),
             op if op.starts_with("orchestration.") => self.orchestration_command(request),
             op if op.starts_with("retention.") => self.retention_command(request),

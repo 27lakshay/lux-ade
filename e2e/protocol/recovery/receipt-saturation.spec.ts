@@ -25,6 +25,7 @@ test('cancel is admitted and reaches the provider while ordinary command receipt
 
   // Every steer is an ordinary command with its own receipt. The mock refuses
   // steering, so each one is answered without changing the turn.
+  await profile.releaseMock('codex', 'refuse-steer')
   let next = 0
   let saturatedBy: string | null = null
   const steer = async () => {

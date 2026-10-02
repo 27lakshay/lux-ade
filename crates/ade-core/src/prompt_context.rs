@@ -2,10 +2,10 @@
 //! (F032): bounding captured text, rendering a provenance-headed document,
 //! and deciding, before dispatch, how each provider receives an attachment.
 //!
-//! The provider table mirrors the bridges that actually encode prompts:
-//! `providers/claude/bridge.mjs`, `crates/ade-runtime/src/codex.rs`,
-//! `providers/opencode/session-api.mjs` and `providers/omp/admission.mjs`.
-//! Change both together.
+//! The provider table mirrors the workers that actually encode prompts:
+//! `providers/claude/worker.mjs`, `crates/ade-runtime/src/codex.rs` and
+//! `providers/omp/admission.mjs`. Change both together. Plugin providers, such
+//! as the OpenCode plugin, declare their own attachment handling.
 use crate::contract::context::{
     PartForm, PlanRejection, PlannedPart, ProviderMediaSupport, RejectionCode,
 };
@@ -342,16 +342,6 @@ pub fn media_support(provider: &str) -> ProviderMediaSupport {
                 "ADE: 8 MiB of attachments per prompt",
             ]),
         ),
-        "opencode" => known(
-            "OpenCode file part with a data URI",
-            "appended to the prompt text",
-            ade,
-            Some(ade),
-            strings(&[
-                "providers/opencode/session-api.mjs: images as file parts, text appended",
-                "ADE: 8 MiB of attachments per prompt",
-            ]),
-        ),
         "omp" => known(
             "Oh My Pi RPC prompt image",
             "appended to the prompt text",
@@ -470,7 +460,7 @@ pub fn plan(provider: &str, prompt: &Prompt) -> Plan {
             });
         } else if attachment.media_type == "text/plain" {
             let (form, prefix) = match provider {
-                "opencode" | "omp" => (
+                "omp" => (
                     PartForm::PromptText,
                     format!("\n\n{ATTACHED}{}:\n", attachment.name),
                 ),
@@ -679,10 +669,10 @@ mod tests {
             claude.parts[1].text_prefix.as_deref(),
             Some("Attached file txt.bin:\n")
         );
-        let opencode = plan("opencode", &p);
-        assert_eq!(opencode.parts[1].form, PartForm::PromptText);
+        let omp = plan("omp", &p);
+        assert_eq!(omp.parts[1].form, PartForm::PromptText);
         assert_eq!(
-            opencode.parts[1].text_prefix.as_deref(),
+            omp.parts[1].text_prefix.as_deref(),
             Some("\n\nAttached file txt.bin:\n")
         );
         assert_eq!(plan("codex", &p).parts[1].form, PartForm::TextBlock);

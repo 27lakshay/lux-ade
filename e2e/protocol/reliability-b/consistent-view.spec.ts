@@ -24,7 +24,7 @@ import { mockDirectory } from '../fixtures/providers'
 import { openConversationView, viewDigest, type ConversationView } from '../fixtures/sync-view'
 
 async function fresh(profile: ScratchProfile, conversationId: string) {
-  return profile.call('conversation.get', { conversation_id: conversationId, limit: 200 })
+  return profile.call('conversation.get', { conversation_id: conversationId, limit: 32 })
 }
 
 /** Wait until the view is current, idle and equal to a fresh snapshot. */

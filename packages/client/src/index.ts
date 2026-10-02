@@ -554,6 +554,13 @@ export class AdeClient {
         buffer = buffer.subarray(end + 1)
         const frame = parseFrame(line)
         if (!frame) return fail('Daemon sent an invalid JSON frame.')
+        if (frame.type === 'feed_overflow' && phase === 'stream') {
+          // The daemon dropped this subscriber for falling behind; the close that follows
+          // reconnects, and every projection reloads from the new catalog revision.
+          terminalError =
+            requiredString(frame.message) ?? 'This client fell behind the daemon feed; reconnecting and reloading.'
+          continue
+        }
         if (frame.type === 'error') {
           if (phase === 'hello' && (frame.code === 'pairing_revoked' || frame.code === 'unauthenticated')) {
             // The host refused this pairing. Retrying cannot help: a person pairs again.

@@ -4,6 +4,8 @@ packages:
   - providers/claude
   - providers/omp
   - providers/codex
+  - providers/acp
+  - plugins/opencode
 verifyDepsBeforeRun: error
 allowBuilds:
   nx: true

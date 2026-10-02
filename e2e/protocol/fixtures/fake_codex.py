@@ -9,7 +9,10 @@ from then on messages go to it and its replies pass through unchanged, except
 that `account/rateLimits/updated` reports exhaustion while ADE_MOCK_DIR/exhaust
 exists. Each app-server start is logged to ADE_MOCK_DIR/launches.jsonl with the
 CODEX_HOME it saw, so a spec can tell which account home a launch used.
+While ADE_MOCK_DIR/per-home exists, each account home gets its own turn-mock
+state directory, so two accounts can hold native threads with the same ID.
 """
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -56,8 +59,14 @@ def pump(stream, skip):
 def start_mock():
     """Start the turn mock on the first message the account probe never sends."""
     global child
+    state = mock_dir
+    if (mock_dir / "per-home").exists() and home:
+        state = mock_dir / "homes" / hashlib.sha256(home.encode()).hexdigest()[:16]
+        state.mkdir(parents=True, exist_ok=True)
+        if (mock_dir / "fixed-thread-id").exists():
+            (state / "fixed-thread-id").touch()
     child = subprocess.Popen([sys.executable, str(MOCK), *args], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                             text=True, bufsize=1, env={**os.environ, "ADE_MOCK_DIR": str(mock_dir)})
+                             text=True, bufsize=1, env={**os.environ, "ADE_MOCK_DIR": str(state)})
     skip = None
     if initialize is not None:
         skip = initialize["id"]

@@ -4,7 +4,7 @@
 // takes turns and a fast SDK client follows the feed. The daemon evicts the
 // stuck client from its bounded queue; the fast client sees every revision in
 // order, and control requests keep answering. The evicted client is told by a
-// close, never by a silent gap, and a new subscription starts from a fresh
+// close (or, when its socket still takes writes, a `feed_overflow` frame first), never by a silent gap, and a new subscription starts from a fresh
 // catalog. A terminal viewer that stops reading is handled the same way.
 import { join } from 'node:path'
 import { access } from 'node:fs/promises'
@@ -123,6 +123,7 @@ test('a feed client that stops reading is evicted while a flood, another provide
   expect(floodItems.size).toBe(640)
 
   // The stuck client reads what its socket kept: an unbroken run of revisions, then a close.
+  // Its writes stalled, so the daemon could not add a frame naming the overflow.
   stuck.resume()
   await stuck.waitForClose()
   const kept = stuck.revisions()

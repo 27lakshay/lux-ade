@@ -7,6 +7,8 @@ use ade_core::contract::usage::UsageLimits;
 
 impl Sessions {
     pub(super) fn capability_command(self: &Arc<Self>, request: &Value) -> Result<Value> {
+        // A plugin's records follow its worker's declared operations; gather them outside the lock.
+        self.discover_plugin_providers();
         let result = match request["op"].as_str().unwrap_or("") {
             "provider.capabilities" => {
                 let query: ProviderCapabilitiesRequest = decode(request)?;
@@ -187,20 +189,22 @@ impl Sessions {
         if provider.starts_with("plugin:") {
             ensure!(
                 account_id.is_none(),
-                "Plugin providers use their own login; ADE manages no accounts for them"
+                "provider.readiness checks a plugin provider's worker only; read a managed account's login with account.inspect"
             );
             let inspection: ProviderInspect =
                 serde_json::from_value(self.inspect_worker(ProviderInspectRequest {
                     provider: provider.into(),
                 })?)?;
-            let check_state = if matches!(
-                inspection.state,
-                ReadinessState::Ready | ReadinessState::InstalledUnchecked
-            ) {
+            // A worker that initialized but declares its native work unavailable
+            // (for example, a missing native executable) passed initialization;
+            // the native-work check carries its reason.
+            let initialized = inspection.descriptor.is_some();
+            let check_state = if initialized {
                 CheckState::Passed
             } else {
                 CheckState::Failed
             };
+            let native_unavailable = initialized && inspection.state == ReadinessState::Unavailable;
             return reply(&ProviderReadiness {
                 tag: Default::default(),
                 provider: provider.into(),
@@ -212,14 +216,26 @@ impl Sessions {
                     ReadinessCheck {
                         check: "worker.initialize".into(),
                         state: check_state,
-                        detail: inspection.reason,
+                        detail: if native_unavailable {
+                            "Installed worker completed compatible read-only initialization".into()
+                        } else {
+                            inspection.reason.clone()
+                        },
                     },
-                    ReadinessCheck {
-                        check: "provider.native_work".into(),
-                        state: CheckState::Skipped,
-                        detail:
-                            "Read-only readiness inspection does not execute provider operations"
-                                .into(),
+                    if native_unavailable {
+                        ReadinessCheck {
+                            check: "provider.native_work".into(),
+                            state: CheckState::Failed,
+                            detail: inspection.reason,
+                        }
+                    } else {
+                        ReadinessCheck {
+                            check: "provider.native_work".into(),
+                            state: CheckState::Skipped,
+                            detail:
+                                "Read-only readiness inspection does not execute provider operations"
+                                    .into(),
+                        }
                     },
                 ],
                 capability_revision: 0,
@@ -356,8 +372,18 @@ impl Sessions {
 fn registered_readiness(record: CapabilityRecord, account_id: Option<String>) -> Result<Value> {
     ensure!(
         account_id.is_none(),
-        "{} uses the agent's own login; ADE manages no accounts for it",
-        record.provider
+        "{}",
+        if record.managed_accounts.support == Support::Supported {
+            format!(
+                "{}'s worker reports a managed account's readiness through account.inspect",
+                record.provider
+            )
+        } else {
+            format!(
+                "{} uses the agent's own login; ADE manages no accounts for it",
+                record.provider
+            )
+        }
     );
     let checks = vec![ReadinessCheck {
         check: "registration".into(),

@@ -3,6 +3,8 @@ import { GhosttyThemeImportDialog } from './GhosttyThemeImportDialog'
 import { ThemeImportDialog } from './ThemeImportDialog'
 import { useState } from 'react'
 import { ProviderSettings } from './ProviderSettings'
+import { McpSettings } from './McpSettings'
+import { PluginSettings } from './PluginSettings'
 import { ThemeLibraryDialog } from './ThemeLibraryDialog'
 import { ThemeValidationPanel } from './ThemeValidationPanel'
 import { AppearancePreview } from './AppearancePreview'
@@ -357,6 +359,8 @@ export function SettingsScreen() {
         )}
       </FieldGroup>
       <ProviderSettings />
+      <McpSettings />
+      <PluginSettings />
     </FullScreen>
   )
 }

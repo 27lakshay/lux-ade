@@ -16,7 +16,14 @@
     "./node": {
       "types": "./dist/node.d.ts",
       "import": "./dist/node.js"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "import": "./dist/testing.js"
     }
+  },
+  "bin": {
+    "ade-provider-conformance": "./dist/conformance-cli.js"
   },
   "dependencies": {
     "@ade/contracts": "workspace:*",

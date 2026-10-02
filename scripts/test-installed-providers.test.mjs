@@ -18,14 +18,26 @@ test('prerequisites inspect executables without executing them, and reject direc
   try {
     const binary = resolve(directory, 'opencode')
     writeFileSync(binary, '#!/bin/sh\nexit 97\n', { mode: 0o700 })
-    assert.deepEqual(installedPrerequisites(['opencode'], { PATH: directory }).missing, [])
+    assert.deepEqual(
+      installedPrerequisites(['omp'], { PATH: directory, ADE_BUN_BIN: binary, ADE_OMP_BIN: binary }, directory).missing,
+      ['omp workspace dependencies (pnpm install)'],
+    )
+    assert.deepEqual(installedPrerequisites(['opencode'], { PATH: directory }, directory).missing, [
+      'ade-daemon',
+      'ade-runtime',
+      'packaged OpenCode plugin (pnpm build:sdk)',
+    ])
     mkdirSync(resolve(directory, 'not-a-binary'))
     assert.deepEqual(
-      installedPrerequisites(['opencode'], {
-        PATH: directory,
-        ADE_OPENCODE_LOOPBACK_BIN: resolve(directory, 'not-a-binary'),
-      }).missing,
-      ['opencode'],
+      installedPrerequisites(
+        ['opencode'],
+        {
+          PATH: directory,
+          ADE_OPENCODE_LOOPBACK_BIN: resolve(directory, 'not-a-binary'),
+        },
+        directory,
+      ).missing,
+      ['opencode', 'ade-daemon', 'ade-runtime', 'packaged OpenCode plugin (pnpm build:sdk)'],
     )
     const result = spawnSync(process.execPath, ['scripts/test-installed-providers.mjs', '--provider', 'opencode'], {
       encoding: 'utf8',

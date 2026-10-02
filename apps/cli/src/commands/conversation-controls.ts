@@ -10,6 +10,10 @@ import {
 import { parseWakeTime } from './wake-time.js'
 
 export const conversationControlUsage = `  conversation controls ID               Show which steer, compact and rewind controls the provider supports now
+  conversation settings ID               Show requested and provider-reported model, reasoning and permission mode
+  conversation configure ID --revision N [--model M] [--reasoning LEVEL] [--permission-mode MODE]
+                                        Change settings at revision N; a value of - returns to the provider
+                                        default. An idle agent is relaunched so the change applies
   conversation steer ID TURN_ID TEXT --operation-id ID
                                         Add input to the running turn natively; never queues it
   conversation compact ID --operation-id ID
@@ -27,6 +31,9 @@ export const conversationControlUsage = `  conversation controls ID             
   conversation delete ID                Delete an idle Conversation, its history, drafts and queue; stops an idle
                                         agent first. Retry a lost reply with the same --operation-id
 `
+
+/** `-` asks for the provider's default, sent as an empty value. */
+const cleared = (value: string): string => (value === '-' ? '' : value)
 
 /** A control that did not take effect fails the command, with the daemon's reason. */
 function settled<T extends { outcome: string; reason?: string | null }>(reply: T): T {
@@ -62,6 +69,28 @@ export async function runConversationControlCommand(
   if (action === 'controls') {
     const { args } = split(rest, 1, [], 'controls')
     return dailyUseCommand(socketPath, { op: 'conversation.controls', conversation_id: required(args[0], 'ID') })
+  }
+  if (action === 'settings') {
+    const { args } = split(rest, 1, [], 'settings')
+    return dailyUseCommand(socketPath, { op: 'conversation.settings', conversation_id: required(args[0], 'ID') })
+  }
+  if (action === 'configure') {
+    const { args, options } = split(rest, 1, ['--revision', '--model', '--reasoning', '--permission-mode'], 'configure')
+    const revision = Number(options['--revision'])
+    if (!Number.isSafeInteger(revision) || revision < 0)
+      throw new CliError('usage', 'conversation configure requires --revision N from conversation settings.')
+    const updated = await dailyUseCommand<'conversation.settings.update'>(socketPath, {
+      op: 'conversation.settings.update',
+      operation_id: effectOperationId(),
+      conversation_id: required(args[0], 'ID'),
+      expected_revision: revision,
+      ...(options['--model'] === undefined ? {} : { model: cleared(options['--model']) }),
+      ...(options['--reasoning'] === undefined ? {} : { reasoning_effort: cleared(options['--reasoning']) }),
+      ...(options['--permission-mode'] === undefined ? {} : { permission_mode: options['--permission-mode'] }),
+    })
+    if (updated.native_error)
+      throw new CliError('not_applied', `Settings were stored but not applied: ${updated.native_error}`)
+    return updated
   }
   if (action === 'steer') {
     const { args } = split(rest, 3, [], 'steer')
