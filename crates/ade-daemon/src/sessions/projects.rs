@@ -160,10 +160,33 @@ impl Sessions {
         );
     }
 
+    /// Adds the authoritative execution host and derived catalog fields in place.
+    pub(super) fn present_conversation_in_place(
+        &self,
+        d: &Data,
+        conversation: &mut Conversation,
+    ) -> Result<()> {
+        conversation.execution_host = Some(super::placement::conversation_execution_host(
+            &d.store.connection,
+            &conversation.workspace_id,
+            &conversation.id,
+        )?);
+        d.store.present_conversation(conversation)?;
+        Ok(())
+    }
+
+    /// Presents every conversation in an owned catalog without cloning its records.
+    pub(super) fn present_catalog(&self, d: &Data, catalog: &mut Catalogue) -> Result<()> {
+        for conversation in &mut catalog.conversations {
+            self.present_conversation_in_place(d, conversation)?;
+        }
+        Ok(())
+    }
+
     /// A Conversation as a reply or feed frame carries it.
-    pub(super) fn presented(d: &Data, conversation: &Conversation) -> Result<Conversation> {
+    pub(super) fn presented(&self, d: &Data, conversation: &Conversation) -> Result<Conversation> {
         let mut conversation = conversation.clone();
-        d.store.present_conversation(&mut conversation)?;
+        self.present_conversation_in_place(d, &mut conversation)?;
         Ok(conversation)
     }
 }

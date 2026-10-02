@@ -1,5 +1,5 @@
 // Protocol E2E fixture provider worker (docs/provider-worker-protocol.md,
-// version 1). It answers every turn with "Hello plugin" and keeps its
+// version 2). It answers every turn with "Hello plugin" and keeps its
 // transcript in memory. It calls no model.
 import { createInterface } from 'node:readline'
 
@@ -17,10 +17,53 @@ function event(params) {
 
 const methods = {
   initialize: () => ({
-    protocol_version: 1,
+    protocol_version: 2,
+    compatible_protocol_versions: [2],
     name: 'E2E agent',
-    capabilities: ['streaming', 'resume', 'cancel'],
+    capabilities: [
+      { name: 'streaming', support: 'supported', available: true, reason: '' },
+      { name: 'resume', support: 'supported', available: true, reason: '' },
+      { name: 'cancel', support: 'supported', available: true, reason: '' },
+    ],
     permission_modes: ['default'],
+    operations: [
+      { method: 'initialize', tier: 'query', availability: 'available', reason: '' },
+      { method: 'open', tier: 'effect_command', availability: 'available', reason: '' },
+      { method: 'send', tier: 'effect_command', availability: 'available', reason: '' },
+      {
+        method: 'steer',
+        tier: 'effect_command',
+        availability: 'unsupported',
+        reason: 'Fixture does not support steering',
+      },
+      { method: 'cancel', tier: 'idempotent_command', availability: 'available', reason: '' },
+      { method: 'answer', tier: 'effect_command', availability: 'available', reason: '' },
+      {
+        method: 'history',
+        tier: 'query',
+        availability: 'unsupported',
+        reason: 'Fixture does not expose paged history',
+      },
+    ],
+    limits: {
+      max_input_frame_bytes: 1048576,
+      max_input_entries: 1024,
+      max_initialize_ms: 15000,
+      max_output_frame_bytes: 1048576,
+      max_history_page_items: 32,
+      max_output_entries: 32,
+      max_concurrency: 8,
+      max_partial_frame_ms: 10000,
+      max_operation_ms: 45000,
+      max_cleanup_ms: 5000,
+    },
+    requirements: {
+      sdk_api_version: 2,
+      sdk_version: '0.2.0',
+      effect_version: '4.0.0-rc.118',
+      platform_node_version: '4.0.0-rc.118',
+      node_engine: '>=22',
+    },
   }),
   open: (params) => {
     session = params.resume ?? `e2e-session-${process.pid}`
@@ -48,13 +91,20 @@ const methods = {
     }
     history.push(user, reply)
     setImmediate(() => {
-      event({ type: 'submitted', submission: params.submission, turn })
-      event({ type: 'started', session, turn })
-      event({ type: 'item', session, item: user })
-      event({ type: 'item', session, item: reply })
-      event({ type: 'finished', session, turn, status: 'completed', error: null })
+      event({
+        type: 'submitted',
+        submission: params.submission,
+        turn,
+        admitted: true,
+        dispatch: 'dispatched',
+        native_outcome: 'accepted',
+      })
+      event({ type: 'started', session, submission: params.submission, turn })
+      event({ type: 'item', session, submission: params.submission, item: user })
+      event({ type: 'item', session, submission: params.submission, item: reply })
+      event({ type: 'finished', session, submission: params.submission, turn, status: 'completed', error: null })
     })
-    return { turn }
+    return { turn, admitted: true, dispatch: 'dispatched', native_outcome: 'accepted' }
   },
   cancel: () => ({}),
   answer: () => ({}),

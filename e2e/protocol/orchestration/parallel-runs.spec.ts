@@ -3,7 +3,15 @@
 // run's outcome and Git changes and merges nothing.
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { expect, fixtureAnswers, prompts, test, type ScratchProfile } from '../fixtures'
+import {
+  answerIntent,
+  cancelActiveSubmission,
+  expect,
+  fixtureAnswers,
+  prompts,
+  test,
+  type ScratchProfile,
+} from '../fixtures'
 import { createWorktree } from '../fixtures/worktrees'
 import { opId, parentIn } from './steps'
 
@@ -245,19 +253,15 @@ test('the group reports attention for a question, and ended rather than complete
   expect(attention.summary.needs_input).toBeGreaterThanOrEqual(1)
   for (const run of asked.group.runs) {
     const childId = run.child.child_conversation_id
-    let request: { id: string; method: string; params: Record<string, unknown> } | undefined
+    let request = (await profile.call('conversation.get', { conversation_id: childId })).requests[0]
     await expect
       .poll(async () => {
-        request = (await profile.call('conversation.get', { conversation_id: childId })).requests[0] as typeof request
+        request = (await profile.call('conversation.get', { conversation_id: childId })).requests[0]
         return request !== undefined
       })
       .toBe(true)
-    await profile.call('agent.answer', {
-      conversation_id: childId,
-      request_id: request!.id,
-      decision: 'answer',
-      answers: fixtureAnswers(request!),
-    })
+    if (!request) throw new Error('Group child question disappeared before it was answered')
+    await profile.call('agent.answer', answerIntent(request, fixtureAnswers(request)))
   }
   await waitForGroup(profile, asked.group.group_id, 'completed')
 
@@ -274,7 +278,7 @@ test('the group reports attention for a question, and ended rather than complete
     await expect
       .poll(async () => (await profile.call('conversation.get', { conversation_id: childId })).conversation.status)
       .toBe('running')
-    await profile.call('agent.cancel', { conversation_id: childId })
+    await cancelActiveSubmission(profile, childId)
   }
   const ended = await waitForGroup(profile, held.group.group_id, 'ended')
   expect(ended.summary).toMatchObject({ runs: 2, completed: 0, interrupted: 2 })

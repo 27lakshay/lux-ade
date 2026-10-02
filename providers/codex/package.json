@@ -1,0 +1,17 @@
+{
+  "name": "ade-codex-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@ade/provider-sdk": "workspace:*",
+    "effect": "4.0.0-rc.118"
+  },
+  "files": [
+    "worker.mjs",
+    "shared-server.mjs"
+  ]
+}

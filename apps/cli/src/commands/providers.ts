@@ -12,6 +12,7 @@ export const providerUsage = `  provider list                         List the p
                                         ADE never switches account or model on exhaustion
   provider registrations                 List every registered provider and its origin:
                                         bundled, adapter or plugin worker version
+  provider inspect PROVIDER              Validate an installed plugin worker with read-only initialize
   preset list                           List presets with capability conflicts
   preset show NAME                       Show one preset with capability conflicts
   preset save NAME --provider ID [--model MODEL] [--reasoning LEVEL] [--permission MODE]
@@ -44,6 +45,10 @@ async function runProvider(
   if (action === 'registrations') {
     if (rest.length) throw new CliError('usage', 'provider registrations does not accept arguments.')
     return dailyUseCommand(socketPath, { op: 'provider.registrations' })
+  }
+  if (action === 'inspect') {
+    if (rest.length !== 1) throw new CliError('usage', 'provider inspect requires one PROVIDER.')
+    return dailyUseCommand(socketPath, { op: 'provider.inspect', provider: required(rest[0], 'PROVIDER') })
   }
   if (action === 'readiness') {
     const provider = required(rest[0], 'PROVIDER')

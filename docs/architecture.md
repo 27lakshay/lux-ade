@@ -29,6 +29,10 @@ ade CLI ────────────────────────
 - **The renderer** draws daemon state and sends commands when gestures end. It keeps pointer,
   keyboard focus, scrolling and mounting policy locally. It reads the host only through the
   typed preload API.
+  Runtime SDK imports are restricted to the exact transport-free entries
+  `@ade/client/sync` and `@ade/client/history`. The latter contains pure bounded
+  history projection state and type-only contract imports. Other SDK entry points
+  remain type-only in the renderer; sockets and effects stay behind preload.
 - **The stream bridge** is an Electron utility process. A MessagePort carries conversation feed
   frames and terminal output directly to each window, batched once per frame. Ordinary commands
   remain on the typed request bridge.
@@ -66,10 +70,11 @@ from the same pinned Ghostty source as the daemon's native terminal state. Outpu
 React state. The CLI's terminal attachment can still request `xterm-replay-v1`; this does not
 describe the desktop renderer.
 
-The workspace shell, navigator, tabs, splits and terminal pane content are built. The production
-renderer currently returns no content for conversation, browser, file or diff pane targets.
-The `?bench` development mode supplies synthetic conversation content for measurement; it is not
-the production conversation surface.
+The workspace shell, navigator, tabs, splits and terminal pane content are built. Production
+conversation panes render retained history and execution context as a read-only view; the
+composer/send path remains unbuilt. Browser, file and diff pane content is still unbuilt.
+`?bench` supplies synthetic conversation content for measurement and is not the production
+conversation surface.
 
 ## Verification
 

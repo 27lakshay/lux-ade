@@ -498,6 +498,12 @@ fn agent_command(host: &Host, request: &Value) -> Result<Value> {
                     identity: inspection.identity,
                 })?);
             }
+            AgentOp::ProviderInspect { worker } => {
+                let worker: ade_core::contract::providers::ProviderWorker =
+                    serde_json::from_value(worker.clone())?;
+                drop(data);
+                return ade_runtime::provider::worker::inspect(&worker);
+            }
             AgentOp::List => {
                 let agents: Vec<_> = data.agents.values().cloned().collect();
                 drop(data);
@@ -596,7 +602,10 @@ fn agent_command(host: &Host, request: &Value) -> Result<Value> {
             }
             Ok(json!({"type":"ack"}))
         }
-        AgentOp::AccountInspect { .. } | AgentOp::List | AgentOp::Create { .. } => {
+        AgentOp::AccountInspect { .. }
+        | AgentOp::ProviderInspect { .. }
+        | AgentOp::List
+        | AgentOp::Create { .. } => {
             unreachable!("answered above")
         }
     }

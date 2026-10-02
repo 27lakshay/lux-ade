@@ -245,7 +245,7 @@ impl Sessions {
                 self.catalog_changed(&mut d)?;
                 reply(&ConversationCreated {
                     tag: Default::default(),
-                    conversation: Self::presented(&d, &conversation)?,
+                    conversation: self.presented(&d, &conversation)?,
                 })
             }
             "conversation.mark_seen" => {
@@ -261,10 +261,12 @@ impl Sessions {
                 }
                 reply(&Ack::default())
             }
+            "conversation.history" => self.native_history_query(request),
             "conversation.get" => {
                 let get: ConversationGetRequest = decode(request)?;
                 let id = non_empty("conversation_id", &get.conversation_id)?;
-                let limit = get.limit.unwrap_or(50) as usize;
+                let limit = get.limit.unwrap_or(32) as usize;
+                ensure!(limit <= 32, ade_core::error::Failure::ResourceLimit);
                 let d = self.data.lock().unwrap();
                 let conversation = d.store.conversation(id)?;
                 let history_epoch = d.store.history_epoch(id)?;
@@ -278,9 +280,14 @@ impl Sessions {
                 }
                 reply(&ConversationSnapshot {
                     tag: Default::default(),
-                    conversation: Self::presented(&d, &conversation)?,
+                    conversation: self.presented(&d, &conversation)?,
                     messages: d.store.messages(id, get.before, limit)?,
-                    requests: d.store.pending(id)?,
+                    requests: d
+                        .store
+                        .pending(id)?
+                        .into_iter()
+                        .map(super::project_pending_request)
+                        .collect(),
                     queued: d.store.queued(id)?,
                     boot_id: self.boot_id.clone(),
                     revision: d.revision,
@@ -391,7 +398,7 @@ impl Sessions {
                     text: prepare.draft_text,
                     revision: prepare.revision,
                     attachments: prepare.attachments,
-                    context_nodes: Vec::new(),
+                    context_nodes: prepare.context_nodes,
                 };
                 let data = self.data.lock().unwrap();
                 let intent = persistence_result(data.store.prepare_send_intent(
@@ -516,7 +523,9 @@ impl Sessions {
                     c.queue_resumed_during = if pause.paused {
                         None
                     } else {
-                        c.active_turn_id.clone()
+                        c.active_turn_id
+                            .clone()
+                            .or_else(|| c.runtime_submission.clone())
                     };
                     if c.error
                         .as_deref()
@@ -546,21 +555,19 @@ impl Sessions {
             }
             "agent.cancel" => {
                 let cancel: AgentCancelRequest = decode(request)?;
-                self.cancel(
+                let outcome = self.cancel(
+                    &cancel.operation_id,
                     non_empty("conversation_id", &cancel.conversation_id)?,
+                    non_empty("source_attempt_id", &cancel.source_attempt_id)?,
+                    non_empty("submission_id", &cancel.submission_id)?,
                     cancel.turn_id.as_deref(),
                 )?;
-                reply(&Ack::default())
+                reply(&outcome)
             }
             "agent.answer" => {
                 let answer: AgentAnswerRequest = decode(request)?;
-                self.answer(
-                    non_empty("conversation_id", &answer.conversation_id)?,
-                    non_empty("request_id", &answer.request_id)?,
-                    non_empty("decision", &answer.decision)?,
-                    answer.answers.as_ref(),
-                )?;
-                reply(&Ack::default())
+                let outcome = self.answer_typed(&answer)?;
+                reply(&outcome)
             }
             _ => bail!("Unknown session operation"),
         }

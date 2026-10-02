@@ -27,8 +27,7 @@ import { useDaemon } from '../../../state/hooks'
 import { conversationState, navigatorTree, type NavigatorProject, type NavigatorWorkspace } from './navigator-tree'
 import { deleteWorktree, newWorkspace, removeWorkspace, renameWorkspace } from './workspace-actions'
 import { selectWorkspace, useCollapsedProjects, useShownWorkspace } from './workspace-selection'
-
-// The navigator's list: projects, their workspaces and each workspace's conversations, built from
+import { openTab } from '../model/layout-store'
 // the daemon's catalog (navigator-tree.ts). Rows are the Pen "Project row", "Workspace row" and
 // "Conversation row"; the section header is "Section header" (its add button is the sidebar
 // footer's "Add project", one control for one action). Choosing a workspace shows its layout.
@@ -192,7 +191,10 @@ function WorkspaceRows({ workspace, active }: { workspace: NavigatorWorkspace; a
                       {CONVERSATION_STATUS_LABELS[state]}
                     </Caption>
                   }
-                  onClick={() => selectWorkspace(workspace.id)}
+                  onClick={() => {
+                    selectWorkspace(workspace.id)
+                    void openTab({ kind: 'conversation', id: conversation.id })
+                  }}
                 >
                   {conversation.title}
                 </Row>

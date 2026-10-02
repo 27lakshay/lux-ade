@@ -1,17 +1,19 @@
-// The send pipeline: one window's drafts and prompts, delivered through the send
-// journal. The journal holds a prompt only until the daemon admits it. `admitted`
-// records that this client saw the daemon hold the intent (from
-// `draft.send.prepare`, `draft.send.get` or `draft.send.list`); from then on the
-// daemon's intent is the recovery record and the journal entry is dropped.
+// The send pipeline keeps each view's draft separate and shares owner-scoped prompt
+// intents through the send journal. The journal holds a prompt only until daemon admission.
+// The admitted flag records that this client saw the daemon hold the intent (from
+// draft.send.prepare, draft.send.get or draft.send.list); after admission, the daemon's
+// intent is the recovery record and the journal entry is dropped.
 //
-// Framework-neutral: a client supplies its journal and hooks. Electron main keeps
-// one entry per window and Conversation; the CLI uses `sendJournaled` below.
+// Framework-neutral: Electron main keeps one entry per renderer view and Conversation,
+// while the owner-scoped send state is shared; the CLI uses sendJournaled below.
+import { randomUUID } from 'node:crypto'
 import { decodeResponse, type Operation, type Request, type Response } from '@ade/contracts'
 import { decideSendRecovery, findPendingSend } from './outbox.js'
 import { DaemonRequestError, isDaemonRefusal, requestDaemon, type RequestOptions } from './request.js'
 import type { SendJournal, SendJournalIdentity, SendJournalRecord } from './send-journal.js'
 
 type Fields<O extends Operation> = Omit<Request<O>, 'op'>
+type ContextNodes = NonNullable<Fields<'draft.save'>['context_nodes']>
 type Attachments = Fields<'draft.save'>['attachments']
 
 /** One daemon request whose reply is checked against the operation's contract. */
@@ -24,8 +26,8 @@ async function daemon<O extends Operation>(
   return decodeResponse(op, await requestDaemon(endpoint, op, fields as Record<string, unknown>, options))
 }
 
-/** A draft as a client holds it. Attachments pass through unchecked. */
-export type SendDraft = { text: string; revision: number; attachments: unknown[] }
+/** A per-view draft snapshot; its attachments and context nodes follow the revision. */
+export type SendDraft = { text: string; revision: number; attachments: unknown[]; context_nodes: unknown[] }
 
 /** A prompt being delivered. It keeps its request ID until the daemon settles it. */
 export type SendIntent = {
@@ -34,20 +36,23 @@ export type SendIntent = {
   revision: number
   text: string
   attachments: unknown[]
+  contextNodes: unknown[]
   state: 'pending' | 'rejected'
   preparing: boolean
   admitted: boolean
   inFlight: Promise<SendResult> | null
 }
 
-/** Who owns a draft: the daemon's draft owner is a window of one profile. */
+/** Stable client owner identity scoped by profile, not an Electron BrowserWindow ID. */
 export type SendOwner = { endpoint: string; profileId: string; windowId: string; conversationId: string }
 
-/** One window's draft for one Conversation, and the prompt it is delivering. */
+/** A view's mutable draft and revision plus its reference to the owner's shared send intent. */
 export type SendEntry = SendOwner & {
   draft: SendDraft
   timer: ReturnType<typeof setTimeout> | null
   pending: Promise<void>
+  stashedRevision?: number
+  recoveryPending?: boolean
   savedRevision: number
   error: string
   unclearedText: string
@@ -83,6 +88,71 @@ function journalIdentity(entry: SendOwner, intent: SendIntent): SendJournalIdent
   }
 }
 
+type DraftSaveResult = { draft: SendDraft } | { conflictStashed: true }
+
+function sameDraftContent(
+  left: Pick<SendDraft, 'text' | 'attachments' | 'context_nodes'>,
+  right: Pick<SendDraft, 'text' | 'attachments' | 'context_nodes'>,
+): boolean {
+  return (
+    left.text === right.text &&
+    JSON.stringify(left.attachments) === JSON.stringify(right.attachments) &&
+    JSON.stringify(left.context_nodes) === JSON.stringify(right.context_nodes)
+  )
+}
+
+async function stashDraft(endpoint: string, conversationId: string, windowId: string, draft: SendDraft): Promise<void> {
+  const name = 'recovery-' + randomUUID()
+  const recovery = await daemon(endpoint, 'draft.stash.save', {
+    conversation_id: conversationId,
+    window_id: windowId,
+    name,
+    text: draft.text,
+    attachments: draft.attachments as Attachments,
+    context_nodes: draft.context_nodes as ContextNodes,
+  })
+  if (
+    !recovery.stash ||
+    !['created', 'unchanged'].includes(recovery.outcome) ||
+    recovery.stash.name !== name ||
+    recovery.stash.conversation_id !== conversationId ||
+    !sameDraftContent(recovery.stash, draft)
+  ) {
+    throw new Error('Draft changed elsewhere; its recovery copy could not be confirmed')
+  }
+}
+async function saveDraftOrStash(
+  endpoint: string,
+  conversationId: string,
+  windowId: string,
+  draft: SendDraft,
+  expectedRevision: number,
+): Promise<DraftSaveResult> {
+  try {
+    const result = await daemon(endpoint, 'draft.save', {
+      conversation_id: conversationId,
+      window_id: windowId,
+      expected_revision: expectedRevision,
+      revision: draft.revision,
+      text: draft.text,
+      attachments: draft.attachments as Attachments,
+      context_nodes: draft.context_nodes as ContextNodes,
+    })
+    const saved = result.draft as SendDraft
+    if (!saved) throw new Error('Draft save returned no draft')
+    saved.attachments ??= []
+    saved.context_nodes ??= []
+    if (saved.revision !== draft.revision || !sameDraftContent(saved, draft)) {
+      await stashDraft(endpoint, conversationId, windowId, draft)
+      return { conflictStashed: true }
+    }
+    return { draft: saved }
+  } catch (error) {
+    if (!(error instanceof DaemonRequestError) || error.code !== 'conflict') throw error
+    await stashDraft(endpoint, conversationId, windowId, draft)
+    return { conflictStashed: true }
+  }
+}
 function journalRecord(entry: SendOwner, intent: SendIntent, dispatchStarted: boolean): SendJournalRecord {
   return {
     ...journalIdentity(entry, intent),
@@ -91,6 +161,7 @@ function journalRecord(entry: SendOwner, intent: SendIntent, dispatchStarted: bo
     draftText: intent.draftText,
     draftRevision: intent.revision,
     attachments: intent.attachments,
+    contextNodes: intent.contextNodes,
     dispatchStarted,
   }
 }
@@ -110,15 +181,35 @@ type DaemonSendIntent = Response<'draft.send.list'>['sends'][number]['intent']
 type PendingDaemonSend = Response<'draft.send.list'>['sends'][number]
 
 function sameDaemonIntent(saved: DaemonSendIntent, intent: SendIntent): boolean {
+  if (!Array.isArray(saved.context_nodes)) throw new Error('Invalid send intent response')
   return (
     saved.request_id === intent.requestId &&
     saved.text === intent.text &&
     saved.draft_text === intent.draftText &&
     saved.draft_revision === intent.revision &&
-    JSON.stringify(saved.attachments) === JSON.stringify(intent.attachments)
+    JSON.stringify(saved.attachments) === JSON.stringify(intent.attachments) &&
+    JSON.stringify(saved.context_nodes) === JSON.stringify(intent.contextNodes)
   )
 }
+function sameSendIntent(left: SendIntent, right: SendIntent): boolean {
+  if (
+    left.requestId !== right.requestId ||
+    left.text !== right.text ||
+    left.draftText !== right.draftText ||
+    left.revision !== right.revision
+  )
+    return false
+  try {
+    return (
+      JSON.stringify(left.attachments) === JSON.stringify(right.attachments) &&
+      JSON.stringify(left.contextNodes) === JSON.stringify(right.contextNodes)
+    )
+  } catch {
+    return false
+  }
+}
 
+type SharedSendState = { intent: SendIntent | null }
 /** What `draft.send.list` reports for this window and Conversation. */
 function daemonSend(entry: SendOwner, options?: RequestOptions): Promise<PendingDaemonSend | null> {
   return findPendingSend(entry.conversationId, (after) =>
@@ -141,10 +232,41 @@ const pending = (intent: SendIntent): SendPending => ({
 })
 
 export class SendPipeline<E extends SendEntry = SendEntry> {
+  private readonly ownerSendStates = new Map<string, SharedSendState>()
+  private readonly entrySendStates = new WeakMap<SendEntry, SharedSendState>()
+
   constructor(
     readonly journal: SendJournal,
     private readonly hooks: SendPipelineHooks<E> = {},
   ) {}
+
+  private sharedState(owner: SendOwner): SharedSendState {
+    const key = JSON.stringify([owner.endpoint, owner.profileId, owner.windowId, owner.conversationId])
+    let state = this.ownerSendStates.get(key)
+    if (!state) {
+      state = { intent: null }
+      this.ownerSendStates.set(key, state)
+    }
+    return state
+  }
+
+  private bindEntry(entry: E, state = this.sharedState(entry)): void {
+    if (this.entrySendStates.has(entry)) return
+    const initial = entry.send
+    if (state.intent && initial && !sameSendIntent(state.intent, initial)) {
+      throw new Error('Local prompt recovery conflicts with another view; preserve both records for review')
+    }
+    if (!state.intent && initial) state.intent = initial
+    Object.defineProperty(entry, 'send', {
+      configurable: true,
+      enumerable: true,
+      get: () => state.intent,
+      set: (intent: SendIntent | null) => {
+        state.intent = intent
+      },
+    })
+    this.entrySendStates.set(entry, state)
+  }
 
   /** Every unresolved send the daemon holds for one window, across Conversations. */
   // Electron main calls this and the other suppressed members through its pipeline()
@@ -180,7 +302,8 @@ export class SendPipeline<E extends SendEntry = SendEntry> {
         record.text === intent.text &&
         record.draftText === intent.draftText &&
         record.draftRevision === intent.revision &&
-        JSON.stringify(record.attachments) === JSON.stringify(intent.attachments),
+        JSON.stringify(record.attachments) === JSON.stringify(intent.attachments) &&
+        JSON.stringify(record.contextNodes) === JSON.stringify(intent.contextNodes),
     )
   }
 
@@ -224,6 +347,7 @@ export class SendPipeline<E extends SendEntry = SendEntry> {
     )
       throw new Error('Invalid send acknowledgement')
     draft.attachments ??= []
+    draft.context_nodes ??= []
     if (entry.send !== intent) throw new Error('Prompt changed during acknowledgement')
     await this.journal.remove(journalIdentity(entry, intent))
     entry.draft = draft
@@ -254,27 +378,34 @@ export class SendPipeline<E extends SendEntry = SendEntry> {
       clearTimeout(entry.timer)
       entry.timer = null
     }
-    if (entry.savedRevision >= entry.draft.revision) return entry.pending
+    if (entry.recoveryPending) return entry.pending
+    if (entry.savedRevision >= entry.draft.revision || entry.stashedRevision === entry.draft.revision)
+      return entry.pending
     const draft = { ...entry.draft }
     entry.pending = entry.pending
       .catch(() => undefined)
       .then(async () => {
-        if (entry.savedRevision >= draft.revision) return
-        const response = await daemon(entry.endpoint, 'draft.save', {
-          conversation_id: entry.conversationId,
-          window_id: entry.windowId,
-          text: draft.text,
-          revision: draft.revision,
-          attachments: draft.attachments as Attachments,
-        })
-        const saved = response.draft as SendDraft
-        if (!saved || saved.revision < draft.revision) throw new Error('Draft was not saved')
-        entry.savedRevision = saved.revision
+        if (entry.savedRevision >= draft.revision || entry.stashedRevision === draft.revision) return
+        const result = await saveDraftOrStash(
+          entry.endpoint,
+          entry.conversationId,
+          entry.windowId,
+          draft,
+          entry.savedRevision,
+        )
+        if ('conflictStashed' in result) {
+          entry.stashedRevision = draft.revision
+          entry.error = 'Draft revision changed or could not be confirmed; its text and context are saved for recovery'
+          this.draftError(entry, entry.error)
+          return
+        }
+        entry.savedRevision = result.draft.revision
+        entry.stashedRevision = undefined
         entry.error = ''
         this.draftError(entry, '')
       })
       .catch((error: unknown) => {
-        entry.error = `Draft could not be saved: ${String(error)}`
+        entry.error = 'Draft could not be saved'
         this.draftError(entry, entry.error)
         throw error
       })
@@ -285,6 +416,7 @@ export class SendPipeline<E extends SendEntry = SendEntry> {
   // fallow-ignore-next-line unused-class-member
   schedule(entry: E): void {
     if (entry.timer) clearTimeout(entry.timer)
+    if (entry.recoveryPending) return
     entry.timer = setTimeout(() => {
       void this.flush(entry).catch(() => undefined)
     }, 250)
@@ -297,6 +429,7 @@ export class SendPipeline<E extends SendEntry = SendEntry> {
    */
   // fallow-ignore-next-line unused-class-member
   async open(owner: SendOwner, extra: Omit<E, keyof SendEntry>): Promise<E> {
+    const sharedState = this.sharedState(owner)
     const { endpoint, profileId, windowId, conversationId } = owner
     const fields = { conversation_id: conversationId, window_id: windowId }
     const [response, pending, journalRecords] = await Promise.all([
@@ -308,6 +441,7 @@ export class SendPipeline<E extends SendEntry = SendEntry> {
     if (!value || typeof value.text !== 'string' || !Number.isSafeInteger(value.revision))
       throw new Error('Invalid draft response')
     value.attachments ??= []
+    value.context_nodes ??= []
     if (pending.restored_from_backup !== undefined && typeof pending.restored_from_backup !== 'boolean') {
       throw new Error('Invalid restored-profile provenance; prompt recovery is unavailable')
     }
@@ -318,6 +452,7 @@ export class SendPipeline<E extends SendEntry = SendEntry> {
       draft_revision?: unknown
       text?: unknown
       attachments?: unknown
+      context_nodes?: unknown
       state?: unknown
     } | null
     if (
@@ -327,6 +462,7 @@ export class SendPipeline<E extends SendEntry = SendEntry> {
         typeof recovered.draft_text !== 'string' ||
         !Number.isSafeInteger(recovered.draft_revision) ||
         !Array.isArray(recovered.attachments) ||
+        !Array.isArray(recovered.context_nodes) ||
         !['pending', 'rejected'].includes(String(recovered.state)))
     )
       throw new Error('Invalid send intent response')
@@ -338,7 +474,8 @@ export class SendPipeline<E extends SendEntry = SendEntry> {
         recorded.text !== recovered.text ||
         recorded.draftText !== recovered.draft_text ||
         recorded.draftRevision !== recovered.draft_revision ||
-        JSON.stringify(recorded.attachments) !== JSON.stringify(recovered.attachments))
+        JSON.stringify(recorded.attachments) !== JSON.stringify(recovered.attachments) ||
+        JSON.stringify(recorded.contextNodes) !== JSON.stringify(recovered.context_nodes))
     ) {
       throw new Error('Local prompt recovery conflicts with the profile daemon; preserve both records for review')
     }
@@ -356,6 +493,7 @@ export class SendPipeline<E extends SendEntry = SendEntry> {
         draftText: recovered.draft_text as string,
         draftRevision: recovered.draft_revision as number,
         attachments: recovered.attachments as unknown[],
+        contextNodes: recovered.context_nodes as unknown[],
         dispatchStarted: true,
         restoreHold: true,
       })
@@ -377,11 +515,35 @@ export class SendPipeline<E extends SendEntry = SendEntry> {
             draftText: recovered.draft_text as string,
             draftRevision: recovered.draft_revision as number,
             attachments: recovered.attachments as unknown[],
+            contextNodes: recovered.context_nodes as unknown[],
           }
         : null)
     const visibleDraft = recorded
-      ? { text: recorded.draftText, revision: recorded.draftRevision, attachments: recorded.attachments }
+      ? {
+          text: recorded.draftText,
+          revision: recorded.draftRevision,
+          attachments: recorded.attachments,
+          context_nodes: recorded.contextNodes,
+        }
       : value
+    const recoveredIntent: SendIntent | null = restored
+      ? {
+          requestId: restored.requestId,
+          text: restored.text,
+          draftText: restored.draftText,
+          revision: restored.draftRevision,
+          attachments: restored.attachments,
+          contextNodes: restored.contextNodes,
+          state: (recovered?.state as 'pending' | 'rejected') || 'pending',
+          preparing: false,
+          admitted: recovered !== null,
+          inFlight: null,
+        }
+      : null
+    if (sharedState.intent && recoveredIntent && !sameSendIntent(sharedState.intent, recoveredIntent)) {
+      throw new Error('Local prompt recovery conflicts with the profile daemon; preserve both records for review')
+    }
+    if (!sharedState.intent) sharedState.intent = recoveredIntent
     const entry: SendEntry = {
       endpoint,
       profileId,
@@ -393,20 +555,9 @@ export class SendPipeline<E extends SendEntry = SendEntry> {
       savedRevision: value.revision,
       error: '',
       unclearedText: '',
-      send: restored
-        ? {
-            requestId: restored.requestId,
-            text: restored.text,
-            draftText: restored.draftText,
-            revision: restored.draftRevision,
-            attachments: restored.attachments,
-            state: (recovered?.state as 'pending' | 'rejected') || 'pending',
-            preparing: false,
-            admitted: recovered !== null,
-            inFlight: null,
-          }
-        : null,
+      send: sharedState.intent,
     }
+    this.bindEntry(entry as E, sharedState)
     return Object.assign(entry, extra) as E
   }
 
@@ -415,8 +566,85 @@ export class SendPipeline<E extends SendEntry = SendEntry> {
    * continue the prompt the entry is delivering. Any other prompt is refused until that one
    * resolves, and until the last sent draft has cleared.
    */
+  async listDraftStashes(entry: E): Promise<Response<'draft.stash.list'>['stashes']> {
+    const response = await daemon(entry.endpoint, 'draft.stash.list', { conversation_id: entry.conversationId })
+    return response.stashes
+  }
+
+  async restoreDraftStash(entry: E, name: string, stashRevision: number): Promise<Response<'draft.stash.restore'>> {
+    this.bindEntry(entry)
+    if (entry.send || entry.recoveryPending) throw new Error('Resolve the current prompt or recovery action first')
+    if (
+      !name ||
+      name.length > 128 ||
+      /[\u0000-\u001f\u007f]/.test(name) ||
+      !Number.isSafeInteger(stashRevision) ||
+      stashRevision < 1
+    )
+      throw new Error('Invalid draft recovery selection')
+    entry.recoveryPending = true
+    try {
+      const localDraft = {
+        ...entry.draft,
+        attachments: structuredClone(entry.draft.attachments),
+        context_nodes: structuredClone(entry.draft.context_nodes),
+      }
+      const [stashes, current] = await Promise.all([
+        this.listDraftStashes(entry),
+        daemon(entry.endpoint, 'draft.get', {
+          conversation_id: entry.conversationId,
+          window_id: entry.windowId,
+        }),
+      ])
+      const selected = stashes.find(
+        (stash) =>
+          stash.name === name && stash.revision === stashRevision && stash.conversation_id === entry.conversationId,
+      )
+      if (!selected) throw new Error('Saved draft recovery changed; reload the recovery list')
+      const latest = current.draft as SendDraft
+      if (!latest || typeof latest.text !== 'string' || !Number.isSafeInteger(latest.revision))
+        throw new Error('Invalid draft response while restoring recovery')
+      latest.attachments ??= []
+      latest.context_nodes ??= []
+      if (!sameDraftContent(localDraft, selected) && entry.stashedRevision !== localDraft.revision) {
+        await stashDraft(entry.endpoint, entry.conversationId, entry.windowId, localDraft)
+      }
+      if (!sameDraftContent(latest, selected) && !sameDraftContent(latest, localDraft)) {
+        await stashDraft(entry.endpoint, entry.conversationId, entry.windowId, latest)
+      }
+      const revision = Math.max(latest.revision, localDraft.revision) + 1
+      if (!Number.isSafeInteger(revision)) throw new Error('Draft revision is exhausted')
+      const response = await daemon(entry.endpoint, 'draft.stash.restore', {
+        conversation_id: entry.conversationId,
+        window_id: entry.windowId,
+        name,
+        stash_revision: stashRevision,
+        expected_revision: latest.revision,
+        revision,
+      })
+      if (response.outcome === 'conflict') {
+        entry.error = 'Draft changed before recovery could be restored; neither draft was overwritten'
+        this.draftError(entry, entry.error)
+        return response
+      }
+      entry.draft = {
+        text: response.draft.text,
+        revision: response.draft.revision,
+        attachments: response.draft.attachments ?? [],
+        context_nodes: response.context_nodes,
+      }
+      entry.savedRevision = response.draft.revision
+      entry.stashedRevision = undefined
+      entry.error = ''
+      this.draftError(entry, '')
+      return response
+    } finally {
+      entry.recoveryPending = false
+    }
+  }
   async send(entry: E, requestId: string, text: string): Promise<SendResult> {
     if (!validId(requestId) || typeof text !== 'string' || !text.trim()) throw new Error('Invalid prompt')
+    this.bindEntry(entry)
     const current = entry.send
     if (current) {
       if (current.requestId !== requestId || current.text !== text)
@@ -430,6 +658,7 @@ export class SendPipeline<E extends SendEntry = SendEntry> {
       draftText: entry.draft.text,
       revision: entry.draft.revision,
       attachments: entry.draft.attachments,
+      contextNodes: structuredClone(entry.draft.context_nodes),
       state: 'pending',
       preparing: true,
       admitted: false,
@@ -442,6 +671,7 @@ export class SendPipeline<E extends SendEntry = SendEntry> {
    * given, must name that prompt.
    */
   async retry(entry: E, requestId?: string): Promise<SendResult> {
+    this.bindEntry(entry)
     const current = entry.send
     if (!current) throw new Error('No prompt is awaiting confirmation')
     if (requestId !== undefined && requestId !== current.requestId)
@@ -467,6 +697,7 @@ export class SendPipeline<E extends SendEntry = SendEntry> {
     if (!cleared || cleared.text !== '' || !Number.isSafeInteger(cleared.revision))
       throw new Error('Invalid completed draft')
     cleared.attachments ??= []
+    cleared.context_nodes ??= []
     await this.journal.remove(journalIdentity(entry, intent))
     entry.draft = cleared
     entry.savedRevision = cleared.revision
@@ -484,6 +715,7 @@ export class SendPipeline<E extends SendEntry = SendEntry> {
    */
   // fallow-ignore-next-line unused-class-member
   async reconcileAccepted(entry: E): Promise<void> {
+    this.bindEntry(entry)
     const intent = entry.send
     if (!intent || intent.preparing) return
     if (intent.inFlight)
@@ -517,8 +749,19 @@ export class SendPipeline<E extends SendEntry = SendEntry> {
    * saved drops the prompt again, so nothing was sent.
    */
   async begin(entry: E, intent: SendIntent): Promise<SendResult> {
-    await this.journal.upsert(journalRecord(entry, intent, false))
+    this.bindEntry(entry)
+    const current = entry.send
+    if (current) {
+      if (!sameSendIntent(current, intent)) throw new Error('Resolve the previous prompt before starting another')
+      return current.preparing ? pending(current) : this.dispatch(entry, current)
+    }
     entry.send = intent
+    try {
+      await this.journal.upsert(journalRecord(entry, intent, false))
+    } catch (error) {
+      if (entry.send === intent) entry.send = null
+      throw error
+    }
     await this.hooks.journaled?.(entry, intent)
     try {
       await this.flush(entry)
@@ -544,6 +787,7 @@ export class SendPipeline<E extends SendEntry = SendEntry> {
    * ID, acknowledge, release, or keep the ID and report the send as pending.
    */
   dispatch(entry: E, intent: SendIntent): Promise<SendResult> {
+    this.bindEntry(entry)
     if (intent.inFlight) return intent.inFlight
     const activeProfile = this.hooks.session?.(entry, intent) ?? (() => true)
     const journal = this.journal
@@ -616,21 +860,28 @@ export class SendPipeline<E extends SendEntry = SendEntry> {
         )
           return uncertain()
         saved.attachments ??= []
+        saved.context_nodes ??= []
         if (saved.revision < intent.revision) {
-          const result = await daemon(entry.endpoint, 'draft.save', {
-            conversation_id: entry.conversationId,
-            window_id: entry.windowId,
-            revision: intent.revision,
-            text: intent.draftText,
-            attachments: intent.attachments as Attachments,
-          })
-          saved = result.draft as SendDraft
-          if (saved) saved.attachments ??= []
+          const result = await saveDraftOrStash(
+            entry.endpoint,
+            entry.conversationId,
+            entry.windowId,
+            {
+              text: intent.draftText,
+              revision: intent.revision,
+              attachments: intent.attachments,
+              context_nodes: intent.contextNodes,
+            },
+            saved.revision,
+          )
+          if ('conflictStashed' in result) return uncertain()
+          saved = result.draft
         }
         if (
           saved.revision !== intent.revision ||
           saved.text !== intent.draftText ||
-          JSON.stringify(saved.attachments) !== JSON.stringify(intent.attachments)
+          JSON.stringify(saved.attachments) !== JSON.stringify(intent.attachments) ||
+          JSON.stringify(saved.context_nodes ?? []) !== JSON.stringify(intent.contextNodes)
         )
           return uncertain()
       } catch {
@@ -646,10 +897,14 @@ export class SendPipeline<E extends SendEntry = SendEntry> {
           text: intent.text,
           revision: intent.revision,
           attachments: intent.attachments as Attachments,
+          context_nodes: intent.contextNodes as ContextNodes,
         })
-        const persisted = prepared.intent as { request_id?: string; state?: string } | null
+        const persisted = prepared.intent as { request_id?: string; state?: string; context_nodes?: unknown } | null
         if (
-          persisted?.request_id !== intent.requestId ||
+          !persisted ||
+          persisted.request_id !== intent.requestId ||
+          !Array.isArray(persisted.context_nodes) ||
+          JSON.stringify(persisted.context_nodes) !== JSON.stringify(intent.contextNodes) ||
           !['pending', 'rejected', 'completed'].includes(String(persisted.state))
         ) {
           throw new Error('Send intent was not admitted')

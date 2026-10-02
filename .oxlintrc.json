@@ -245,7 +245,7 @@
               {
                 "name": "@ade/client",
                 "allowTypeImports": true,
-                "message": "The SDK's root opens sockets, which the sandboxed renderer cannot. Import types only, or use @ade/client/sync."
+                "message": "The SDK's root opens sockets, which the sandboxed renderer cannot. Import types only, or use @ade/client/sync or @ade/client/history."
               }
             ],
             "patterns": [
@@ -254,9 +254,10 @@
                 "message": "The renderer is sandboxed and has no Node. Ask the main process through window.adeHost."
               },
               {
-                "group": ["@ade/client/*", "!@ade/client/sync"],
+                "group": ["@ade/client/*", "!@ade/client/sync", "!@ade/client/history", "@ade/client/*/*"],
+                "caseSensitive": true,
                 "allowTypeImports": true,
-                "message": "Only @ade/client/sync is transport-free; import types only from the rest of the SDK."
+                "message": "Only @ade/client/sync and @ade/client/history are transport-free; import types only from the rest of the SDK."
               }
             ]
           }

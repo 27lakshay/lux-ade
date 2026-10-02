@@ -2,7 +2,18 @@
 // the adapter's declared capability, is refused while a turn is active, keeps
 // its provenance, discloses what does not carry over, and is an effect command
 // with a receipt: a retry converges and a conflicting reuse is refused.
-import { expect, prompts, send, test, waitForIdle, waitForPendingRequest, type ScratchProfile } from '../fixtures'
+import {
+  answerFor,
+  answerIntent,
+  cancelActiveSubmission,
+  expect,
+  prompts,
+  send,
+  test,
+  waitForIdle,
+  waitForPendingRequest,
+  type ScratchProfile,
+} from '../fixtures'
 import { sendAndLoseReply } from '../fixtures/lost-reply'
 import type { FakeProviderClis } from '../fixtures/provider-cli'
 import { conversationOn, profileWithClis, verifiedAccount, type Account } from './steps'
@@ -168,7 +179,7 @@ test('F026: a switch is refused during an active turn and with an open approval,
   await expect(profile.call('account.switch', switchRequest(conversationId, work, personal))).rejects.toThrow(
     /A turn is active/,
   )
-  await profile.call('agent.cancel', { conversation_id: conversationId })
+  await cancelActiveSubmission(profile, conversationId)
   await expect.poll(async () => (await conversation(profile, conversationId)).status).toBe('interrupted')
 
   await send(profile, conversationId, prompts.approval)
@@ -176,7 +187,7 @@ test('F026: a switch is refused during an active turn and with an open approval,
   await expect(profile.call('account.switch', switchRequest(conversationId, work, personal))).rejects.toThrow(
     /A turn is active|open questions and approvals/,
   )
-  await profile.call('agent.answer', { conversation_id: conversationId, request_id: approval.id, decision: 'decline' })
+  await profile.call('agent.answer', answerIntent(approval, answerFor(approval, 'decline')))
   await waitForIdle(profile, conversationId)
 
   // Nothing was recorded by the refusals; the idle conversation now switches.

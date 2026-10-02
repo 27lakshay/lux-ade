@@ -1,8 +1,6 @@
-// Deterministic provider fixtures. Every scratch profile launches Codex through
-// scripts/fixtures/codex_mock.py and Claude through scripts/fixtures/claude_mock.mjs
-// (which serves providers/claude/fake-sdk.mjs). Neither calls a model, reads a
-// real account or starts a real provider CLI. The prompt text selects the
-// scripted behaviour; each mock appends what it saw to calls.jsonl.
+// Deterministic process fixtures. Scratch profiles launch Rust-supervised v2
+// workers; an isolated Node loader substitutes only the Claude SDK import.
+// The mock SDK never calls a model or reads a real account.
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { repositoryRoot } from './environment'
@@ -36,6 +34,8 @@ export const codexPrompts = {
   typedPlan: 'typed-plan',
   typedTool: 'typed-tool',
   typedSubagents: 'typed-subagents',
+  /** An unknown Codex native request that remains pending until withdrawn. */
+  unsupportedRequest: 'unsupported-request',
 } as const
 
 /** The text each mock streams for `prompts.turn`. */
@@ -52,8 +52,8 @@ export function providerEnvironment(profileRoot: string): Record<string, string>
     ADE_CODEX_BIN: join(repositoryRoot, 'scripts/fixtures/codex_mock.py'),
     ADE_CODEX_TRANSPORT: 'stdio',
     ADE_MOCK_DIR: mockDirectory(profileRoot, 'codex'),
-    ADE_CLAUDE_BRIDGE_BIN: join(repositoryRoot, 'scripts/fixtures/claude_mock.mjs'),
-    ADE_MOCK_CLAUDE_DIR: mockDirectory(profileRoot, 'claude'),
+    NODE_OPTIONS: '--experimental-loader ' + join(repositoryRoot, 'providers/claude/worker-test-loader.mjs'),
+    ADE_CLAUDE_WORKER_TEST_DIR: mockDirectory(profileRoot, 'claude'),
   }
 }
 

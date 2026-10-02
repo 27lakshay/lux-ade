@@ -65,6 +65,9 @@ function decodeReply<O extends DailyUseOperation>(op: O, response: unknown): Dai
 
 export const conversationUsage = `  conversation list [WORKSPACE_ID]      List conversations
   conversation inspect ID               Read conversation and recent messages
+  conversation history ID [JSON_OPTIONS] Read a bounded oldest-first native source page; no submission effects
+                                        Continue with snapshot, native_cursor and history_epoch from the reply
+                                        JSON_OPTIONS also accepts max_items (1–32) and max_bytes (1–524288)
   conversation export ID FILE            Write complete readable JSON history to a new file
   conversation mark-seen ID [--through UPDATED_AT]
                                         Mark the conversation seen, up to the change shown
@@ -91,7 +94,7 @@ async function exportConversation(
   conversationId: string,
   destination: string,
 ): Promise<Record<string, unknown>> {
-  const pageSize = 100
+  const pageSize = 32
   const first = await requestDaemon(socketPath, 'conversation.get', {
     conversation_id: conversationId,
     limit: pageSize,
@@ -239,6 +242,13 @@ export async function runConversationCommand(
   if (area === 'conversation' && action === 'inspect') {
     return requestDaemon(socketPath, 'conversation.get', { conversation_id: required(rest[0], 'ID') })
   }
+  if (area === 'conversation' && action === 'history') {
+    if (rest.length > 2) throw new CliError('usage', 'conversation history accepts ID [JSON_OPTIONS].')
+    return call(socketPath, 'conversation.history', {
+      ...(rest[1] ? jsonObject(rest[1], 'JSON_OPTIONS') : {}),
+      conversation_id: required(rest[0], 'ID'),
+    })
+  }
   if (area === 'conversation' && action === 'mark-seen') {
     const parsed = parseWords(rest, ['--through'], [], 'conversation mark-seen')
     const [id] = positionals(parsed, 1, 'conversation mark-seen requires ID')
@@ -333,11 +343,26 @@ export async function runConversationCommand(
     const parsed = parseWords(rest, ['--turn'], [], 'conversation cancel')
     const [conversation_id] = positionals(parsed, 1, 'conversation cancel requires ID [--turn TURN_ID]')
     const turn = parsed.options['--turn']
-    return requestDaemon(socketPath, 'agent.cancel', {
-      operation_id: effectOperationId(),
-      conversation_id,
-      ...(turn === undefined ? {} : { turn_id: turn }),
-    })
+    const { conversation } = decodeReply(
+      'conversation.get',
+      await requestDaemon(socketPath, 'conversation.get', { conversation_id }),
+    )
+    const source_attempt_id = conversation.runtime_run
+    const submission_id = conversation.runtime_submission
+    const target_turn_id = turn ?? conversation.active_turn_id ?? undefined
+    if (!source_attempt_id || !submission_id) {
+      throw new CliError('usage', 'Conversation has no active cancellation target.')
+    }
+    return decodeReply(
+      'agent.cancel',
+      await requestDaemon(socketPath, 'agent.cancel', {
+        operation_id: effectOperationId(),
+        conversation_id,
+        source_attempt_id,
+        submission_id,
+        ...(target_turn_id === undefined ? {} : { turn_id: target_turn_id }),
+      }),
+    )
   }
   if (area === 'conversation' && (action === 'resume' || action === 'disconnect')) {
     if (rest.length !== 1) throw new CliError('usage', `conversation ${action} requires ID.`)
@@ -367,7 +392,10 @@ export async function runConversationCommand(
     if (rest.length < 3 || rest.length > 4) {
       throw new CliError('usage', 'conversation answer requires ID REQUEST_ID DECISION [ANSWERS_JSON].')
     }
-    const [conversationId, requestId, decision, answerJson] = rest
+    const conversationId = required(rest[0], 'ID')
+    const requestId = required(rest[1], 'REQUEST_ID')
+    const decision = required(rest[2], 'DECISION')
+    const answerJson = rest[3]
     if (!['accept', 'decline', 'cancel', 'answer'].includes(decision)) {
       throw new CliError('usage', 'DECISION must be accept, decline, cancel, or answer.')
     }
@@ -384,12 +412,27 @@ export async function runConversationCommand(
     ) {
       throw new CliError('usage', 'ANSWERS_JSON values must be text or arrays of text.')
     }
-    return requestDaemon(socketPath, 'agent.answer', {
-      conversation_id: required(conversationId, 'ID'),
-      request_id: required(requestId, 'REQUEST_ID'),
-      decision,
-      ...(answers === undefined ? {} : { answers }),
-    })
+    const snapshot = decodeReply(
+      'conversation.get',
+      await requestDaemon(socketPath, 'conversation.get', { conversation_id: conversationId }),
+    )
+    const pending = snapshot.requests.find((candidate) => candidate.id === requestId)
+    if (!pending) throw new CliError('invalid_request', 'Native request is no longer pending.')
+    const normalizedAnswers: Record<string, string[]> = {}
+    for (const [questionId, value] of Object.entries(answers ?? {})) {
+      normalizedAnswers[questionId] = typeof value === 'string' ? [value] : (value as string[])
+    }
+    const answer: Fields<'agent.answer'>['answer'] =
+      decision === 'answer' ? { kind: 'questions', answers: normalizedAnswers } : { kind: 'choice', value: decision }
+    const fields: Fields<'agent.answer'> = {
+      operation_id: effectOperationId(),
+      conversation_id: pending.conversation_id,
+      request_id: pending.id,
+      ...(pending.source_attempt_id === undefined ? {} : { source_attempt_id: pending.source_attempt_id }),
+      request_revision: pending.revision,
+      answer,
+    }
+    return decodeReply('agent.answer', await call(socketPath, 'agent.answer', fields))
   }
   return undefined
 }

@@ -1456,37 +1456,145 @@
       ],
       "type": "object"
     },
-    "AgentAnswerRequest": {
+    "AgentAnswerOutcome": {
       "additionalProperties": false,
-      "description": "`agent.answer`: answer a pending provider request by its ID.",
+      "description": "`agent.answer`: the durable effect receipt and latest native resolution evidence.",
       "properties": {
-        "answers": {
-          "description": "Structured answers; required by the `answer` decision."
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
         },
-        "conversation_id": {
+        "operation_id": {
           "type": "string"
         },
-        "decision": {
+        "request_id": {
+          "type": "string"
+        },
+        "request_revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "resolution": {
+          "$ref": "#/$defs/RequestResolution"
+        },
+        "response_delivery": {
+          "$ref": "#/$defs/ResponseDelivery"
+        },
+        "source_attempt_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "description": "The `agent_answer_outcome` type tag.",
+          "enum": [
+            "agent_answer_outcome"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "operation_id",
+        "request_id",
+        "request_revision",
+        "response_delivery",
+        "resolution"
+      ],
+      "type": "object"
+    },
+    "AgentAnswerRequest": {
+      "additionalProperties": false,
+      "description": "An answer is fenced by the caller's durable operation and exact request revision.",
+      "properties": {
+        "answer": {
+          "$ref": "#/$defs/RequestAnswer"
+        },
+        "conversation_id": {
           "type": "string"
         },
         "op": {
           "const": "agent.answer"
         },
+        "operation_id": {
+          "type": "string"
+        },
         "request_id": {
           "type": "string"
+        },
+        "request_revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "source_attempt_id": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
         "op",
+        "operation_id",
         "conversation_id",
         "request_id",
-        "decision"
+        "request_revision",
+        "answer"
       ],
       "type": "object"
     },
+    "AgentCancelOutcome": {
+      "description": "Native interruption evidence attached to the durable agent.cancel operation receipt.",
+      "properties": {
+        "conversation_id": {
+          "type": "string"
+        },
+        "evidence": {
+          "$ref": "#/$defs/ProviderCancelEvidence"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "source_attempt_id": {
+          "type": "string"
+        },
+        "submission_id": {
+          "type": "string"
+        },
+        "turn_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "$ref": "#/$defs/AgentCancelOutcomeTag"
+        }
+      },
+      "required": [
+        "type",
+        "operation_id",
+        "conversation_id",
+        "source_attempt_id",
+        "submission_id",
+        "evidence"
+      ],
+      "type": "object"
+    },
+    "AgentCancelOutcomeTag": {
+      "enum": [
+        "agent_cancel_outcome"
+      ],
+      "type": "string"
+    },
     "AgentCancelRequest": {
       "additionalProperties": false,
-      "description": "`agent.cancel`: cancel the Conversation's active turn.",
+      "description": "`agent.cancel`: target one immutable ADE runtime attempt and submission.",
       "properties": {
         "conversation_id": {
           "type": "string"
@@ -1498,15 +1606,24 @@
           "description": "The caller's operation ID. The daemon keeps a receipt under it: a\nretry with the same ID and payload returns the recorded outcome, and\nthe same ID with another payload is a conflict.",
           "type": "string"
         },
+        "source_attempt_id": {
+          "description": "Runtime attempt and ADE submission are the immutable target identity.",
+          "type": "string"
+        },
+        "submission_id": {
+          "type": "string"
+        },
         "turn_id": {
-          "description": "The turn the caller saw active. When present, the cancel applies only\nwhile that turn is still the active one, so a late or retried cancel\nnever stops its successor. Absent, it cancels whatever turn is active.",
+          "description": "Native turn, when known. Absence is never a wildcard.",
           "type": "string"
         }
       },
       "required": [
         "op",
         "operation_id",
-        "conversation_id"
+        "conversation_id",
+        "source_attempt_id",
+        "submission_id"
       ],
       "type": "object"
     },
@@ -5543,6 +5660,42 @@
       ],
       "type": "object"
     },
+    "Child": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "session_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/ChildState"
+        },
+        "summary": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "session_id",
+        "name",
+        "state",
+        "summary"
+      ],
+      "type": "object"
+    },
     "ChildAnswerRequest": {
       "additionalProperties": false,
       "description": "`orchestration.child.answer`: answer a question or approval a child is\nwaiting on, from the parent's view.",
@@ -5950,6 +6103,19 @@
         "text"
       ],
       "type": "object"
+    },
+    "ChildState": {
+      "enum": [
+        "pending",
+        "running",
+        "waiting",
+        "completed",
+        "failed",
+        "interrupted",
+        "closed",
+        "unknown"
+      ],
+      "type": "string"
     },
     "ChildTranscriptPage": {
       "description": "The `agent.child_transcript` reply, passed through from the provider bridge.\nOffset-paged providers send `next_offset` (null on the last page); cursor-paged\nproviders send `next_cursor` instead.",
@@ -6859,6 +7025,161 @@
       ],
       "type": "object"
     },
+    "Config2": {
+      "additionalProperties": false,
+      "properties": {
+        "model": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "permission_mode": {
+          "default": "default",
+          "type": "string"
+        },
+        "setting_sources": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "model",
+        "permission_mode",
+        "setting_sources"
+      ],
+      "type": "object"
+    },
+    "Connected": {
+      "properties": {
+        "history": {
+          "items": {
+            "$ref": "#/$defs/Item"
+          },
+          "type": "array"
+        },
+        "rewound_from": {
+          "description": "Set when a rewind forked `session` from this one after the Agent\nopened (F039): a daemon that reattaches may still hold it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "session": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session",
+        "history"
+      ],
+      "type": "object"
+    },
+    "Content": {
+      "properties": {
+        "attachment": {
+          "$ref": "#/$defs/Attachment"
+        },
+        "data": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "attachment",
+        "data"
+      ],
+      "type": "object"
+    },
+    "Content2": {
+      "oneOf": [
+        {
+          "properties": {
+            "explanation": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "steps": {
+              "items": {
+                "$ref": "#/$defs/PlanStep"
+              },
+              "type": "array"
+            },
+            "type": {
+              "const": "plan",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "explanation",
+            "steps"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "call_id": {
+              "type": "string"
+            },
+            "input": true,
+            "is_error": {
+              "type": "boolean"
+            },
+            "name": {
+              "type": "string"
+            },
+            "output": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "const": "tool",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "call_id",
+            "name",
+            "input",
+            "output",
+            "is_error"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "agents": {
+              "items": {
+                "$ref": "#/$defs/Child"
+              },
+              "type": "array"
+            },
+            "operation": {
+              "type": "string"
+            },
+            "type": {
+              "const": "subagents",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "operation",
+            "agents"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "ContextCaptureRequest": {
       "additionalProperties": false,
       "description": "`context.capture`: capture one selection into a context node.",
@@ -7521,6 +7842,41 @@
             "null"
           ]
         },
+        "execution_host": {
+          "description": "The ADE placement of this Conversation; filled from the profile placement record for each reply.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "local",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "host_id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "remote",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "host_id"
+              ],
+              "type": "object"
+            }
+          ]
+        },
         "group_id": {
           "description": "The orchestration group this child runs in, if any. Set on every\nreply, never stored.",
           "type": [
@@ -7605,6 +7961,7 @@
         "provider",
         "account_id",
         "account_context",
+        "execution_host",
         "provider_config",
         "provider_thread_id",
         "status",
@@ -8138,13 +8495,146 @@
           "type": "integer"
         },
         "limit": {
-          "description": "Page size; the daemon uses 50 when it is absent.",
-          "maximum": 9007199254740991,
+          "description": "Page size; defaults to 32 and may not exceed 32. ADE sequence/epoch paging is unchanged.",
+          "maximum": 32,
           "minimum": 0,
           "type": "integer"
         },
         "op": {
           "const": "conversation.get"
+        }
+      },
+      "required": [
+        "op",
+        "conversation_id"
+      ],
+      "type": "object"
+    },
+    "ConversationHistory": {
+      "additionalProperties": false,
+      "properties": {
+        "complete": {
+          "description": "False for a failed or truncated read, including a single oversized item.",
+          "type": "boolean"
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProviderWorkerFailure"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "history_epoch": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "messages": {
+          "items": {
+            "$ref": "#/$defs/Message"
+          },
+          "type": "array"
+        },
+        "next_native_cursor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "retained_bytes": {
+          "description": "Actual encoded retained Message array bytes, not a claimed source/page limit.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "snapshot": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProviderHistorySnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Null only when an initial read failed before identifying its native source."
+        },
+        "stale": {
+          "description": "True only for safely matching identified content retained after a temporary refusal.",
+          "type": "boolean"
+        },
+        "type": {
+          "description": "The `conversation_history` type tag.",
+          "enum": [
+            "conversation_history"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "conversation_id",
+        "snapshot",
+        "messages",
+        "next_native_cursor",
+        "complete",
+        "retained_bytes",
+        "stale",
+        "error",
+        "history_epoch"
+      ],
+      "type": "object"
+    },
+    "ConversationHistoryRequest": {
+      "additionalProperties": false,
+      "description": "Read native history through the owning daemon, not the provider SDK or runtime.\nThe daemon constructs and validates execution/account/source context. Native\ncursors below are distinct from conversation.get's ADE message sequence.",
+      "properties": {
+        "conversation_id": {
+          "type": "string"
+        },
+        "history_epoch": {
+          "description": "ADE's durable invalidation fence, never a native cursor or source generation.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "max_bytes": {
+          "maximum": 524288,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_items": {
+          "maximum": 32,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "native_cursor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "op": {
+          "const": "conversation.history"
+        },
+        "snapshot": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProviderHistorySnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Echo a previously returned native snapshot; null/absent starts an identified read."
         }
       },
       "required": [
@@ -8226,6 +8716,17 @@
           "maximum": 9007199254740991,
           "minimum": 0,
           "type": "integer"
+        },
+        "native_message": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NativeMessageLocator"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Provider-native locator for the prompt the rewind removes; distinct from ADE IDs."
         },
         "native_session": {
           "description": "After a rewind the provider performed by forking: the native session\nthe Conversation continues in. The earlier one is kept unchanged.",
@@ -8388,6 +8889,17 @@
             "string",
             "null"
           ]
+        },
+        "native_message": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NativeMessageLocator"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Exact provider-native locator returned by the matching history preview."
         },
         "op": {
           "const": "conversation.rewind"
@@ -11496,6 +12008,12 @@
           },
           "type": "array"
         },
+        "context_nodes": {
+          "items": {
+            "$ref": "#/$defs/DraftContextNode"
+          },
+          "type": "array"
+        },
         "conversation_id": {
           "type": "string"
         },
@@ -11835,6 +12353,401 @@
       ],
       "type": "string"
     },
+    "Event": {
+      "oneOf": [
+        {
+          "properties": {
+            "error": {
+              "type": "string"
+            },
+            "submission": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "const": "operation_failed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "submission",
+            "error"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "admitted": {
+              "default": false,
+              "type": "boolean"
+            },
+            "dispatch": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SubmissionDispatch"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "native_outcome": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SubmissionNativeOutcome"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "submission": {
+              "type": "string"
+            },
+            "turn": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "const": "submitted",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "submission",
+            "turn",
+            "admitted"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "session": {
+              "type": "string"
+            },
+            "submission": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "turn": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "const": "started",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "session",
+            "turn"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "error": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "interrupt_requested": {
+              "default": false,
+              "type": "boolean"
+            },
+            "native_terminal": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/NativeTerminalEvidence"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "session": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            },
+            "submission": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "turn": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "const": "finished",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "session",
+            "turn",
+            "status",
+            "error",
+            "interrupt_requested"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "item": {
+              "$ref": "#/$defs/Item"
+            },
+            "session": {
+              "type": "string"
+            },
+            "submission": {
+              "default": null,
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "const": "item",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "session",
+            "submission",
+            "item"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string"
+            },
+            "role": {
+              "type": "string"
+            },
+            "session": {
+              "type": "string"
+            },
+            "submission": {
+              "default": null,
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "text": {
+              "type": "string"
+            },
+            "turn": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "const": "delta",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "session",
+            "submission",
+            "turn",
+            "id",
+            "role",
+            "kind",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": true,
+            "metadata": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/RequestMetadata"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "method": {
+              "type": "string"
+            },
+            "params": true,
+            "session": {
+              "type": "string"
+            },
+            "submission": {
+              "default": null,
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "supported": {
+              "type": "boolean"
+            },
+            "turn": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "const": "request",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "session",
+            "submission",
+            "turn",
+            "id",
+            "method",
+            "params",
+            "supported"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": true,
+            "resolution": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/RequestResolution"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "session": {
+              "default": "",
+              "type": "string"
+            },
+            "submission": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "const": "resolved",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "session",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Token, cost or rate-limit figures exactly as the provider reported\nthem. `source` names the native event; the daemon normalizes `report`\nand never fills in a figure the provider left out.",
+          "properties": {
+            "report": {
+              "default": null
+            },
+            "session": {
+              "default": "",
+              "type": "string"
+            },
+            "source": {
+              "type": "string"
+            },
+            "turn": {
+              "default": null,
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "const": "usage",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "session",
+            "turn",
+            "source",
+            "report"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "error": {
+              "type": "string"
+            },
+            "turn": {
+              "description": "The provider turn the error belongs to, when the provider names\none. An error for another turn never reaches the active one.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "const": "error",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "error"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "error": {
+              "type": "string"
+            },
+            "type": {
+              "const": "exited",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "error"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "Excluded": {
       "properties": {
         "detail": {
@@ -12034,6 +12947,24 @@
         "exited",
         "stopped",
         "unavailable"
+      ],
+      "type": "string"
+    },
+    "Failure": {
+      "description": "Categories carry no raw provider payload. Recovery is advice, never an\nauthorization to replay a mutation whose outcome might be unknown.",
+      "enum": [
+        "authentication",
+        "rate_limit",
+        "usage_limit",
+        "process_exited",
+        "disconnected",
+        "invalid_data",
+        "save_failed",
+        "outcome_unknown",
+        "unavailable",
+        "session_unavailable",
+        "rejected",
+        "resource_limit"
       ],
       "type": "string"
     },
@@ -14387,6 +15318,67 @@
         }
       ]
     },
+    "Item": {
+      "properties": {
+        "client_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "content": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Content2"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "native_message": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NativeMessageLocator"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "role": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "turn": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "client_id",
+        "turn",
+        "role",
+        "kind",
+        "text",
+        "status"
+      ],
+      "type": "object"
+    },
     "KeybindingReset": {
       "anyOf": [
         {
@@ -15833,11 +16825,31 @@
         "conversation_id": {
           "type": "string"
         },
+        "delivery": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SubmissionDelivery"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "id": {
           "type": "string"
         },
         "kind": {
           "type": "string"
+        },
+        "native_message": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NativeMessageLocator"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "provider_item_id": {
           "type": [
@@ -15963,6 +16975,59 @@
           "type": "string"
         }
       ]
+    },
+    "NativeMessageLocator": {
+      "description": "Provider-native transcript identity. It is independent of ADE message IDs,\nclient IDs, and turn IDs, and is valid only in its native session.",
+      "properties": {
+        "message_id": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "session": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "session",
+        "message_id"
+      ],
+      "type": "object"
+    },
+    "NativeTerminalEvidence": {
+      "additionalProperties": false,
+      "description": "Provider-reported terminal evidence, kept separate from ADE's interrupt request.",
+      "properties": {
+        "api_error_status": true,
+        "errors": true,
+        "is_error": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "stop_reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "subtype": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "terminal_reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
     },
     "NotificationDeliveries": {
       "description": "The `notification.delivery.list` reply.",
@@ -16652,51 +17717,50 @@
       ]
     },
     "PendingRequest": {
+      "additionalProperties": false,
+      "description": "Client-facing state; raw provider params and answers remain private.",
       "properties": {
-        "answer_attempt": {
-          "default": 0,
-          "maximum": 9007199254740991,
-          "minimum": 0,
-          "type": "integer"
-        },
-        "answer_dispatched": {
-          "default": false,
-          "type": "boolean"
-        },
-        "answer_fingerprint": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
         "conversation_id": {
           "type": "string"
         },
         "id": {
           "type": "string"
         },
-        "method": {
-          "type": "string"
+        "metadata": {
+          "$ref": "#/$defs/RequestMetadata"
         },
-        "params": true,
-        "rpc_id": true,
-        "run_id": {
-          "type": "string"
+        "resolution": {
+          "$ref": "#/$defs/RequestResolution"
         },
-        "status": {
-          "type": "string"
+        "response_delivery": {
+          "$ref": "#/$defs/ResponseDelivery"
+        },
+        "response_operation_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "revision": {
+          "description": "ADE-owned revision, separate from source-attempt and native revisions.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "source_attempt_id": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
         "id",
         "conversation_id",
-        "run_id",
-        "rpc_id",
-        "method",
-        "params",
-        "status",
-        "answer_dispatched",
-        "answer_attempt"
+        "revision",
+        "metadata",
+        "resolution",
+        "response_delivery"
       ],
       "type": "object"
     },
@@ -17200,6 +18264,21 @@
         "attachment_id",
         "code",
         "message"
+      ],
+      "type": "object"
+    },
+    "PlanStep": {
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/StepStatus"
+        },
+        "step": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "step",
+        "status"
       ],
       "type": "object"
     },
@@ -19549,6 +20628,86 @@
         }
       ]
     },
+    "ProviderCancelEvidence": {
+      "additionalProperties": false,
+      "description": "Evidence returned by a native cancellation command and any follow-up status sample.",
+      "properties": {
+        "active_work_remaining": {
+          "default": null,
+          "description": "Null means the provider has no evidence about remaining foreground work.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "background_work_remaining": {
+          "default": null,
+          "description": "Null means the provider has no evidence about background work.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "interruption_requested": {
+          "type": "boolean"
+        },
+        "observed_at_ms": {
+          "default": null,
+          "description": "Unix milliseconds for a point-in-time native state sample, when available.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "queued_work_count": {
+          "default": null,
+          "description": "Null means the provider has no queue-depth evidence.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "scope": {
+          "$ref": "#/$defs/ProviderCancelScope"
+        },
+        "termination": {
+          "$ref": "#/$defs/ProviderCancelTermination"
+        }
+      },
+      "required": [
+        "scope",
+        "interruption_requested",
+        "termination",
+        "active_work_remaining",
+        "queued_work_count",
+        "background_work_remaining",
+        "observed_at_ms"
+      ],
+      "type": "object"
+    },
+    "ProviderCancelScope": {
+      "description": "What the adapter can prove after requesting a native interruption.",
+      "enum": [
+        "turn",
+        "submission",
+        "session",
+        "process",
+        "unknown"
+      ],
+      "type": "string"
+    },
+    "ProviderCancelTermination": {
+      "enum": [
+        "requested",
+        "confirmed",
+        "unknown"
+      ],
+      "type": "string"
+    },
     "ProviderCapabilities": {
       "description": "The `provider.capabilities` reply.",
       "properties": {
@@ -19589,6 +20748,181 @@
       },
       "required": [
         "op"
+      ],
+      "type": "object"
+    },
+    "ProviderHistoryConsistency": {
+      "enum": [
+        "snapshot",
+        "best_effort"
+      ],
+      "type": "string"
+    },
+    "ProviderHistoryContext": {
+      "additionalProperties": false,
+      "description": "Pinned by the daemon/runtime for this query. Querying never implicitly opens/resumes execution.",
+      "properties": {
+        "account_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "execution_id": {
+          "type": "string"
+        },
+        "invalidation_epoch": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "lineage": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "provider": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "execution_id",
+        "account_id",
+        "lineage",
+        "invalidation_epoch"
+      ],
+      "type": "object"
+    },
+    "ProviderHistorySnapshot": {
+      "additionalProperties": false,
+      "description": "Native snapshot identity; never an ADE feed cursor or message sequence.",
+      "properties": {
+        "account_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "consistency": {
+          "$ref": "#/$defs/ProviderHistoryConsistency"
+        },
+        "execution_id": {
+          "type": "string"
+        },
+        "generation": {
+          "type": "string"
+        },
+        "invalidation_epoch": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "lineage": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "modified_at_ms": {
+          "description": "Native source timestamp in milliseconds since Unix epoch; unknown is absent/null.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "provider": {
+          "type": "string"
+        },
+        "session": {
+          "type": "string"
+        },
+        "size_bytes": {
+          "description": "Actual measured native file bytes; unknown is absent/null, never a page cap or synthetic zero.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "session",
+        "execution_id",
+        "source",
+        "generation",
+        "consistency",
+        "invalidation_epoch"
+      ],
+      "type": "object"
+    },
+    "ProviderInspect": {
+      "properties": {
+        "descriptor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProviderWorkerInitialize"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "provider": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/ReadinessState2"
+        },
+        "type": {
+          "description": "The `provider_inspect` type tag.",
+          "enum": [
+            "provider_inspect"
+          ],
+          "type": "string"
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "provider",
+        "state",
+        "reason",
+        "version",
+        "descriptor"
+      ],
+      "type": "object"
+    },
+    "ProviderInspectRequest": {
+      "additionalProperties": false,
+      "description": "Inspect one enabled plugin worker without opening a session or submitting input.",
+      "properties": {
+        "op": {
+          "const": "provider.inspect"
+        },
+        "provider": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "provider"
       ],
       "type": "object"
     },
@@ -20039,6 +21373,564 @@
       ],
       "type": "object"
     },
+    "ProviderWorkerAck": {
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "ProviderWorkerAnswerRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "answer": {
+          "$ref": "#/$defs/RequestAnswer"
+        },
+        "id": true,
+        "operation_id": {
+          "type": "string"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "operation_id",
+        "answer"
+      ],
+      "type": "object"
+    },
+    "ProviderWorkerAvailability": {
+      "enum": [
+        "available",
+        "unavailable",
+        "unsupported"
+      ],
+      "type": "string"
+    },
+    "ProviderWorkerCancelRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "session": {
+          "type": "string"
+        },
+        "source_attempt_id": {
+          "type": "string"
+        },
+        "submission_id": {
+          "type": "string"
+        },
+        "turn": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "session",
+        "source_attempt_id",
+        "submission_id"
+      ],
+      "type": "object"
+    },
+    "ProviderWorkerCancelResult": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence": {
+          "$ref": "#/$defs/ProviderCancelEvidence"
+        },
+        "type": {
+          "$ref": "#/$defs/ProviderWorkerCancelTag"
+        }
+      },
+      "required": [
+        "type",
+        "evidence"
+      ],
+      "type": "object"
+    },
+    "ProviderWorkerCancelTag": {
+      "enum": [
+        "cancel_result"
+      ],
+      "type": "string"
+    },
+    "ProviderWorkerCapability": {
+      "additionalProperties": false,
+      "description": "A capability advertised by a provider worker. Support and current availability are independent.",
+      "properties": {
+        "available": {
+          "type": "boolean"
+        },
+        "name": {
+          "$ref": "#/$defs/ProviderWorkerCapabilityName"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "support": {
+          "$ref": "#/$defs/Support"
+        }
+      },
+      "required": [
+        "name",
+        "support",
+        "available",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "ProviderWorkerCapabilityName": {
+      "enum": [
+        "streaming",
+        "images",
+        "text_attachments",
+        "resume",
+        "cancel",
+        "steering",
+        "tool_approval",
+        "questions",
+        "child_transcript"
+      ],
+      "type": "string"
+    },
+    "ProviderWorkerChildTranscriptRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "child": {
+          "type": "string"
+        },
+        "cursor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "offset": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "session": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session",
+        "child",
+        "offset",
+        "cursor"
+      ],
+      "type": "object"
+    },
+    "ProviderWorkerCompactRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "operation": {
+          "type": "string"
+        },
+        "session": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session",
+        "operation"
+      ],
+      "type": "object"
+    },
+    "ProviderWorkerConfigureMcpRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "servers": {
+          "additionalProperties": true,
+          "type": "object"
+        }
+      },
+      "required": [
+        "servers"
+      ],
+      "type": "object"
+    },
+    "ProviderWorkerErrorResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "error": {
+          "$ref": "#/$defs/ProviderWorkerRpcError"
+        },
+        "id": {
+          "$ref": "#/$defs/ProviderWorkerResponseId"
+        },
+        "jsonrpc": {
+          "$ref": "#/$defs/ProviderWorkerJsonRpcVersion"
+        }
+      },
+      "required": [
+        "jsonrpc",
+        "id",
+        "error"
+      ],
+      "type": "object"
+    },
+    "ProviderWorkerEventMethod": {
+      "enum": [
+        "event"
+      ],
+      "type": "string"
+    },
+    "ProviderWorkerEventNotification": {
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": {
+          "$ref": "#/$defs/ProviderWorkerJsonRpcVersion"
+        },
+        "method": {
+          "$ref": "#/$defs/ProviderWorkerEventMethod"
+        },
+        "params": {
+          "$ref": "#/$defs/Event"
+        }
+      },
+      "required": [
+        "jsonrpc",
+        "method",
+        "params"
+      ],
+      "type": "object"
+    },
+    "ProviderWorkerFailure": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/ProviderWorkerFailureCode"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "type": "object"
+    },
+    "ProviderWorkerFailureCode": {
+      "enum": [
+        "invalid_request",
+        "unsupported",
+        "authentication_required",
+        "permission_denied",
+        "rate_limited",
+        "resource_limit",
+        "provider_failure",
+        "protocol_mismatch",
+        "transport_failure",
+        "timeout",
+        "shutdown",
+        "cancelled",
+        "integration_bug",
+        "internal"
+      ],
+      "type": "string"
+    },
+    "ProviderWorkerHistoryPage": {
+      "additionalProperties": false,
+      "properties": {
+        "complete": {
+          "type": "boolean"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProviderWorkerFailure"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "A failed refresh may retain only content with this exact snapshot identity."
+        },
+        "item_cursors": {
+          "description": "Genuine native continuation after each item, when the source supports exact byte-window trimming.",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 32,
+          "type": "array"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/Item"
+          },
+          "type": "array"
+        },
+        "next_cursor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "retained_bytes": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "snapshot": {
+          "$ref": "#/$defs/ProviderHistorySnapshot"
+        }
+      },
+      "required": [
+        "snapshot",
+        "items",
+        "next_cursor",
+        "complete",
+        "retained_bytes",
+        "error"
+      ],
+      "type": "object"
+    },
+    "ProviderWorkerHistoryRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "context": {
+          "$ref": "#/$defs/ProviderHistoryContext"
+        },
+        "cursor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "max_bytes": {
+          "maximum": 524288,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_items": {
+          "maximum": 32,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "session": {
+          "type": "string"
+        },
+        "snapshot": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProviderHistorySnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "session",
+        "context",
+        "snapshot",
+        "cursor",
+        "max_items",
+        "max_bytes"
+      ],
+      "type": "object"
+    },
+    "ProviderWorkerInitialize": {
+      "additionalProperties": false,
+      "description": "Exact JSON-RPC initialize reply; every field is required and unknown fields are rejected.",
+      "properties": {
+        "capabilities": {
+          "items": {
+            "$ref": "#/$defs/ProviderWorkerCapability"
+          },
+          "type": "array"
+        },
+        "compatible_protocol_versions": {
+          "items": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "limits": {
+          "$ref": "#/$defs/ProviderWorkerLimits"
+        },
+        "name": {
+          "type": "string"
+        },
+        "operations": {
+          "items": {
+            "$ref": "#/$defs/ProviderWorkerOperation"
+          },
+          "type": "array"
+        },
+        "permission_modes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "protocol_version": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "requirements": {
+          "$ref": "#/$defs/ProviderWorkerRequirements"
+        }
+      },
+      "required": [
+        "protocol_version",
+        "compatible_protocol_versions",
+        "name",
+        "capabilities",
+        "permission_modes",
+        "operations",
+        "limits",
+        "requirements"
+      ],
+      "type": "object"
+    },
+    "ProviderWorkerJsonRpcVersion": {
+      "enum": [
+        "2.0"
+      ],
+      "type": "string"
+    },
+    "ProviderWorkerLimits": {
+      "additionalProperties": false,
+      "properties": {
+        "max_cleanup_ms": {
+          "maximum": 5000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_concurrency": {
+          "maximum": 8,
+          "minimum": 2,
+          "type": "integer"
+        },
+        "max_history_page_items": {
+          "description": "Maximum visible transcript items returned by open, history or child transcript.",
+          "maximum": 32,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_initialize_ms": {
+          "maximum": 15000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_input_entries": {
+          "description": "Maximum immediate child values in any input JSON object or array.",
+          "maximum": 1024,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_input_frame_bytes": {
+          "maximum": 1048576,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_operation_ms": {
+          "maximum": 45000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_output_entries": {
+          "description": "Maximum immediate child values in any output JSON object or array.",
+          "maximum": 32,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_output_frame_bytes": {
+          "maximum": 1048576,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_partial_frame_ms": {
+          "maximum": 10000,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "max_input_frame_bytes",
+        "max_input_entries",
+        "max_initialize_ms",
+        "max_output_frame_bytes",
+        "max_history_page_items",
+        "max_output_entries",
+        "max_concurrency",
+        "max_partial_frame_ms",
+        "max_operation_ms",
+        "max_cleanup_ms"
+      ],
+      "type": "object"
+    },
+    "ProviderWorkerMethod": {
+      "description": "An operation handled by the current worker protocol. Unknown methods cannot be declared supported.",
+      "enum": [
+        "initialize",
+        "open",
+        "send",
+        "steer",
+        "cancel",
+        "answer",
+        "history",
+        "configure_mcp",
+        "compact",
+        "rewind",
+        "child_transcript"
+      ],
+      "type": "string"
+    },
+    "ProviderWorkerOpenRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "config": {
+          "$ref": "#/$defs/Config2"
+        },
+        "resume": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "resume",
+        "config"
+      ],
+      "type": "object"
+    },
+    "ProviderWorkerOperation": {
+      "additionalProperties": false,
+      "properties": {
+        "availability": {
+          "$ref": "#/$defs/ProviderWorkerAvailability"
+        },
+        "method": {
+          "$ref": "#/$defs/ProviderWorkerMethod"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "tier": {
+          "$ref": "#/$defs/Tier"
+        }
+      },
+      "required": [
+        "method",
+        "tier",
+        "availability",
+        "reason"
+      ],
+      "type": "object"
+    },
     "ProviderWorkerPin": {
       "additionalProperties": false,
       "description": "The artifact a provider worker runs. A session started on one pin stays\non it: a newer version serves new sessions only (architecture section 8).",
@@ -20065,6 +21957,304 @@
         "version",
         "artifact_digest",
         "activation_generation"
+      ],
+      "type": "object"
+    },
+    "ProviderWorkerRequest": {
+      "additionalProperties": false,
+      "description": "The request envelope spoken by every provider worker. Parameters remain\nprovider-specific JSON, but the JSON-RPC envelope and method are generated.",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/ProviderWorkerRequestId"
+        },
+        "jsonrpc": {
+          "$ref": "#/$defs/ProviderWorkerJsonRpcVersion"
+        },
+        "method": {
+          "$ref": "#/$defs/ProviderWorkerMethod"
+        },
+        "params": {
+          "additionalProperties": true,
+          "type": "object"
+        }
+      },
+      "required": [
+        "jsonrpc",
+        "id",
+        "method",
+        "params"
+      ],
+      "type": "object"
+    },
+    "ProviderWorkerRequestId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        }
+      ]
+    },
+    "ProviderWorkerRequirements": {
+      "additionalProperties": false,
+      "description": "Version metadata declared by the packaged SDK worker.",
+      "properties": {
+        "effect_version": {
+          "type": "string"
+        },
+        "node_engine": {
+          "type": "string"
+        },
+        "platform_node_version": {
+          "type": "string"
+        },
+        "sdk_api_version": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sdk_version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sdk_api_version",
+        "sdk_version",
+        "effect_version",
+        "platform_node_version",
+        "node_engine"
+      ],
+      "type": "object"
+    },
+    "ProviderWorkerResponse": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ProviderWorkerResultResponse"
+        },
+        {
+          "$ref": "#/$defs/ProviderWorkerErrorResponse"
+        }
+      ],
+      "description": "A JSON-RPC response with an ADE-owned typed failure in error.data."
+    },
+    "ProviderWorkerResponseId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "ProviderWorkerResultResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/ProviderWorkerResponseId"
+        },
+        "jsonrpc": {
+          "$ref": "#/$defs/ProviderWorkerJsonRpcVersion"
+        },
+        "result": true
+      },
+      "required": [
+        "jsonrpc",
+        "id",
+        "result"
+      ],
+      "type": "object"
+    },
+    "ProviderWorkerRewindRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "native_message": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NativeMessageLocator"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "operation": {
+          "type": "string"
+        },
+        "session": {
+          "type": "string"
+        },
+        "turn": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "session",
+        "turn",
+        "operation"
+      ],
+      "type": "object"
+    },
+    "ProviderWorkerRewindResult": {
+      "additionalProperties": false,
+      "properties": {
+        "previous_session": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RewindScope"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "session": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "session"
+      ],
+      "type": "object"
+    },
+    "ProviderWorkerRpcError": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "data": {
+          "$ref": "#/$defs/ProviderWorkerFailure"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "data"
+      ],
+      "type": "object"
+    },
+    "ProviderWorkerSendRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "attachments": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Content"
+          },
+          "type": "array"
+        },
+        "message_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "session": {
+          "type": "string"
+        },
+        "source_attempt_id": {
+          "type": "string"
+        },
+        "submission": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session",
+        "source_attempt_id",
+        "submission",
+        "message_id",
+        "text",
+        "attachments"
+      ],
+      "type": "object"
+    },
+    "ProviderWorkerSendResult": {
+      "additionalProperties": false,
+      "properties": {
+        "admitted": {
+          "type": "boolean"
+        },
+        "dispatch": {
+          "$ref": "#/$defs/SubmissionDispatch"
+        },
+        "native_outcome": {
+          "$ref": "#/$defs/SubmissionNativeOutcome"
+        },
+        "turn": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "turn",
+        "admitted",
+        "dispatch",
+        "native_outcome"
+      ],
+      "type": "object"
+    },
+    "ProviderWorkerSteerRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "attachments": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Content"
+          },
+          "type": "array"
+        },
+        "message_id": {
+          "type": "string"
+        },
+        "session": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "turn": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session",
+        "turn",
+        "message_id",
+        "text",
+        "attachments"
       ],
       "type": "object"
     },
@@ -20097,6 +22287,24 @@
         "port_occupied"
       ],
       "type": "string"
+    },
+    "QuestionOption": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "value": true
+      },
+      "required": [
+        "value",
+        "label",
+        "description"
+      ],
+      "type": "object"
     },
     "QueueCancelRequest": {
       "additionalProperties": false,
@@ -20608,6 +22816,17 @@
           "type": "string"
         }
       ]
+    },
+    "Recovery": {
+      "enum": [
+        "sign_in",
+        "wait_then_retry_manually",
+        "check_account",
+        "reconnect_and_reconcile",
+        "check_storage",
+        "check_provider"
+      ],
+      "type": "string"
     },
     "RecoveryClassification": {
       "description": "How runtime restart reconciliation classified one attempt.",
@@ -21961,11 +24180,336 @@
         }
       ]
     },
+    "RequestAnswer": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "choice",
+              "type": "string"
+            },
+            "value": true
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "answers": {
+              "additionalProperties": {
+                "items": true,
+                "type": "array"
+              },
+              "type": "object"
+            },
+            "kind": {
+              "const": "questions",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "answers"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "permissions",
+              "type": "string"
+            },
+            "permissions": true,
+            "scope": {
+              "$ref": "#/$defs/RequestScope"
+            },
+            "strict_auto_review": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "permissions",
+            "scope"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "RequestChoice": {
+      "additionalProperties": false,
+      "description": "A native choice. `value` is the provider's ID or decision, not an ADE ID.",
+      "properties": {
+        "duration": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "label": {
+          "type": "string"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RequestScope"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "value": true
+      },
+      "required": [
+        "value",
+        "label"
+      ],
+      "type": "object"
+    },
     "RequestKind": {
       "description": "What a pending request asks for.",
       "enum": [
         "approval",
         "question"
+      ],
+      "type": "string"
+    },
+    "RequestMetadata": {
+      "additionalProperties": false,
+      "description": "Immutable, versioned display schema supplied by the provider adapter.",
+      "properties": {
+        "blocking": {
+          "description": "Preserve absence when the provider does not state whether this blocks.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "created_at_ms": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "expires_at_ms": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "native_callback_id": true,
+        "native_item_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "native_request_id": true,
+        "native_revision": true,
+        "native_session_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "native_turn_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "schema": {
+          "$ref": "#/$defs/RequestSchema"
+        },
+        "schema_version": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "summary": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "summary",
+        "schema",
+        "blocking",
+        "native_request_id"
+      ],
+      "type": "object"
+    },
+    "RequestQuestion": {
+      "additionalProperties": false,
+      "properties": {
+        "allow_other": {
+          "type": "boolean"
+        },
+        "header": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "multiple": {
+          "type": "boolean"
+        },
+        "options": {
+          "items": {
+            "$ref": "#/$defs/QuestionOption"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "secret": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "prompt",
+        "secret",
+        "allow_other",
+        "multiple"
+      ],
+      "type": "object"
+    },
+    "RequestResolution": {
+      "enum": [
+        "outstanding",
+        "resolved",
+        "withdrawn",
+        "expired",
+        "unsupported",
+        "invalidated"
+      ],
+      "type": "string"
+    },
+    "RequestSchema": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "choices": {
+              "items": {
+                "$ref": "#/$defs/RequestChoice"
+              },
+              "type": "array"
+            },
+            "kind": {
+              "const": "choices",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "choices"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "decline": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/RequestChoice"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "kind": {
+              "const": "questions",
+              "type": "string"
+            },
+            "questions": {
+              "items": {
+                "$ref": "#/$defs/RequestQuestion"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "kind",
+            "questions"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "permissions",
+              "type": "string"
+            },
+            "requested": true,
+            "scopes": {
+              "items": {
+                "$ref": "#/$defs/RequestScope"
+              },
+              "type": "array"
+            },
+            "supports_strict_auto_review": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kind",
+            "requested",
+            "scopes",
+            "supports_strict_auto_review"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "unsupported",
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "RequestScope": {
+      "enum": [
+        "once",
+        "turn",
+        "session",
+        "persistent"
       ],
       "type": "string"
     },
@@ -22478,6 +25022,17 @@
         "confirm_registry"
       ],
       "type": "object"
+    },
+    "ResponseDelivery": {
+      "enum": [
+        "not_sent",
+        "admitted",
+        "dispatched",
+        "acknowledged",
+        "unknown",
+        "rejected"
+      ],
+      "type": "string"
     },
     "RestartPrepared": {
       "description": "The `runtime.prepare_restart` reply.",
@@ -25186,6 +27741,12 @@
           },
           "type": "array"
         },
+        "context_nodes": {
+          "items": {
+            "$ref": "#/$defs/DraftContextNode"
+          },
+          "type": "array"
+        },
         "conversation_id": {
           "type": "string"
         },
@@ -25216,6 +27777,7 @@
         "conversation_id",
         "window_id",
         "draft_revision",
+        "context_nodes",
         "draft_text",
         "text",
         "attachments",
@@ -28105,6 +30667,152 @@
         }
       ]
     },
+    "StepStatus": {
+      "enum": [
+        "pending",
+        "inProgress",
+        "completed",
+        "blocked",
+        "abandoned"
+      ],
+      "type": "string"
+    },
+    "SubmissionDelivery": {
+      "additionalProperties": false,
+      "description": "Durable, request-correlated send evidence. A command acknowledgement is not native acceptance.",
+      "properties": {
+        "admitted": {
+          "type": "boolean"
+        },
+        "dispatch": {
+          "$ref": "#/$defs/SubmissionDispatch"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Failure"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "native_outcome": {
+          "$ref": "#/$defs/SubmissionNativeOutcome"
+        },
+        "native_turn_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "recoverable_message_id": {
+          "description": "The saved user Message whose prompt/attachments remain available for manual recovery.",
+          "type": "string"
+        },
+        "recovery": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Recovery"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "request_id": {
+          "type": "string"
+        },
+        "terminal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SubmissionTerminal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "request_id",
+        "recoverable_message_id",
+        "admitted",
+        "dispatch",
+        "native_outcome",
+        "native_turn_id",
+        "terminal",
+        "error",
+        "recovery"
+      ],
+      "type": "object"
+    },
+    "SubmissionDispatch": {
+      "enum": [
+        "pending",
+        "dispatched"
+      ],
+      "type": "string"
+    },
+    "SubmissionNativeOutcome": {
+      "enum": [
+        "pending",
+        "accepted",
+        "rejected",
+        "unknown"
+      ],
+      "type": "string"
+    },
+    "SubmissionTerminal": {
+      "additionalProperties": false,
+      "properties": {
+        "correlated": {
+          "description": "False until the send receipt proves this native turn belongs to request_id.",
+          "type": "boolean"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Failure"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "interrupt_requested": {
+          "default": false,
+          "type": "boolean"
+        },
+        "native_terminal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NativeTerminalEvidence"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "description": "Native terminal status, including unknown provider values; not derived from assistant text.",
+          "type": "string"
+        },
+        "turn_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "correlated",
+        "status",
+        "error",
+        "interrupt_requested"
+      ],
+      "type": "object"
+    },
     "Support": {
       "description": "How far ADE supports one provider capability.",
       "oneOf": [
@@ -30713,6 +33421,26 @@
         "target"
       ],
       "type": "object"
+    },
+    "Tier": {
+      "description": "The durability tier of an operation (proposed architecture, section 4).",
+      "oneOf": [
+        {
+          "const": "query",
+          "description": "Reads state. Retrying is free.",
+          "type": "string"
+        },
+        {
+          "const": "idempotent_command",
+          "description": "Converges on the same state when repeated. Carries target and caller attribution.",
+          "type": "string"
+        },
+        {
+          "const": "effect_command",
+          "description": "Carries an operation ID, a daemon-computed fingerprint, a receipt and reconciliation.",
+          "type": "string"
+        }
+      ]
     },
     "TokenReference": {
       "description": "Where the pairing token lives. The daemon stores the reference only.",
@@ -34136,6 +36864,13 @@
     },
     {
       "domain": "conversations",
+      "name": "conversation.history",
+      "request": "ConversationHistoryRequest",
+      "response": "ConversationHistory",
+      "tier": "query"
+    },
+    {
+      "domain": "conversations",
       "name": "agent.send",
       "request": "AgentSendRequest",
       "response": "Ack",
@@ -34145,7 +36880,7 @@
       "domain": "conversations",
       "name": "agent.answer",
       "request": "AgentAnswerRequest",
-      "response": "Ack",
+      "response": "AgentAnswerOutcome",
       "tier": "effect_command"
     },
     {
@@ -34383,7 +37118,7 @@
       "domain": "agents",
       "name": "agent.cancel",
       "request": "AgentCancelRequest",
-      "response": "Ack",
+      "response": "AgentCancelOutcome",
       "tier": "effect_command"
     },
     {
@@ -35854,6 +38589,13 @@
       "name": "provider.quota",
       "request": "ProviderQuotaRequest",
       "response": "ProviderQuota",
+      "tier": "query"
+    },
+    {
+      "domain": "providers",
+      "name": "provider.inspect",
+      "request": "ProviderInspectRequest",
+      "response": "ProviderInspect",
       "tier": "query"
     },
     {

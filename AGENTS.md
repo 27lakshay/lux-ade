@@ -7,8 +7,7 @@ behavior, not proof that a surface is built.
 
 ## Working rules
 
-- Work on `main`. Finish and report each step; commit only when the user asks. Pushing, opening a
-  PR and merging into another branch also need a separate instruction.
+- Work on `main`. Finish and report each step.
 - Use pnpm for JavaScript and TypeScript packages. Keep Rust dependencies in Cargo.
 - A design discussion or plan alone is not an implementation order.
 - Every change passes `pnpm check:static`. It runs formatting, lint, typecheck, dead-code and

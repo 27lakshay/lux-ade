@@ -174,6 +174,8 @@ const tabIdFor = (target: TabTarget): string =>
 // Actions that need new IDs, or name the state a toggle reaches.
 export const openTab = (target: TabTarget, paneId?: string) =>
   dispatch({ type: 'open_tab', tab: { id: tabIdFor(target), target }, pane_id: paneId ?? null })
+export const openTabInAnother = (target: TabTarget, paneId?: string) =>
+  dispatch({ type: 'open_tab', tab: { id: `tab-${nanoid(8)}`, target }, pane_id: paneId ?? null })
 export const splitPane = (paneId: string, direction: SplitDirection) =>
   dispatch({ type: 'split_pane', pane_id: paneId, direction, new_pane_id: newPaneId() })
 export const dropTab = (tabId: string, paneId: string, zone: DropZone) =>

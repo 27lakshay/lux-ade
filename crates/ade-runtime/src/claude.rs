@@ -11,6 +11,52 @@ use std::{
     process::Command,
     sync::{Arc, mpsc},
 };
+pub fn worker_descriptor() -> ade_core::contract::providers::ProviderWorkerInitialize {
+    use ade_core::contract::providers::{
+        ProviderWorkerAvailability as Availability, ProviderWorkerCapabilityName as Capability,
+        ProviderWorkerMethod as Method, Support,
+    };
+    let mut descriptor = crate::codex::public_descriptor();
+    descriptor.name = "Claude Code".into();
+    descriptor.permission_modes = vec![
+        "default".into(),
+        "plan".into(),
+        "acceptEdits".into(),
+        "dontAsk".into(),
+    ];
+    for capability in &mut descriptor.capabilities {
+        capability.available = match capability.name {
+            Capability::Streaming
+            | Capability::Images
+            | Capability::TextAttachments
+            | Capability::Resume
+            | Capability::Cancel
+            | Capability::ToolApproval
+            | Capability::Questions => true,
+            Capability::Steering | Capability::ChildTranscript => false,
+        };
+        capability.support = if capability.available {
+            Support::Supported
+        } else {
+            Support::Unsupported
+        };
+    }
+    for operation in &mut descriptor.operations {
+        if matches!(
+            operation.method,
+            Method::Steer
+                | Method::History
+                | Method::Compact
+                | Method::Rewind
+                | Method::ChildTranscript
+        ) {
+            operation.availability = Availability::Unsupported;
+            operation.reason = "Claude worker does not implement this operation".into();
+        }
+    }
+    descriptor
+}
+
 pub struct Adapter {
     rpc: Arc<Rpc>,
     /// The `mcpServers` map from the profile MCP catalog (F131).

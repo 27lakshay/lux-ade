@@ -41,6 +41,7 @@ const conversation = (fields = {}) => ({
   status: 'running',
   account_id: null,
   account_context: 'managed',
+  execution_host: { kind: 'local' },
   attention: 'running',
   unread: false,
   parent_conversation_id: null,
@@ -89,6 +90,10 @@ test('the catalog keeps projects, workspace facts, terminals, conversation atten
   assert.deepEqual(parsed.windows, [window({ bounds: { x: 0, y: 20, width: 1200, height: 800 } })])
   const exited = parseCatalog(catalog({ terminals: [terminal({ status: 'exited', exit_code: 2, busy: false })] }))
   assert.equal(exited.terminals[0].exit_code, 2)
+  const remote = parseCatalog(
+    catalog({ conversations: [conversation({ execution_host: { kind: 'remote', host_id: 'host-2' } })] }),
+  )
+  assert.deepEqual(remote.conversations, [conversation({ execution_host: { kind: 'remote', host_id: 'host-2' } })])
 })
 
 test('a terminal kind or status outside the contract rejects the catalog', () => {
@@ -114,6 +119,7 @@ test('a missing list or any malformed record rejects the catalog', () => {
     { conversations: [conversation({ attention: undefined })] },
     { conversations: [conversation({ group_id: 7 })] },
     { conversations: [conversation({ account_context: undefined })] },
+    { conversations: [conversation({ execution_host: { kind: 'remote' } })] },
     { terminals: [terminal({ kind: 3 })] },
     { terminals: [terminal({ status: null })] },
     { terminals: [terminal({ exit_code: 'one' })] },

@@ -4,6 +4,7 @@
 // activity for that turn, never turn_interrupted or turn_failed, and the
 // prompt is never replayed.
 import {
+  cancelActiveSubmission,
   expect,
   isRunning,
   prompts,
@@ -89,7 +90,7 @@ test('R001: a turn the user cancels is still recorded as interrupted, not unknow
   await expect
     .poll(async () => (await profile.call('conversation.get', { conversation_id: conversationId })).conversation.status)
     .toBe('running')
-  await profile.call('agent.cancel', { conversation_id: conversationId })
+  await cancelActiveSubmission(profile, conversationId)
   await expect
     .poll(async () => (await profile.call('conversation.get', { conversation_id: conversationId })).conversation.status)
     .toBe('interrupted')

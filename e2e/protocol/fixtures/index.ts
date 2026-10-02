@@ -14,6 +14,11 @@ export { ScratchProfile, type CliResult, type Hello, type ProfileOptions } from 
 export { ScratchRepo } from './git'
 export { codexPrompts, prompts, turnReply, type MockCall, type MockProvider } from './providers'
 export {
+  answerFor,
+  answerIntent,
+  cancellationIntent,
+  cancelActiveSubmission,
+  choiceAnswer,
   conversationStatus,
   fixtureAnswers,
   send,
@@ -23,6 +28,7 @@ export {
   waitForPendingRequest,
   type PendingRequest,
 } from './conversations'
+export { subscribeFeed } from './feed'
 export { isRunning } from './processes'
 export { primaryShell } from './terminals'
 

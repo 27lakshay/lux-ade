@@ -27,6 +27,20 @@ Runner arguments follow the official [Node test runner](https://nodejs.org/api/t
 and [Bun test runner](https://bun.sh/docs/test) interfaces. This wrapper exposes provider
 selection, listing and the shared `--test-name-pattern` option; it rejects unknown arguments.
 
+## Oh My Pi native protocol evidence
+
+| Evidence | Observed | Limit |
+|---|---|---|
+| Workspace pin | `@oh-my-pi/pi-coding-agent` 18.3.0; `omp --version` reported `omp/18.3.0` | This is the installed workspace package, not a separately installed hosted CLI. |
+| Native RPC | The adapter negotiates RPC v2 and checks the peer-advertised 1 MiB physical and 64 MiB reassembled frame limits before requests. | The pin does not advertise a general turn-settlement event. `agent_end` is the observable execution boundary; prompt acknowledgement alone is not completion. |
+| Prompt-local work | `prompt_result` with matching RPC request ID and `agentInvoked: false` identifies non-agent prompt handling. | Never treat as evidence of model execution. |
+| Cancellation | `abort` followed by `get_state` can establish idle/no queued work for a targeted stop. | An interrupt request or error does not, by itself, establish a native cancellation cause. |
+| Correlation | RPC IDs correlate command responses; user messages appear in native history; native assistant `responseId` can correlate model output when present. | ADE message/submission IDs are not native turn IDs. Missing `responseId` cannot be replaced by a locally fabricated native ID. |
+| Background settlement | No accepted evidence for independent post-yield/background settlement was found in this pin’s RPC implementation. | Report unknown/unavailable; do not infer from newer upstream behavior. |
+| Adapter acceptance | `bun test providers/omp/transport.test.mjs providers/omp/bridge.test.mjs` passed 12 tests / 28 assertions against deterministic transport peers and current bridge. | Public Effect worker cutover and built-desktop acceptance have not been run. No live model/authenticated effects were used. |
+
+Upstream references: [Oh My Pi RPC protocol](https://github.com/can1357/oh-my-pi/blob/main/docs/rpc.md), [repository agent guidance](https://github.com/can1357/oh-my-pi/blob/main/AGENTS.md). These current upstream pages do not override the installed 18.3.0 behavior.
+
 ## Installed-provider loopback acceptance
 
 `pnpm test:providers:installed` runs Codex, Claude, OpenCode and OMP against local HTTP

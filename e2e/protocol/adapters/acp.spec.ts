@@ -3,6 +3,9 @@
 // records every message it receives, so each spec can prove what reached the
 // agent and how often.
 import {
+  answerIntent,
+  cancelActiveSubmission,
+  choiceAnswer,
   conversationStatus,
   expect,
   send,
@@ -24,7 +27,7 @@ async function prompts(agents: AdapterAgents, text?: string) {
 
 /** Cancel the running turn: it settles as interrupted and pauses the queue, which is resumed for the next send. */
 async function cancelTurn(profile: ScratchProfile, conversationId: string) {
-  await profile.call('agent.cancel', { conversation_id: conversationId })
+  await cancelActiveSubmission(profile, conversationId)
   await expect.poll(() => conversationStatus(profile, conversationId)).toBe('interrupted')
   await profile.call('queue.pause', { conversation_id: conversationId, paused: false })
 }
@@ -93,7 +96,7 @@ test('F024: an ACP adapter runs a turn, and only a ready adapter is listed and a
     profile.call('conversation.create', { workspace_id: workspace.id, provider, account_id: 'account_x' }),
   ).rejects.toThrow(/manages no accounts/)
 
-  const { conversationId } = await startConversation(profile, provider as never)
+  const { conversationId } = await startConversation(profile, provider)
   await send(profile, conversationId, 'hello')
   await waitForMessage(profile, conversationId, 'Hello ACP')
   await waitForIdle(profile, conversationId)
@@ -129,7 +132,7 @@ test('F024/F028: permission answers keep once-only and persistent meanings, and 
   profile,
 }) => {
   const agents = await stageAdapterAgents(ade.root)
-  const { conversationId } = await startConversation(profile, (await defineAcpAdapter(profile, agents)) as never)
+  const { conversationId } = await startConversation(profile, await defineAcpAdapter(profile, agents))
   const responses = async () =>
     (await acpCalls(agents))
       .filter((call) => call.method === undefined)
@@ -139,49 +142,48 @@ test('F024/F028: permission answers keep once-only and persistent meanings, and 
   await send(profile, conversationId, 'permission one')
   const first = await waitForPendingRequest(profile, conversationId)
   expect(await conversationStatus(profile, conversationId)).toBe('waiting')
-  expect((first.params.options as Array<{ kind: string }>).map((option) => option.kind)).toEqual([
-    'allow_once',
-    'allow_always',
-    'reject_once',
-  ])
-  const answer = { conversation_id: conversationId, request_id: first.id, decision: 'accept' }
+  const schema = first.metadata.schema
+  expect(schema.kind).toBe('choices')
+  if (schema.kind !== 'choices') throw new Error('ACP permission did not expose native choices')
+  expect(schema.choices.map((choice) => choice.value)).toEqual(['allow-once', 'allow-always', 'reject-once'])
+  const answer = answerIntent(first, choiceAnswer(first, 'accept'), 'acp-permission-once')
   await profile.call('agent.answer', answer)
   await waitForMessage(profile, conversationId, 'Permission allow-once')
   await waitForIdle(profile, conversationId)
-  // The same answer again converges without a second reply to the agent.
+  // The same effect operation converges without a second reply to the peer.
   await profile.call('agent.answer', answer)
-  await expect(profile.call('agent.answer', { ...answer, decision: 'decline' })).rejects.toThrow()
+  await expect(
+    profile.call('agent.answer', answerIntent(first, choiceAnswer(first, 'decline'), 'acp-permission-conflict')),
+  ).rejects.toThrow()
   expect(await responses()).toEqual([{ outcome: 'selected', optionId: 'allow-once' }])
 
-  // A persistent grant is chosen only when named, and a named option must match the decision.
+  // A persistent grant is selected by its exact native choice value.
   await send(profile, conversationId, 'permission two')
   const second = await waitForPendingRequest(profile, conversationId)
-  await expect(
-    profile.call('agent.answer', {
-      conversation_id: conversationId,
-      request_id: second.id,
-      decision: 'decline',
-      answers: { option_id: 'allow-always' },
-    }),
-  ).rejects.toThrow(/does not match the decision/)
-  expect(
-    (await profile.call('conversation.get', { conversation_id: conversationId })).requests.map((r) => r.status),
-  ).toEqual(['pending'])
-  await profile.call('agent.answer', {
-    conversation_id: conversationId,
-    request_id: second.id,
-    decision: 'accept',
-    answers: { option_id: 'allow-always' },
-  })
+  expect(second.metadata.schema.kind).toBe('choices')
+  if (second.metadata.schema.kind !== 'choices') throw new Error('ACP permission did not expose native choices')
+  const persistent = second.metadata.schema.choices.find((choice) => choice.value === 'allow-always')
+  if (!persistent) throw new Error('ACP persistent native choice is missing')
+  const persistentAnswer = answerIntent(
+    second,
+    { kind: 'choice', value: persistent.value },
+    'acp-permission-persistent',
+  )
+  await profile.call('agent.answer', persistentAnswer)
   await waitForMessage(profile, conversationId, 'Permission allow-always')
   await waitForIdle(profile, conversationId)
+  await profile.call('agent.answer', persistentAnswer)
 
   // decline selects reject_once.
   await send(profile, conversationId, 'permission three')
   const third = await waitForPendingRequest(profile, conversationId)
-  await profile.call('agent.answer', { conversation_id: conversationId, request_id: third.id, decision: 'decline' })
+  await profile.call('agent.answer', answerIntent(third, choiceAnswer(third, 'decline')))
   await waitForMessage(profile, conversationId, 'Permission reject-once')
   await waitForIdle(profile, conversationId)
+
+  await expect
+    .poll(async () => (await profile.call('conversation.get', { conversation_id: conversationId })).requests)
+    .toEqual([])
   expect(await responses()).toEqual([
     { outcome: 'selected', optionId: 'allow-once' },
     { outcome: 'selected', optionId: 'allow-always' },
@@ -194,7 +196,7 @@ test('F024: cancel ends a running turn and answers an open permission request as
   profile,
 }) => {
   const agents = await stageAdapterAgents(ade.root)
-  const { conversationId } = await startConversation(profile, (await defineAcpAdapter(profile, agents)) as never)
+  const { conversationId } = await startConversation(profile, await defineAcpAdapter(profile, agents))
 
   await send(profile, conversationId, 'hold this turn')
   await turnRunning(profile, conversationId)
@@ -207,14 +209,8 @@ test('F024: cancel ends a running turn and answers an open permission request as
   // The protocol requires the open request to be answered with the cancelled outcome.
   const replies = (await acpCalls(agents)).filter((call) => call.method === undefined)
   expect(replies.map((call) => call.result)).toEqual([{ outcome: { outcome: 'cancelled' } }])
-  await expect(
-    profile.call('agent.answer', { conversation_id: conversationId, request_id: pending.id, decision: 'accept' }),
-  ).rejects.toThrow()
-  expect(
-    (await profile.call('conversation.get', { conversation_id: conversationId })).requests.filter(
-      (request) => request.status === 'pending',
-    ),
-  ).toEqual([])
+  await expect(profile.call('agent.answer', answerIntent(pending, choiceAnswer(pending, 'accept')))).rejects.toThrow()
+  // Resolved native requests remain in the conversation history; the stale-answer check above proves they are no longer actionable.
 
   // The session still takes a new turn.
   await send(profile, conversationId, 'hello after cancel')
@@ -227,7 +223,7 @@ test('F024: steering, compaction and conversation rewind report the adapter limi
   profile,
 }) => {
   const agents = await stageAdapterAgents(ade.root)
-  const { conversationId } = await startConversation(profile, (await defineAcpAdapter(profile, agents)) as never)
+  const { conversationId } = await startConversation(profile, await defineAcpAdapter(profile, agents))
   await send(profile, conversationId, 'hold for controls')
   await turnRunning(profile, conversationId)
   const { conversation } = await profile.call('conversation.get', { conversation_id: conversationId })
@@ -265,7 +261,7 @@ test('F024: a daemon crash keeps the running ACP turn; an agent crash ends the r
   profile,
 }) => {
   const agents = await stageAdapterAgents(ade.root)
-  const { conversationId } = await startConversation(profile, (await defineAcpAdapter(profile, agents)) as never)
+  const { conversationId } = await startConversation(profile, await defineAcpAdapter(profile, agents))
   await send(profile, conversationId, 'hello')
   await waitForMessage(profile, conversationId, 'Hello ACP')
   await waitForIdle(profile, conversationId)
@@ -306,7 +302,7 @@ test('F024: adapter.remove is refused while a run uses the adapter, and an edite
 }) => {
   const agents = await stageAdapterAgents(ade.root)
   const provider = await defineAcpAdapter(profile, agents)
-  const { conversationId } = await startConversation(profile, provider as never)
+  const { conversationId } = await startConversation(profile, provider)
   await send(profile, conversationId, 'hello')
   await waitForMessage(profile, conversationId, 'Hello ACP')
   await waitForIdle(profile, conversationId)

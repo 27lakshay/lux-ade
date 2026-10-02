@@ -4,7 +4,16 @@
 // child and its parent, notification preferences and snoozes suppress
 // delivery, and one activity has one delivery record however many clients
 // race for it.
-import { expect, prompts, send, startConversation, test, waitForIdle, type ScratchProfile } from '../fixtures'
+import {
+  cancelActiveSubmission,
+  expect,
+  prompts,
+  send,
+  startConversation,
+  test,
+  waitForIdle,
+  type ScratchProfile,
+} from '../fixtures'
 import { defineFailingAgent } from '../fixtures/failing-agent'
 import { subscribeFeed } from '../fixtures/feed'
 import { delegate, parentIn, waitForChild } from './steps'
@@ -218,7 +227,7 @@ test('notification preferences and a snooze suppress delivery, the record is fin
     client_id: 'desktop-a',
     outcome: 'shown',
   })
-  await profile.call('agent.cancel', { conversation_id: conversationId })
+  await cancelActiveSubmission(profile, conversationId)
   await expect
     .poll(async () => (await profile.call('conversation.get', { conversation_id: conversationId })).conversation.status)
     .toBe('interrupted')

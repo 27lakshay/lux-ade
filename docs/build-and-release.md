@@ -14,6 +14,14 @@ macOS `.app` under `dist/electron/`. The package includes `ade-control`, `ade-da
 Electron executable can run as Node for the CLI and provider workers; that setting is scoped to
 those processes so terminals and services do not inherit it.
 
+The bundled Codex public worker is staged with `pnpm --filter ade-codex-worker
+deploy --prod` and its workspace dependency closure. That closure contains the
+provider SDK, generated contracts and pinned Effect packages. It must initialize
+outside the source checkout without resolving the checkout's `node_modules`.
+The native translator runs from the packaged `ade-runtime`; Node owns and
+closes that helper. A filtered production deployment and native-free initialize
+smoke establish dependency closure, not signing or full-bundle release readiness.
+
 The current builder target is `dir`, with no Developer ID signing identity and no public
 publication step. An ad-hoc signature lets the unsigned Apple Silicon build launch after its
 Electron fuses are set. This is a development artifact, not a signed public release.

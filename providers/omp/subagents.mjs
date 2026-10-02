@@ -22,7 +22,7 @@ export class Subagents {
       throw new Error('Invalid Oh My Pi child lifecycle')
     const key = JSON.stringify([p.parentToolCallId ?? null, p.id])
     const before = this.children.get(key)
-    if (!before && (p.status !== 'started' || !turn)) return null
+    if (!before && p.status !== 'started') return null
     // Native parked-agent wakes reuse the same child and parent tool call.
     // Their ordered start event is a new run, even without a live parent turn.
     if (before?.terminal && p.status !== 'started') return null

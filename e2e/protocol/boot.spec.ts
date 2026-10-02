@@ -4,6 +4,8 @@
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import {
+  answerFor,
+  answerIntent,
   expect,
   fixtureAnswers,
   isRunning,
@@ -81,22 +83,15 @@ for (const provider of ['codex', 'claude'] as MockProvider[]) {
 
     await send(profile, conversationId, prompts.approval)
     const approval = await waitForPendingRequest(profile, conversationId)
-    await profile.call('agent.answer', {
-      conversation_id: conversationId,
-      request_id: approval.id,
-      decision: 'decline',
-    })
+    await profile.call('agent.answer', answerIntent(approval, answerFor(approval, 'decline')))
     await waitForIdle(profile, conversationId)
 
     await send(profile, conversationId, prompts.questions)
     const questions = await waitForPendingRequest(profile, conversationId)
-    expect(Object.keys(fixtureAnswers(questions))).toHaveLength(2)
-    await profile.call('agent.answer', {
-      conversation_id: conversationId,
-      request_id: questions.id,
-      decision: 'answer',
-      answers: fixtureAnswers(questions),
-    })
+    const answers = fixtureAnswers(questions)
+    if (answers.kind !== 'questions') throw new Error('Expected native question answers')
+    expect(Object.keys(answers.answers)).toHaveLength(2)
+    await profile.call('agent.answer', answerIntent(questions, answers))
     await waitForIdle(profile, conversationId)
 
     const calls = await profile.mockCalls(provider)

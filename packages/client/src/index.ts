@@ -20,6 +20,7 @@ import {
   type Operation as DailyUseOperation,
   type Request as DailyUseRequest,
   type Response as DailyUseResponse,
+  type ExecutionHost,
 } from '@ade/contracts'
 
 export {
@@ -148,6 +149,7 @@ export interface Conversation {
   status: string
   account_id?: string | null
   account_context?: 'managed' | 'ambient'
+  execution_host: ExecutionHost
   /**
    * Whether the Conversation needs the person, as the daemon derives it from
    * its status and open requests. Set when the daemon sends it.
@@ -271,6 +273,14 @@ function parseConversation(value: unknown): Conversation | null {
   const accountId = link(source?.account_id)
   const accountContext = source?.account_context
   if (accountContext !== 'managed' && accountContext !== 'ambient') return null
+  const rawExecutionHost = record(source?.execution_host)
+  const executionHost: ExecutionHost | null =
+    rawExecutionHost?.kind === 'local'
+      ? { kind: 'local' }
+      : rawExecutionHost?.kind === 'remote' && typeof rawExecutionHost.host_id === 'string'
+        ? { kind: 'remote', host_id: rawExecutionHost.host_id }
+        : null
+  if (!executionHost) return null
   const attention = source?.attention
   const unread = source?.unread
   const parent = link(source?.parent_conversation_id)
@@ -284,6 +294,7 @@ function parseConversation(value: unknown): Conversation | null {
     provider: fields[2],
     status: fields[3],
     account_id: accountId,
+    execution_host: executionHost,
     account_context: accountContext,
     attention: attention as Attention,
     unread,
@@ -479,19 +490,8 @@ export class AdeClient {
     })
   }
 
-  answerRequest(
-    conversationId: string,
-    requestId: string,
-    decision: string,
-    answers?: unknown,
-  ): Promise<DailyUseResponse<'agent.answer'>> {
-    return this.command<'agent.answer'>({
-      op: 'agent.answer',
-      conversation_id: conversationId,
-      request_id: requestId,
-      decision,
-      ...(answers !== undefined ? { answers } : {}),
-    })
+  answerRequest(request: CallRequest<'agent.answer'>): Promise<DailyUseResponse<'agent.answer'>> {
+    return this.command<'agent.answer'>({ op: 'agent.answer', ...request })
   }
 
   start(): void {

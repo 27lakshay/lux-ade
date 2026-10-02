@@ -115,7 +115,8 @@ fn history_state_token(conversation_id: &str, epoch: u64, removed: &[Message]) -
                 message.id,
                 message.sequence,
                 message.status,
-                format!("{:x}", Sha256::digest(message.text.as_bytes()))
+                format!("{:x}", Sha256::digest(message.text.as_bytes())),
+                message.native_message,
             ])
         })
         .collect();
@@ -141,6 +142,7 @@ fn history_summary(
     ConversationRewindHistory {
         before_message_id: first.id.clone(),
         turn_id: turn.to_owned(),
+        native_message: first.native_message.clone(),
         removed_messages: removed.len() as u64,
         removed_turns: turns.len() as u64,
         kept_messages: total.saturating_sub(removed.len() as u64),
@@ -250,6 +252,7 @@ fn definite_refusal(error: &anyhow::Error) -> Option<String> {
         | Failure::InvalidData
         | Failure::SaveFailed
         | Failure::OutcomeUnknown
+        | Failure::ResourceLimit
         | Failure::Unavailable => None,
     }
 }
@@ -845,7 +848,7 @@ impl Sessions {
         let mut reloaded = d.store.conversation(&rewind.conversation_id)?;
         reloaded.updated_at = now_ms();
         d.store.commit_conversation(&reloaded, &[], &[])?;
-        let reloaded = Self::presented(&d, &reloaded)?;
+        let reloaded = self.presented(&d, &reloaded)?;
         self.publish(
             &mut d,
             json!({"type":"conversation_reload","conversation":reloaded}),

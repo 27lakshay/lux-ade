@@ -10,6 +10,7 @@ pub mod prompt;
 pub mod prompt_context;
 pub mod protocol;
 pub mod provider;
+pub mod requests;
 pub mod review_prompt;
 pub mod runtime_protocol;
 pub mod transcript;
@@ -22,5 +23,7 @@ pub mod worktrees;
 
 pub mod diagnostics;
 pub mod error;
+pub mod json_budget;
 pub mod keybindings;
 pub mod mcp;
+pub mod native_history;

@@ -26,8 +26,15 @@ async function prepare(
   windowId: string,
   requestId: string,
   text: string,
+  contextNodes?: { id: string; kind: string; data: unknown }[],
 ) {
-  await profile.call('draft.save', { conversation_id: conversationId, window_id: windowId, text, revision: 1 })
+  await profile.call('draft.save', {
+    conversation_id: conversationId,
+    window_id: windowId,
+    text,
+    revision: 1,
+    context_nodes: contextNodes,
+  })
   return profile.call('draft.send.prepare', {
     conversation_id: conversationId,
     window_id: windowId,
@@ -36,6 +43,7 @@ async function prepare(
     text,
     revision: 1,
     attachments: [],
+    context_nodes: contextNodes,
   })
 }
 
@@ -81,55 +89,118 @@ test('R001: a send accepted with its reply lost is listed as accepted and acknow
   expect(await turnStarts(profile)).toEqual(['lost-reply-send'])
 })
 
-test('R001: a prepared send that never reached the daemon is listed as prepared and cannot be acknowledged away', async ({
-  profile,
-}) => {
+test('R001: a prepared send with context survives daemon restart and dispatches once', async ({ profile }) => {
   const { conversationId } = await startConversation(profile, 'codex')
   const window = 'window-prepared'
-  await prepare(profile, conversationId, window, 'prepared-send', prompts.turn)
+  const context = [
+    { id: 'context-restart', kind: 'terminal_selection', data: { text: 'retained context', terminal: 'term-1' } },
+  ]
+  const prepared = await prepare(profile, conversationId, window, 'prepared-send', prompts.turn, context)
+  expect(prepared.intent.context_nodes).toEqual(context)
   await profile.restartDaemon('kill')
-  expect((await profile.call('draft.send.list', { window_id: window })).sends).toEqual([
-    expect.objectContaining({ outcome: 'prepared', intent: expect.objectContaining({ request_id: 'prepared-send' }) }),
+
+  const listed = await profile.call('draft.send.list', { window_id: window })
+  expect(listed.sends).toEqual([
+    expect.objectContaining({
+      outcome: 'prepared',
+      intent: expect.objectContaining({ request_id: 'prepared-send', context_nodes: context }),
+    }),
   ])
+  expect((await profile.call('draft.send.get', { conversation_id: conversationId, window_id: window })).intent).toEqual(
+    prepared.intent,
+  )
+  expect((await profile.call('draft.get', { conversation_id: conversationId, window_id: window })).draft).toMatchObject(
+    {
+      text: prompts.turn,
+      context_nodes: context,
+    },
+  )
   const acknowledge = { conversation_id: conversationId, window_id: window, request_id: 'prepared-send' }
   await expect(profile.call('draft.send.acknowledge', acknowledge)).rejects.toThrow(
     /retry delivery with the same request ID/,
   )
   expect(await turnStarts(profile)).toEqual([])
-  // Delivery with the same ID dispatches it once; then acknowledgement completes it.
+
   await profile.call('agent.send', { conversation_id: conversationId, request_id: 'prepared-send', text: prompts.turn })
   await waitForIdle(profile, conversationId)
-  expect(await profile.call('draft.send.acknowledge', acknowledge)).toMatchObject({ resolution: 'completed' })
+  expect(await profile.call('draft.send.acknowledge', acknowledge)).toMatchObject({
+    resolution: 'completed',
+    draft: { text: '', revision: 2 },
+  })
+  expect(
+    (await profile.call('draft.history.list', { conversation_id: conversationId, window_id: window })).entries,
+  ).toEqual(
+    expect.arrayContaining([expect.objectContaining({ kind: 'sent', text: prompts.turn, context_nodes: context })]),
+  )
   expect(await turnStarts(profile)).toEqual(['prepared-send'])
 })
 
-test('R001: a send the daemon rejected is listed as rejected and acknowledgement keeps the draft', async ({
+test('R001: rejected empty and non-empty contexts survive daemon restart and abort restoration', async ({
   profile,
 }) => {
   const { conversationId } = await startConversation(profile, 'codex')
   const busyWindow = 'window-busy'
-  // Hold a turn so the next send is refused before admission.
+  const emptyWindow = 'window-busy-empty-context'
+  const context = [
+    { id: 'context-aborted', kind: 'terminal_selection', data: { text: 'keep attached context', terminal: 'term-2' } },
+  ]
+  const emptyText = 'keep this text without context'
+  // Hold a turn so both following sends are refused before admission.
   await profile.call('agent.send', { conversation_id: conversationId, request_id: 'holding', text: prompts.hold })
   await expect
     .poll(async () => (await profile.call('conversation.get', { conversation_id: conversationId })).conversation.status)
     .toBe('running')
-  await prepare(profile, conversationId, busyWindow, 'refused-send', 'keep this text')
+
+  await prepare(profile, conversationId, busyWindow, 'refused-send', 'keep this text', context)
   await expect(
     profile.call('agent.send', { conversation_id: conversationId, request_id: 'refused-send', text: 'keep this text' }),
   ).rejects.toThrow(/active turn/)
+  await prepare(profile, conversationId, emptyWindow, 'refused-empty-send', emptyText, [])
+  await expect(
+    profile.call('agent.send', { conversation_id: conversationId, request_id: 'refused-empty-send', text: emptyText }),
+  ).rejects.toThrow(/active turn/)
+
   expect((await profile.call('draft.send.list', { window_id: busyWindow })).sends).toEqual([
-    expect.objectContaining({ outcome: 'rejected' }),
+    expect.objectContaining({ outcome: 'rejected', intent: expect.objectContaining({ context_nodes: context }) }),
+  ])
+  expect((await profile.call('draft.send.list', { window_id: emptyWindow })).sends).toEqual([
+    expect.objectContaining({ outcome: 'rejected', intent: expect.objectContaining({ context_nodes: [] }) }),
   ])
   await profile.restartDaemon()
+
+  for (const [window_id, request_id, context_nodes] of [
+    [busyWindow, 'refused-send', context],
+    [emptyWindow, 'refused-empty-send', []],
+  ] as const) {
+    expect(await profile.call('draft.send.get', { conversation_id: conversationId, window_id })).toMatchObject({
+      intent: { request_id, context_nodes },
+    })
+    expect((await profile.call('draft.send.list', { window_id })).sends).toEqual([
+      expect.objectContaining({ outcome: 'rejected', intent: expect.objectContaining({ request_id, context_nodes }) }),
+    ])
+  }
+
+  const restored = await profile.call('draft.send.abort', {
+    conversation_id: conversationId,
+    window_id: emptyWindow,
+    request_id: 'refused-empty-send',
+  })
+  expect(restored.draft).toMatchObject({ text: emptyText, revision: 1 })
+  expect((await profile.call('draft.send.list', { window_id: emptyWindow })).sends).toEqual([])
+
   const acknowledge = { conversation_id: conversationId, window_id: busyWindow, request_id: 'refused-send' }
   expect(await profile.call('draft.send.acknowledge', acknowledge)).toMatchObject({
     resolution: 'aborted',
-    draft: { text: 'keep this text' },
+    draft: { text: 'keep this text', context_nodes: context },
   })
   expect(await profile.call('draft.send.acknowledge', acknowledge)).toMatchObject({ resolution: 'aborted' })
+  expect((await profile.call('draft.send.list', { window_id: busyWindow })).sends).toEqual([])
   // An aborted ID can never be delivered later.
   await expect(
     profile.call('agent.send', { conversation_id: conversationId, request_id: 'refused-send', text: 'keep this text' }),
+  ).rejects.toThrow(/aborted/)
+  await expect(
+    profile.call('agent.send', { conversation_id: conversationId, request_id: 'refused-empty-send', text: emptyText }),
   ).rejects.toThrow(/aborted/)
   expect(await turnStarts(profile)).toEqual(['holding'])
 })

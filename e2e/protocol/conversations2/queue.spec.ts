@@ -3,6 +3,7 @@
 // idle one; each queued prompt reaches the provider once, whatever crashes
 // or retries happen around the dispatch.
 import {
+  cancelActiveSubmission,
   conversationStatus,
   expect,
   prompts,
@@ -35,7 +36,7 @@ async function userMessages(profile: ScratchProfile, conversationId: string): Pr
 async function interrupted(profile: ScratchProfile, conversationId: string, requestId: string): Promise<void> {
   await send(profile, conversationId, prompts.hold, requestId)
   await expect.poll(() => conversationStatus(profile, conversationId)).toBe('running')
-  await profile.call('agent.cancel', { conversation_id: conversationId })
+  await cancelActiveSubmission(profile, conversationId)
   await expect.poll(() => conversationStatus(profile, conversationId)).toBe('interrupted')
   expect((await snapshot(profile, conversationId)).conversation.queue_paused).toBe(true)
 }
@@ -193,7 +194,7 @@ test('R001 and R002: an enqueue whose reply was lost is kept once; its ID cannot
   // The held turn survived the daemon crash. Cancelling it pauses the queue;
   // resuming the queue delivers the kept entry once.
   await expect.poll(() => conversationStatus(profile, conversationId)).toBe('running')
-  await profile.call('agent.cancel', { conversation_id: conversationId })
+  await cancelActiveSubmission(profile, conversationId)
   await expect.poll(() => conversationStatus(profile, conversationId)).toBe('interrupted')
   await profile.call('queue.pause', { conversation_id: conversationId, paused: false })
   await expect

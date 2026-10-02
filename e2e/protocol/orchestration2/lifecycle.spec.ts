@@ -3,7 +3,7 @@
 // daemon restarts and crashes, and parent and child lifetimes that do not
 // depend on each other. Real daemon and runtime processes with the Codex mock
 // and a custom executable agent that fails on request.
-import { expect, isRunning, prompts, test, turnReply, waitForMessage } from '../fixtures'
+import { cancelActiveSubmission, expect, isRunning, prompts, test, turnReply, waitForMessage } from '../fixtures'
 import { defineFailingAgent, failingAgentPrompts } from '../fixtures/failing-agent'
 import { childView, delegate, opId, parentIn, waitForChild, waitForStatus, waitOnce } from './steps'
 
@@ -31,7 +31,7 @@ test('a child is admitted, runs and settles, and the parent sees each step witho
   expect((await childView(profile, parent, childId)).status).toBe('running')
 
   // Cancelled: settles as interrupted, never completed.
-  await profile.call('agent.cancel', { conversation_id: childId })
+  await cancelActiveSubmission(profile, childId)
   expect(await waitForChild(profile, childId, 'settled', { outcome: 'interrupted' })).toMatchObject({ done: true })
   expect((await childView(profile, parent, childId)).status).toBe('interrupted')
 
@@ -164,7 +164,7 @@ test('parent and child run independently: the parent ending or disconnecting doe
   await expect.poll(async () => (await waitOnce(profile, childId, { timeoutMs: 0 })).phase).toBe('running')
 
   // The parent's turn ends and its Agent disconnects; the child keeps running.
-  await profile.call('agent.cancel', { conversation_id: parent })
+  await cancelActiveSubmission(profile, parent)
   await waitForStatus(profile, parent, 'interrupted')
   await profile.call('agent.disconnect', { conversation_id: parent })
   await waitForStatus(profile, parent, 'disconnected')
@@ -172,7 +172,7 @@ test('parent and child run independently: the parent ending or disconnecting doe
   expect((await childView(profile, parent, childId)).status).toBe('running')
 
   // The child ending leaves the disconnected parent as it was.
-  await profile.call('agent.cancel', { conversation_id: childId })
+  await cancelActiveSubmission(profile, childId)
   await waitForChild(profile, childId, 'settled', { outcome: 'interrupted' })
   expect((await profile.call('conversation.get', { conversation_id: parent })).conversation.status).toBe('disconnected')
   // The link outlives both Agents.

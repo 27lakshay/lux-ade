@@ -6,6 +6,7 @@
 import { access, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
+  cancelActiveSubmission,
   expect,
   prompts,
   send,
@@ -151,7 +152,7 @@ test('F039: file rewind refuses a stale preview, unconfirmed overwrites and a ru
     files: null,
   })
   expect(await repo.read('src/app.ts')).toBe('export const answer = 40\n')
-  await profile.call('agent.cancel', { conversation_id: conversationId })
+  await cancelActiveSubmission(profile, conversationId)
   await expect.poll(async () => (await snapshot(profile, conversationId)).conversation.status).toBe('interrupted')
   // No receipt was kept: the same operation ID runs once the turn has stopped.
   expect(await profile.call('conversation.rewind', busy)).toMatchObject({ outcome: 'restored' })

@@ -21,18 +21,18 @@ async function replies(profile: ScratchProfile) {
 test('CLI answers native approvals and questions once through the running daemon', async ({ profile }) => {
   const { conversationId } = await startConversation(profile, 'codex')
   const answer = (...args: string[]) => profile.cli('conversation', 'answer', conversationId, ...args)
-  const acked = { code: 0, json: { type: 'ack' } }
-  const requestFor = async (prompt: string, method: string) => {
+  const acked = { code: 0, json: { type: 'agent_answer_outcome', response_delivery: 'acknowledged' } }
+  const requestFor = async (prompt: string, kind: 'choices' | 'questions') => {
     await waitForIdle(profile, conversationId)
     await send(profile, conversationId, prompt)
     const pending = await waitForPendingRequest(profile, conversationId)
-    expect(pending.method).toBe(method)
+    expect(pending.metadata.schema.kind).toBe(kind)
     return pending
   }
-  const approvalMethod = 'item/commandExecution/requestApproval'
+  const approvalSchema = 'choices'
 
-  const approval = await requestFor(codexPrompts.approval, approvalMethod)
-  expect(approval.params.command).toBe('echo fixture')
+  const approval = await requestFor(codexPrompts.approval, approvalSchema)
+  expect(approval.metadata.summary).toBe('echo fixture')
   expect(await answer(approval.id, 'decline')).toMatchObject(acked)
   await expect.poll(async () => (await replies(profile)).length).toBe(1)
   expect((await replies(profile))[0]!.result).toEqual({ decision: 'decline' })
@@ -42,11 +42,12 @@ test('CLI answers native approvals and questions once through the running daemon
   expect(await answer(approval.id, 'decline')).toMatchObject(acked)
   expect(await replies(profile)).toHaveLength(1)
 
-  const questions = await requestFor(codexPrompts.richQuestions, 'item/tool/requestUserInput')
-  expect(questions.params.questions).toMatchObject([
-    { id: 'choice', question: 'Choose a mode' },
-    { id: 'multiple', question: 'Choose features', multiSelect: true },
-    { id: 'secret', question: 'Fixture secret', isSecret: true },
+  const questions = await requestFor(codexPrompts.richQuestions, 'questions')
+  if (questions.metadata.schema.kind !== 'questions') throw new Error('Expected native questions schema')
+  expect(questions.metadata.schema.questions).toMatchObject([
+    { id: 'choice', prompt: 'Choose a mode' },
+    { id: 'multiple', prompt: 'Choose features', multiple: true },
+    { id: 'secret', prompt: 'Fixture secret', secret: true },
   ])
   const answers = { choice: 'Thorough', multiple: ['Read, write'], secret: 'fixture answer' }
   expect(await answer(questions.id, 'answer', JSON.stringify(answers))).toMatchObject(acked)
@@ -61,14 +62,15 @@ test('CLI answers native approvals and questions once through the running daemon
   expect(await answer(questions.id, 'answer', JSON.stringify(answers))).toMatchObject(acked)
   expect(await replies(profile)).toHaveLength(2)
 
-  const accepted = await requestFor(codexPrompts.approval, approvalMethod)
+  const accepted = await requestFor(codexPrompts.approval, approvalSchema)
   expect(await answer(accepted.id, 'accept')).toMatchObject(acked)
   await expect.poll(async () => (await replies(profile)).length).toBe(3)
   expect((await replies(profile))[2]!.result).toEqual({ decision: 'accept' })
 
   // A request that offers only accept and cancel refuses decline.
-  const cancelOnly = await requestFor('approval-cancel', approvalMethod)
-  expect(cancelOnly.params.availableDecisions).toEqual(['accept', 'cancel'])
+  const cancelOnly = await requestFor('approval-cancel', approvalSchema)
+  if (cancelOnly.metadata.schema.kind !== 'choices') throw new Error('Expected native choices schema')
+  expect(cancelOnly.metadata.schema.choices.map((choice) => choice.value)).toEqual(['accept', 'cancel'])
   const unoffered = await answer(cancelOnly.id, 'decline')
   expect(unoffered.code).not.toBe(0)
   expect(unoffered.stderr).toMatch(/Decision is not offered by Codex/)

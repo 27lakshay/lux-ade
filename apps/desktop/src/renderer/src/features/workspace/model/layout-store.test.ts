@@ -1,10 +1,35 @@
 import { beforeEach, expect, test } from 'vitest'
 import { daemonLayouts, resetLayout, settle, shown, startWith, WORKSPACE } from '../testing'
 import { defaultLayout } from './layout'
-import { activeWorkspace, dispatch, keptWorkspaces, layoutStore, setKeepMounted, swapSidebars } from './layout-store'
+import {
+  activeWorkspace,
+  dispatch,
+  keptWorkspaces,
+  layoutStore,
+  openTab,
+  openTabInAnother,
+  setKeepMounted,
+  swapSidebars,
+} from './layout-store'
 import { selectWorkspace } from './layout-sync'
 
 beforeEach(resetLayout)
+
+test('a conversation can have independent durable tab views without changing normal reopen behavior', async () => {
+  const target = { kind: 'conversation' as const, id: 'conversation-1' }
+  await openTab(target)
+  await openTab(target)
+  expect(Object.values((await shown()).tabs)).toHaveLength(1)
+
+  await openTabInAnother(target)
+  const tabs = Object.values((await shown()).tabs)
+  expect(tabs).toHaveLength(2)
+  expect(tabs.map((tab) => tab.target)).toEqual([target, target])
+  expect(new Set(tabs.map((tab) => tab.id)).size).toBe(2)
+
+  await openTab(target)
+  expect(Object.values((await shown()).tabs)).toHaveLength(2)
+})
 
 test('each workspace keeps its own layout, in the daemon', async () => {
   await swapSidebars()

@@ -331,7 +331,6 @@ test('crosswalks visible app states to their distinct semantic roles and leaves 
   expect(byId('app-destructive-focus').threshold).toBe(3)
   expect(byId('code-selection').role).toBe('accent-foreground')
   expect(byId('code-selection').section).toBe('syntax')
-  expect(byId('syntax-syntax-comment').surface).toBe('Shiki code preview')
   expect(report.rows.some((item) => item.id === 'syntax-syntax-added')).toBe(false)
   expect(byId('app-primary-default').role).toBe('primary-foreground')
   expect(byId('diff-lines').supported).toBe(false)

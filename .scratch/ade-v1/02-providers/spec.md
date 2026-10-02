@@ -72,4 +72,11 @@ Cross-provider session continuation and implicit account/model fallback are not 
 
 ## Further Notes
 
+The [TypeScript provider SDK and conversation UI specification](provider-sdk-conversation-ui.md)
+records the user's 2026-09-30 decision to use Effect v4 RC for adapter authoring while
+keeping Rust as wire-contract authority. It refines native semantics, public worker
+parity, managed account context, capabilities and conformance. The primary three and
+a real independently installed provider must exercise the contract before freeze.
+Earlier headless acceptance does not establish these expanded delivery checkpoints.
+
 This specification records required behavior, not implemented completeness. The shared v1 register contains all 140 original catalogue dispositions, scope corrections, delivery dependencies and remaining decisions. No source file layout or package candidate overrides the agreed product behavior.

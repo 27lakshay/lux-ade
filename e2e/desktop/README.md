@@ -34,17 +34,16 @@ their accessible name) and what the daemon holds (`profile.cli`, `profile.call`)
 role and accessible name; the navigator's list is `getByRole('list', { name: 'Projects' })`.
 Never sleep: poll with `expect.poll` or a locator.
 
-The conversation surface is not built yet, so a send calls the bridge the composer will use
-(`window.adeHost.conversations.request`) from the window's page, after saving the draft as the
-composer does.
+The production conversation pane renders retained history and execution context as read-only
+content. The pending-turn E2E path sends through the typed bridge from the page; no in-pane
+composer or send interaction is built.
 
 ## Not covered yet
 
-- **Typing and sending in the composer.** A conversation tab renders nothing yet
-  (`renderer/src/features/workspace/content/tab-content.tsx`), so the send specs call the bridge.
-  Port them to the composer when it is built.
-- **A reply drawn in the transcript.** There is no transcript view; the specs check the
-  conversation row's status mark in the navigator and the daemon's messages instead.
+- **Typing and sending in the composer.** The read-only pane has no composer; the pending-turn
+  test calls the typed bridge after saving a draft.
+- **A streamed assistant reply during a turn.** The transcript specs cover retained history,
+  including completed provider output, but do not assert a newly generated reply while a turn runs.
 - **A window claimed by another client.** `window.claim` has no idea of client ownership, so there
   is nothing to prove; see "Not decided yet" in the
   [daemon authority map](../../.scratch/daemon-authority/README.md).
@@ -91,8 +90,8 @@ See [Playwright tracing](https://playwright.dev/docs/api/class-tracing) and
 `accessibility.spec.ts` runs axe once each against the built shell, open command palette and
 workspace removal confirmation. It reaches those states through clicks and checks initial
 focus, Escape, keyboard cancellation and the workspace remaining in the daemon catalog.
-The existing interaction specs continue to run. Conversation content remains unbuilt and has
-no accessibility scan yet.
+The existing interaction specs continue to run. The conversation history pane has no accessibility
+scan yet.
 
 The pinned `@axe-core/playwright` development package uses the same `playwright-core` version
 as the desktop runner. Electron rejects the blank page axe normally creates to aggregate

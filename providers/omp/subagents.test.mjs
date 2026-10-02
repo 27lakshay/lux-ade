@@ -17,10 +17,19 @@ test('detached completion retains original turn and stable identity', () => {
   expect(children.consume(frame('completed'), 'second')).toBeNull()
 })
 
+test('unattributed native children retain their session-scoped identity without an ADE turn', () => {
+  const children = new Subagents()
+  expect(children.consume(frame('completed'), 'unrelated')).toBeNull()
+  const started = children.consume(frame('started'), null)
+  expect(started).toMatchObject({ turn: null, role: 'tool', kind: 'subagent' })
+  const completed = children.consume(frame('completed'), null)
+  expect(completed).toMatchObject({ id: started.id, turn: null })
+  expect(completed.content.agents[0].state).toBe('completed')
+})
+
 test('unknown children cannot attach to unrelated turns; cancellation differs from failure', () => {
   const children = new Subagents()
   expect(children.consume(frame('completed'), 'unrelated')).toBeNull()
-  expect(children.consume(frame('started'), null)).toBeNull()
   children.consume(frame('started'), 'first')
   expect(children.consume(frame('failed', { parentToolCallId: 'other' }), 'second')).toBeNull()
   expect(children.consume(frame('aborted'), null).content.agents[0].state).toBe('interrupted')

@@ -3,7 +3,7 @@ import { Database } from 'bun:sqlite'
 import { mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { ChildTranscripts } from './child-transcripts.mjs'
+import { ChildTranscripts, readChildTranscript } from './child-transcripts.mjs'
 
 test('child reference survives restart; reader follows ancestry and rejects unrelated parents and replacement files', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'ade-child-reader-'))
@@ -37,7 +37,10 @@ test('child reference survives restart; reader follows ancestry and rejects unre
     ]
     await writeFile(filename, records.map((x) => JSON.stringify(x)).join('\n') + '\n{"partial":')
     reader.remember('parent', { id: 'child', sessionFile: filename })
+    const direct = await readChildTranscript(filename, 'child', 0)
     const first = await reader.read('parent', 'child', 0)
+    expect(direct.page).toEqual(first)
+    expect(direct.header_id).toBe('native-child')
     expect(first.items.map((i) => i.text)).toEqual(['Task', 'Current answer'])
     expect(JSON.stringify(first)).not.toContain('PRIVATE')
     db.close()

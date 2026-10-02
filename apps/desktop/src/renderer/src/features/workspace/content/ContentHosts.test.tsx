@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react'
 import { beforeEach, expect, test } from 'vitest'
 import { userEvent } from 'vitest/browser'
+import { render as renderReact } from 'vitest-browser-react'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import type { Tab } from '../model/layout'
 import { dispatch, layoutNow, layoutStore, setKeepTerminals } from '../model/layout-store'
 import { selectWorkspace } from '../model/layout-sync'
 import { openTitled, renderWorkspace, resetLayout, titleOf, WORKSPACE } from '../testing'
+import { attachHost, hostFor, releaseHost } from './hosts'
 
 beforeEach(resetLayout)
 
@@ -105,4 +108,48 @@ test('content unmounts when its tab closes, or its workspace falls off the recen
   await expect.element(screen.getByRole('button', { name: 'Shell 0' })).toBeVisible()
   await dispatch({ type: 'close_tab', tab_id: tabId('Shell') })
   await expect.poll(() => document.querySelector('[data-content-host]')).toBeNull()
+})
+test('restores native scroll before the next frame and ignores a replaced viewport', async () => {
+  const id = 'content-host-scroll-regression'
+  const body = document.createElement('div')
+  document.body.append(body)
+  const host = hostFor(id)
+  let detach = attachHost(body, id)
+  const renderHistory = (key: string) => (
+    <ScrollArea key={key} style={{ height: 80, width: 96 }}>
+      <div style={{ height: 640, width: 240 }}>retained history</div>
+    </ScrollArea>
+  )
+  let view: Awaited<ReturnType<typeof renderReact>> | undefined
+
+  try {
+    view = await renderReact(renderHistory('original'), { container: host })
+    const first = host.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]')
+    expect(first).not.toBeNull()
+    if (!first) throw new Error('ScrollArea viewport was not rendered')
+    expect(first.clientHeight).toBeGreaterThan(0)
+    first.scrollTop = 240
+    expect(first.scrollTop).toBe(240)
+
+    detach()
+    detach = attachHost(body, id)
+    expect(first.scrollTop).toBe(240)
+    // Detach again in the same task, before a browser frame can restore anything.
+    detach()
+    await view.rerender(renderHistory('replacement'))
+    const replacement = host.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]')
+    expect(replacement).not.toBeNull()
+    if (!replacement) throw new Error('Replacement ScrollArea viewport was not rendered')
+    expect(replacement).not.toBe(first)
+
+    detach = attachHost(body, id)
+    expect(replacement.scrollTop).toBe(0)
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    expect(replacement.scrollTop).toBe(0)
+  } finally {
+    detach()
+    await view?.unmount()
+    releaseHost(id)
+    body.remove()
+  }
 })

@@ -126,7 +126,7 @@ export interface EventChannels {
   'ade:native-accessibility-updated': [snapshot: NativeAccessibilitySnapshot]
   'ade:client-state-changed': [state: Awaited<ReturnType<ProfilesBridge['getClientState']>>]
   'ade:profile-state-changed': [state: ProfileState]
-  'ade:draft-error': [error: { conversationId: string; message: string }]
+  'ade:draft-error': [error: { conversationId: string; viewId: string; message: string }]
   /** Main gave the window another daemon record (a profile switch, or the daemon came up late). */
   'ade:window-id-changed': [windowId: string | null]
   'ade:browser-state': [state: BrowserState]

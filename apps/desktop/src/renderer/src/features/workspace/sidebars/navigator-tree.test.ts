@@ -26,6 +26,7 @@ const conversation = (
   provider: 'codex',
   status: 'idle',
   attention,
+  execution_host: { kind: 'local' },
 })
 const project = (id: string, name: string, kind: CatalogProject['kind']): CatalogProject => ({
   id,

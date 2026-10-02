@@ -1,6 +1,27 @@
 //! Agent sends, resumes, provider event handling, cancellation and answers.
 use super::*;
 
+fn submission_message(
+    store: &crate::store::Store,
+    request: Option<&str>,
+    update: impl FnOnce(&mut ade_core::contract::conversations::SubmissionDelivery),
+) -> Result<Option<Message>> {
+    let Some(request) = request else {
+        return Ok(None);
+    };
+    let Some(mut message) = store.message(request)? else {
+        return Ok(None);
+    };
+    if message.role != "user" {
+        return Ok(None);
+    }
+    let delivery = message.delivery.get_or_insert_with(|| {
+        ade_core::contract::conversations::SubmissionDelivery::admitted(request)
+    });
+    update(delivery);
+    Ok(Some(message))
+}
+
 pub(super) struct Agent {
     pub(super) run_id: String,
     pub(super) rpc: Option<Arc<dyn Provider>>,
@@ -47,9 +68,34 @@ pub(super) struct FailedAgent {
 
 /// Whether a turn that ended with `status` pauses the prompt queue. An
 /// interrupted or failed turn pauses it, unless the person resumed the queue
-/// while that very turn was still ending: that newer wake is kept.
-pub(super) fn pauses_queue(status: &str, resumed_during: Option<&str>, turn: &str) -> bool {
-    status != "ready" && resumed_during != Some(turn)
+/// while that very submission was still ending: that newer wake is kept.
+pub(super) fn pauses_queue(status: &str, resumed_during: Option<&str>, identity: &str) -> bool {
+    status != "ready" && resumed_during != Some(identity)
+}
+
+fn resolved_request_matches(
+    metadata: Option<&ade_core::requests::RequestMetadata>,
+    session: &str,
+    request_id: &serde_json::Value,
+) -> bool {
+    metadata.is_some_and(|metadata| {
+        metadata.native_session_id.as_deref() == Some(session)
+            && &metadata.native_request_id == request_id
+    })
+}
+fn event_targets_current_submission(
+    conversation: &ade_core::model::Conversation,
+    session: &str,
+    submission: Option<&str>,
+    turn: Option<&str>,
+) -> bool {
+    if session.is_empty() || conversation.provider_thread_id.as_deref() != Some(session) {
+        return false;
+    }
+    match submission {
+        Some(submission) => conversation.runtime_submission.as_deref() == Some(submission),
+        None => turn.is_some_and(|turn| conversation.active_turn_id.as_deref() == Some(turn)),
+    }
 }
 
 /// Whether a provider event that names `turn` belongs to a turn other than
@@ -301,7 +347,7 @@ impl Sessions {
                     .provider_thread_id
                     .ok_or_else(|| anyhow!("Missing provider Conversation"))?;
                 let message_id = {
-                    let d = hub.data.lock().unwrap();
+                    let mut d = hub.data.lock().unwrap();
                     ensure!(
                         Self::owns(&d, &c.id, &run)
                             && !d.agents[&c.id].stopping
@@ -314,15 +360,20 @@ impl Sessions {
                         .store
                         .message(&key)?
                         .ok_or_else(|| anyhow!("Missing submission"))?;
+                    if let Some(delivery) = &mut message.delivery {
+                        delivery.dispatch =
+                            ade_core::contract::conversations::SubmissionDispatch::Dispatched;
+                    }
                     if message.provider_item_id.is_none() {
                         message.provider_item_id = rpc.prepare_submission();
-                        let current = d.store.conversation(&c.id)?;
-                        d.store
-                            .commit_conversation(&current, &[message.clone()], &[])?;
                     }
+                    d.store
+                        .commit_conversation(&current, &[message.clone()], &[])?;
+                    hub.changed(&mut d, &current, &[message.clone()])?;
                     message.provider_item_id
                 };
-                let turn = rpc.send(&thread, &key, message_id.as_deref(), &prompt)?;
+                let receipt =
+                    rpc.send_evidence(&thread, &run, &key, message_id.as_deref(), &prompt)?;
                 let mut d = hub.data.lock().unwrap();
                 if let Err(error) = d.store.mark_switch_context_delivered(&c.id, &key) {
                     eprintln!("Account switch context: {error:#}");
@@ -334,12 +385,43 @@ impl Sessions {
                 }
                 let mut current = d.store.conversation(&c.id)?;
                 // Notification may arrive before the RPC response. Never regress a completed turn.
-                if current.status == "starting" {
+                if current.status == "starting" && receipt.admitted {
                     current.status = "running".into();
-                    current.active_turn_id = Some(turn);
+                    current.active_turn_id = receipt.turn.clone();
                     current.updated_at = now_ms();
                     d.store.commit_conversation(&current, &[], &[])?;
                     hub.changed(&mut d, &current, &[])?;
+                }
+                if let Some(message) = submission_message(&d.store, Some(&key), |delivery| {
+                    delivery.admitted = receipt.admitted;
+                    delivery.dispatch = receipt.dispatch;
+                    delivery.native_outcome = receipt.native_outcome;
+                    delivery.native_turn_id = receipt.turn.clone();
+                    if receipt.native_outcome
+                        == ade_core::contract::conversations::SubmissionNativeOutcome::Accepted
+                    {
+                        delivery.error = None;
+                        delivery.recovery = None;
+                    }
+                    if delivery.terminal.as_ref().is_some_and(|terminal| {
+                        receipt.turn.as_deref().is_some_and(|turn| {
+                            terminal
+                                .turn_id
+                                .as_deref()
+                                .is_some_and(|native| native != turn)
+                        })
+                    }) {
+                        delivery.terminal = None;
+                    } else if let Some(terminal) = &mut delivery.terminal
+                        && let Some(turn) = receipt.turn.as_deref()
+                        && terminal.turn_id.as_deref() == Some(turn)
+                    {
+                        terminal.correlated = true;
+                    }
+                })? {
+                    d.store
+                        .commit_conversation(&current, std::slice::from_ref(&message), &[])?;
+                    hub.changed(&mut d, &current, &[message])?;
                 }
                 Ok(())
             })();
@@ -668,7 +750,7 @@ impl Sessions {
                 vec![]
             };
             d.store.commit_conversation(&current, &messages, &[])?;
-            let current = Self::presented(&d, &current)?;
+            let current = self.presented(&d, &current)?;
             self.publish(
                 &mut d,
                 json!({"type":"conversation_reload","conversation":current}),
@@ -853,14 +935,42 @@ impl Sessions {
             for p in &mut requests {
                 p.status = "interrupted".into();
             }
+            let delivery =
+                submission_message(&d.store, c.runtime_submission.as_deref(), |delivery| {
+                    let failure = ade_core::error::Failure::provider(
+                        &serde_json::json!({"message": c.error}),
+                        ade_core::error::Failure::OutcomeUnknown,
+                    );
+                    delivery.error = Some(failure);
+                    delivery.recovery = Some(failure.recovery());
+                    if delivery.native_outcome
+                        != ade_core::contract::conversations::SubmissionNativeOutcome::Accepted
+                    {
+                        delivery.native_outcome = match failure {
+                            ade_core::error::Failure::Rejected
+                            | ade_core::error::Failure::Authentication
+                            | ade_core::error::Failure::RateLimit
+                            | ade_core::error::Failure::UsageLimit
+                            | ade_core::error::Failure::SessionUnavailable => {
+                                ade_core::contract::conversations::SubmissionNativeOutcome::Rejected
+                            }
+                            _ => {
+                                ade_core::contract::conversations::SubmissionNativeOutcome::Unknown
+                            }
+                        };
+                    }
+                })?
+                .into_iter()
+                .collect::<Vec<_>>();
             // Without a confirmed stop, or with the runtime gone, nothing
             // proves how a turn in flight ended: its outcome is unknown.
             if runtime_gone || outcome.hold.is_some() {
+                d.store.commit_conversation(&c, &delivery, &requests)?;
                 d.store.commit_lost_run(&c, &requests)?;
             } else {
-                d.store.commit_conversation(&c, &[], &requests)?;
+                d.store.commit_conversation(&c, &delivery, &requests)?;
             }
-            self.changed(&mut d, &c, &[])
+            self.changed(&mut d, &c, &delivery)
         })();
         if let Err(error) = result {
             eprintln!("Could not persist Agent failure: {error}");
@@ -895,6 +1005,91 @@ impl Sessions {
             );
             c.runtime_cursor = envelope.sequence;
             changed = true;
+            // Native notifications may precede the send receipt. Retain turn identity,
+            // but claim request correlation only after Submitted proves it.
+            let delivery_event = match &envelope.event {
+                Event::Submitted { submission, .. }
+                    if c.runtime_submission.as_ref() == Some(submission) =>
+                {
+                    Some(submission.as_str())
+                }
+                Event::Finished {
+                    session,
+                    submission,
+                    turn,
+                    ..
+                } if event_targets_current_submission(
+                    &c,
+                    session,
+                    submission.as_deref(),
+                    turn.as_deref(),
+                ) =>
+                {
+                    c.runtime_submission.as_deref()
+                }
+                _ => None,
+            };
+            if let Some(request) = delivery_event {
+                let message = messages.get(request).cloned().or(d.store.message(request)?);
+                if let Some(mut message) = message
+                    && let Some(delivery) = &mut message.delivery
+                {
+                    match &envelope.event {
+                        Event::Submitted {
+                            turn,
+                            admitted,
+                            dispatch,
+                            native_outcome,
+                            ..
+                        } => {
+                            delivery.admitted = *admitted;
+                            delivery.dispatch = dispatch.unwrap_or(
+                                ade_core::contract::conversations::SubmissionDispatch::Pending,
+                            );
+                            delivery.native_outcome = native_outcome.unwrap_or(
+                                ade_core::contract::conversations::SubmissionNativeOutcome::Pending,
+                            );
+                            delivery.native_turn_id = turn.clone();
+                            delivery.recovery = None;
+                            if delivery.terminal.as_ref().is_some_and(|terminal| {
+                                terminal.turn_id.is_some() && terminal.turn_id != *turn
+                            }) {
+                                delivery.terminal = None;
+                            } else if let Some(terminal) = &mut delivery.terminal {
+                                terminal.correlated = true;
+                            }
+                        }
+                        Event::Finished {
+                            turn,
+                            status,
+                            error,
+                            native_terminal,
+                            interrupt_requested,
+                            ..
+                        } => {
+                            delivery.terminal =
+                                Some(ade_core::contract::conversations::SubmissionTerminal {
+                                    turn_id: turn.clone(),
+                                    status: status.clone(),
+                                    correlated: true,
+                                    native_terminal: native_terminal.clone(),
+                                    interrupt_requested: *interrupt_requested,
+                                    error: error.as_ref().map(|error| {
+                                        ade_core::error::Failure::provider(
+                                            &serde_json::json!({"message": error}),
+                                            ade_core::error::Failure::Rejected,
+                                        )
+                                    }),
+                                });
+                        }
+                        _ => unreachable!(),
+                    }
+                    if !messages.contains_key(&message.id) {
+                        order.push(message.id.clone());
+                    }
+                    messages.insert(message.id.clone(), message);
+                }
+            }
             match envelope.event {
                 Event::OperationFailed { submission, error } => {
                     if submission
@@ -905,12 +1100,15 @@ impl Sessions {
                         break;
                     }
                 }
-                Event::Submitted { submission, turn } => {
-                    if c.runtime_submission.as_deref() == Some(&submission)
-                        && c.status == "starting"
-                    {
+                Event::Submitted {
+                    submission,
+                    turn,
+                    admitted,
+                    ..
+                } => {
+                    if c.runtime_submission.as_deref() == Some(&submission) && admitted {
                         c.status = "running".into();
-                        c.active_turn_id = Some(turn);
+                        c.active_turn_id = turn;
                     }
                 }
                 Event::Exited { error } => {
@@ -919,35 +1117,67 @@ impl Sessions {
                 }
                 Event::Request {
                     session,
+                    submission,
                     turn,
                     id: rpc_id,
                     method,
-                    mut params,
+                    params,
                     supported,
+                    metadata,
                 } => {
                     let rpc = d.agents[id]
                         .rpc
                         .as_ref()
                         .ok_or_else(|| anyhow!("Missing Agent runtime"))?;
-                    if !supported {
-                        rpc.reject(rpc_id, &format!("lux-ade does not support {method}"))?;
-                        c.error =
-                            Some(format!("Agent requested unsupported interaction: {method}"));
-                        changed = true;
-                        continue;
-                    }
                     if Some(session.as_str()) != c.provider_thread_id.as_deref()
-                        || Some(turn.as_str()) != c.active_turn_id.as_deref()
+                        || submission
+                            .as_deref()
+                            .is_some_and(|s| c.runtime_submission.as_deref() != Some(s))
+                        || turn
+                            .as_deref()
+                            .is_some_and(|t| c.active_turn_id.as_deref() != Some(t))
                     {
                         rpc.reject(rpc_id, "Request does not belong to this Conversation")?;
                         continue;
                     }
-                    params["threadId"] = json!(session);
-                    params["turnId"] = json!(turn);
+                    let source_attempt_id = (submission.is_some() || turn.is_some())
+                        .then(|| c.runtime_run.clone())
+                        .flatten();
+                    let metadata =
+                        metadata.unwrap_or_else(|| ade_core::requests::RequestMetadata {
+                            schema_version: 1,
+                            summary: "Agent request requires attention".into(),
+                            schema: ade_core::requests::RequestSchema::Unsupported {
+                                reason: format!("No answer schema is available for {method}"),
+                            },
+                            blocking: None,
+                            created_at_ms: None,
+                            expires_at_ms: None,
+                            native_revision: None,
+                            native_session_id: None,
+                            native_turn_id: None,
+                            native_request_id: serde_json::Value::Null,
+                            native_item_id: None,
+                            native_callback_id: None,
+                        });
+                    let metadata = if !supported {
+                        match metadata.schema {
+                            ade_core::requests::RequestSchema::Unsupported { .. } => metadata,
+                            _ => ade_core::requests::RequestMetadata {
+                                schema: ade_core::requests::RequestSchema::Unsupported {
+                                    reason: "The provider cannot answer this request safely".into(),
+                                },
+                                ..metadata
+                            },
+                        }
+                    } else {
+                        metadata
+                    };
                     let p = PendingRequest {
                         id: new_id("request"),
                         conversation_id: id.into(),
                         run_id: run.into(),
+                        source_attempt_id,
                         rpc_id,
                         method,
                         params,
@@ -955,68 +1185,135 @@ impl Sessions {
                         answer_fingerprint: None,
                         answer_dispatched: false,
                         answer_attempt: 0,
+                        revision: 1,
+                        metadata: Some(metadata),
+                        resolution: Default::default(),
+                        response_delivery: Default::default(),
+                        response_operation_id: None,
                     };
                     requests.insert(p.id.clone(), p);
                     c.status = "waiting".into();
                     changed = true;
                 }
-                Event::Started { session, turn } => {
-                    if !session.is_empty()
-                        && Some(session.as_str()) != c.provider_thread_id.as_deref()
+                Event::Started {
+                    session,
+                    submission,
+                    turn,
+                } => {
+                    if (!session.is_empty()
+                        && Some(session.as_str()) != c.provider_thread_id.as_deref())
+                        || submission
+                            .as_ref()
+                            .is_some_and(|s| c.runtime_submission.as_ref() != Some(s))
                     {
                         continue;
                     }
-                    c.active_turn_id = Some(turn);
+                    c.active_turn_id = turn;
                     c.status = "running".into();
                     c.error = None;
                     changed = true;
                 }
                 Event::Finished {
                     session,
+                    submission,
                     turn,
                     status,
                     error,
+                    native_terminal: _,
+                    interrupt_requested: _,
                 } => {
-                    if !session.is_empty()
-                        && Some(session.as_str()) != c.provider_thread_id.as_deref()
-                    {
-                        continue;
-                    }
-                    if c.active_turn_id.is_some() && c.active_turn_id.as_deref() != Some(&turn) {
+                    if !event_targets_current_submission(
+                        &c,
+                        &session,
+                        submission.as_deref(),
+                        turn.as_deref(),
+                    ) {
                         continue;
                     }
                     c.status = match status.as_str() {
                         "failed" => "error",
-                        "interrupted" => "interrupted",
+                        "interrupted" | "cancelled" => "interrupted",
                         _ => "ready",
                     }
                     .into();
                     c.error = error;
-                    if pauses_queue(&c.status, c.queue_resumed_during.as_deref(), &turn) {
+                    let identity = submission
+                        .as_deref()
+                        .or(turn.as_deref())
+                        .expect("the event identity fence requires one identity");
+                    if pauses_queue(&c.status, c.queue_resumed_during.as_deref(), identity) {
                         c.queue_paused = true;
                     }
                     c.queue_resumed_during = None;
                     c.active_turn_id = None;
-                    usage.push((
-                        envelope.sequence,
-                        crate::usage::Observed::Finished { turn: turn.clone() },
-                    ));
+                    if let Some(turn) = turn.as_ref() {
+                        usage.push((
+                            envelope.sequence,
+                            crate::usage::Observed::Finished { turn: turn.clone() },
+                        ));
+                    }
                     for r in requests.values_mut() {
-                        if matches!(r.status.as_str(), "pending" | "responding")
-                            && r.params["turnId"] == turn
+                        let request_session = r
+                            .metadata
+                            .as_ref()
+                            .and_then(|metadata| metadata.native_session_id.as_deref())
+                            .or_else(|| r.params["threadId"].as_str());
+                        let request_turn = r
+                            .metadata
+                            .as_ref()
+                            .and_then(|metadata| metadata.native_turn_id.as_deref())
+                            .or_else(|| r.params["turnId"].as_str());
+                        let same_work = submission.as_deref().map_or_else(
+                            || {
+                                turn.as_deref()
+                                    .is_some_and(|turn| request_turn == Some(turn))
+                            },
+                            |submission| c.runtime_submission.as_deref() == Some(submission),
+                        );
+                        if r.run_id == run
+                            && request_session == Some(session.as_str())
+                            && same_work
+                            && matches!(r.status.as_str(), "pending" | "responding")
                         {
-                            r.status = "resolved".into();
+                            // A terminal turn makes the request non-actionable, but an ACK only
+                            // proves delivery. Keep resolution outstanding without native closure evidence.
+                            r.status = "withdrawn".into();
+                            if r.response_delivery
+                                != ade_core::requests::ResponseDelivery::Acknowledged
+                            {
+                                r.resolution = ade_core::requests::RequestResolution::Withdrawn;
+                            }
                         }
                     }
                     changed = true;
                 }
-                Event::Item { session, item } => {
+                Event::Item {
+                    session,
+                    submission,
+                    item,
+                } => {
+                    if submission
+                        .as_ref()
+                        .is_some_and(|submission| c.runtime_submission.as_ref() != Some(submission))
+                    {
+                        continue;
+                    }
                     if !session.is_empty()
                         && Some(session.as_str()) != c.provider_thread_id.as_deref()
                     {
                         continue;
                     }
-                    let m = item.message(id);
+                    let mut item = item;
+                    if item.role != "user" {
+                        item.client_id = None;
+                    }
+                    let mut m = item.message(id);
+                    if m.role == "user" {
+                        let previous = messages.get(&m.id).cloned().or(d.store.message(&m.id)?);
+                        if let Some(previous) = previous {
+                            m.delivery = previous.delivery;
+                        }
+                    }
                     if !messages.contains_key(&m.id) {
                         order.push(m.id.clone());
                     }
@@ -1025,6 +1322,7 @@ impl Sessions {
                 }
                 Event::Delta {
                     session,
+                    submission,
                     turn,
                     id: item,
                     role,
@@ -1036,11 +1334,20 @@ impl Sessions {
                     {
                         continue;
                     }
+                    let correlated = (submission.as_deref() == c.runtime_submission.as_deref()
+                        && submission.is_some())
+                        || turn
+                            .as_deref()
+                            .is_some_and(|turn| c.active_turn_id.as_deref() == Some(turn));
+                    if !correlated {
+                        continue;
+                    }
                     let mid = format!("{id}:{item}");
                     if !messages.contains_key(&mid) {
                         let m = d.store.message(&mid)?.unwrap_or_else(|| Message {
                             content: None,
                             review_feedback: None,
+                            delivery: None,
                             attachments: vec![],
                             id: mid.clone(),
                             conversation_id: id.into(),
@@ -1050,6 +1357,7 @@ impl Sessions {
                             status: "streaming".into(),
                             turn_id: turn,
                             provider_item_id: Some(item),
+                            native_message: None,
                             sequence: 0,
                         });
                         order.push(mid.clone());
@@ -1067,10 +1375,41 @@ impl Sessions {
                     }
                     changed = true;
                 }
-                Event::Resolved { id: request_id } => {
+                Event::Resolved {
+                    session,
+                    submission,
+                    id: request_id,
+                    resolution,
+                } => {
+                    if session.is_empty()
+                        || c.provider_thread_id.as_deref() != Some(session.as_str())
+                        || submission.as_ref().is_some_and(|submission| {
+                            c.runtime_submission.as_ref() != Some(submission)
+                        })
+                    {
+                        continue;
+                    }
+                    let resolution = resolution.unwrap_or_default();
                     for r in requests.values_mut() {
-                        if r.rpc_id == request_id {
-                            r.status = "resolved".into();
+                        if r.run_id == run
+                            && resolved_request_matches(r.metadata.as_ref(), &session, &request_id)
+                            && matches!(r.status.as_str(), "pending" | "responding")
+                        {
+                            r.status =
+                                if resolution == ade_core::requests::RequestResolution::Withdrawn {
+                                    "withdrawn"
+                                } else {
+                                    "resolved"
+                                }
+                                .into();
+                            r.resolution = resolution.clone();
+                            if matches!(
+                                r.response_delivery,
+                                ade_core::requests::ResponseDelivery::Admitted
+                                    | ade_core::requests::ResponseDelivery::Dispatched
+                            ) {
+                                r.response_delivery = ade_core::requests::ResponseDelivery::Unknown;
+                            }
                             changed = true;
                         }
                     }
@@ -1151,7 +1490,14 @@ impl Sessions {
     /// Stopping existing work must not depend on storage: when the
     /// cancellation cannot be recorded, the provider is still asked to stop
     /// the turn, and the reply reports that the state was not recorded.
-    pub(super) fn cancel(self: &Arc<Self>, id: &str, expected_turn: Option<&str>) -> Result<()> {
+    pub(super) fn cancel(
+        self: &Arc<Self>,
+        operation_id: &str,
+        id: &str,
+        source_attempt_id: &str,
+        submission_id: &str,
+        expected_turn: Option<&str>,
+    ) -> Result<ade_core::contract::agents::AgentCancelOutcome> {
         let (run, rpc, thread, turn, submission, unrecorded) = {
             let mut d = self.data.lock().unwrap();
             let mut c = d.store.conversation(id)?;
@@ -1160,13 +1506,28 @@ impl Sessions {
             {
                 bail!(refusal);
             }
+            ensure!(
+                c.runtime_run.as_deref() == Some(source_attempt_id),
+                "Cancellation targets a different source attempt"
+            );
+            ensure!(
+                c.runtime_submission.as_deref() == Some(submission_id),
+                "Cancellation targets a different submission"
+            );
             let a = d
                 .agents
                 .get(id)
                 .ok_or_else(|| anyhow!("Agent is not connected"))?;
+            ensure!(
+                a.run_id == source_attempt_id && a.submission.as_deref() == Some(submission_id),
+                "Cancellation target is no longer active"
+            );
             let run = a.run_id.clone();
             let rpc = a.rpc.clone();
-            let submission = a.submission.clone();
+            let submission = a
+                .submission
+                .clone()
+                .ok_or_else(|| anyhow!("Cancellation target has no active submission"))?;
             let thread = c.provider_thread_id.clone();
             let turn = c.active_turn_id.clone();
             c.status = "cancelling".into();
@@ -1180,16 +1541,14 @@ impl Sessions {
             };
             (run, rpc, thread, turn, submission, unrecorded)
         };
-        if let (Some(rpc), Some(thread), Some(turn)) = (rpc, thread, turn) {
-            let hub = self.clone();
-            let id = id.to_owned();
-            std::thread::spawn(move || {
-                if let Err(error) = rpc.cancel(&thread, &turn) {
-                    // A late failure belongs to the cancelled submission only;
-                    // a successor turn in the same run must not be failed.
-                    hub.fail_if(&id, &run, error.to_string(), submission.as_deref());
+        let evidence = if let (Some(rpc), Some(thread)) = (rpc, thread) {
+            match rpc.cancel_target(&thread, &run, &submission, turn.as_deref()) {
+                Ok(evidence) => evidence,
+                Err(error) => {
+                    self.fail_if(id, &run, error.to_string(), Some(&submission));
+                    return Err(error);
                 }
-            });
+            }
         } else {
             self.fail(
                 id,
@@ -1197,13 +1556,208 @@ impl Sessions {
                 "Cancelled while the Agent was starting; resume the Conversation to continue."
                     .into(),
             );
-        }
+            ade_core::contract::providers::ProviderCancelEvidence {
+                scope: ade_core::contract::providers::ProviderCancelScope::Unknown,
+                interruption_requested: false,
+                termination: ade_core::contract::providers::ProviderCancelTermination::Unknown,
+                active_work_remaining: None,
+                queued_work_count: None,
+                background_work_remaining: None,
+                observed_at_ms: None,
+            }
+        };
         if let Some(error) = unrecorded {
             bail!(
                 "ADE asked the provider to stop this turn but could not record the cancellation ({error:#}); the Conversation updates once storage accepts writes again"
             );
         }
-        Ok(())
+        Ok(ade_core::contract::agents::AgentCancelOutcome {
+            tag: ade_core::contract::agents::AgentCancelOutcomeTag::AgentCancelOutcome,
+            operation_id: operation_id.into(),
+            conversation_id: id.into(),
+            source_attempt_id: run,
+            submission_id: submission,
+            turn_id: turn,
+            evidence,
+        })
+    }
+    pub(super) fn answer_typed(
+        &self,
+        request: &ade_core::requests::AgentAnswerRequest,
+    ) -> Result<ade_core::contract::conversations::AgentAnswerOutcome> {
+        use ade_core::requests::{PendingRequest as PublicPending, ResponseDelivery};
+        let mut payload = serde_json::to_value(&request.answer)?;
+        payload.sort_all_objects();
+        let fingerprint = format!("{:x}", Sha256::digest(serde_json::to_vec(&payload)?));
+        let (rpc, native) = {
+            let d = self.data.lock().unwrap();
+            let c = d.store.conversation(&request.conversation_id)?;
+            let mut p = d
+                .store
+                .interaction(&request.conversation_id, &request.request_id)?
+                .ok_or_else(|| anyhow!("Request is stale or no longer available"))?;
+            ensure!(
+                p.source_attempt_id == request.source_attempt_id,
+                "Request belongs to a different source attempt"
+            );
+            ensure!(
+                p.revision == request.request_revision,
+                "Request revision is stale"
+            );
+            let metadata = p
+                .metadata
+                .clone()
+                .ok_or_else(|| anyhow!("Request has no safe typed answer schema"))?;
+            let public = PublicPending {
+                id: p.id.clone(),
+                conversation_id: p.conversation_id.clone(),
+                source_attempt_id: p.source_attempt_id.clone(),
+                revision: p.revision,
+                metadata,
+                resolution: p.resolution.clone(),
+                response_delivery: p.response_delivery.clone(),
+                response_operation_id: p.response_operation_id.clone(),
+            };
+            public.metadata.validate_not_expired()?;
+            let dispatch_now = p.response_operation_id.is_none();
+            if let Some(operation) = &p.response_operation_id {
+                ensure!(
+                    operation == &request.operation_id,
+                    "Request already has a different answer operation"
+                );
+                ensure!(
+                    p.answer_fingerprint.as_deref() == Some(fingerprint.as_str()),
+                    "Answer conflicts with the recorded answer"
+                );
+            } else {
+                ensure!(
+                    p.resolution == ade_core::requests::RequestResolution::Outstanding,
+                    "Request is no longer outstanding"
+                );
+                ensure!(
+                    matches!(p.status.as_str(), "pending" | "responding"),
+                    "Request is no longer actionable"
+                );
+                let native = p
+                    .metadata
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("Request has no native provenance"))?;
+                ensure!(
+                    native.native_session_id.as_deref() == c.provider_thread_id.as_deref(),
+                    "Request belongs to another native session"
+                );
+                if p.source_attempt_id.is_some() {
+                    ensure!(
+                        native.native_turn_id.as_deref() == c.active_turn_id.as_deref(),
+                        "Request belongs to another native turn"
+                    );
+                }
+                public.validate_answer(request)?;
+                p.response_operation_id = Some(request.operation_id.clone());
+                p.answer_fingerprint = Some(fingerprint.clone());
+                p.response_delivery = ResponseDelivery::Dispatched;
+                p.status = "responding".into();
+                d.store.commit_conversation(&c, &[], &[p.clone()])?;
+            }
+            if p.response_delivery == ResponseDelivery::Acknowledged
+                || p.resolution != ade_core::requests::RequestResolution::Outstanding
+            {
+                return Ok(ade_core::contract::conversations::AgentAnswerOutcome {
+                    tag: Default::default(),
+                    operation_id: request.operation_id.clone(),
+                    request_id: p.id,
+                    source_attempt_id: p.source_attempt_id,
+                    request_revision: p.revision,
+                    response_delivery: p.response_delivery,
+                    resolution: p.resolution,
+                    error: None,
+                });
+            }
+            if !dispatch_now
+                && matches!(
+                    p.response_delivery,
+                    ResponseDelivery::Admitted
+                        | ResponseDelivery::Dispatched
+                        | ResponseDelivery::Unknown
+                )
+            {
+                if p.response_delivery != ResponseDelivery::Unknown {
+                    p.response_delivery = ResponseDelivery::Unknown;
+                    d.store.commit_conversation(&c, &[], &[p.clone()])?;
+                }
+                return Ok(ade_core::contract::conversations::AgentAnswerOutcome {
+                    tag: Default::default(),
+                    operation_id: request.operation_id.clone(),
+                    request_id: p.id,
+                    source_attempt_id: p.source_attempt_id,
+                    request_revision: p.revision,
+                    response_delivery: ResponseDelivery::Unknown,
+                    resolution: p.resolution,
+                    error: None,
+                });
+            }
+            if p.response_delivery == ResponseDelivery::NotSent {
+                p.response_delivery = ResponseDelivery::Dispatched;
+                d.store.commit_conversation(&c, &[], &[p.clone()])?;
+            }
+            ensure!(
+                Self::owns(&d, &request.conversation_id, &p.run_id),
+                "Request belongs to a previous Agent run"
+            );
+            let rpc = d
+                .agents
+                .get(&request.conversation_id)
+                .and_then(|a| a.rpc.clone())
+                .ok_or_else(|| anyhow!("Agent is unavailable"))?;
+            (rpc, p)
+        };
+        e2e_answer_exit("before_delivery");
+        let result = rpc.answer_native(&native, &request.operation_id, &request.answer);
+        if result.is_ok() {
+            e2e_answer_exit("after_delivery");
+        }
+        let mut d = self.data.lock().unwrap();
+        let c = d.store.conversation(&request.conversation_id)?;
+        let mut p = d
+            .store
+            .interaction(&request.conversation_id, &request.request_id)?
+            .ok_or_else(|| anyhow!("Request disappeared after answer dispatch"))?;
+        ensure!(
+            p.response_operation_id.as_deref() == Some(&request.operation_id),
+            "Answer operation changed during dispatch"
+        );
+        let not_sent = result.as_ref().err().is_some_and(|error| {
+            error
+                .downcast_ref::<crate::agent_runtime::AnswerNotSent>()
+                .is_some()
+        });
+        if not_sent {
+            ensure!(
+                p.answer_attempt < 32,
+                "Answer retry limit reached; inspect the provider request"
+            );
+            p.answer_attempt += 1;
+            p.response_delivery = ResponseDelivery::NotSent;
+        } else {
+            p.response_delivery = if result.is_ok() {
+                ResponseDelivery::Acknowledged
+            } else {
+                ResponseDelivery::Unknown
+            };
+        }
+        d.store.commit_conversation(&c, &[], &[p.clone()])?;
+        self.changed(&mut d, &c, &[])?;
+        let error = result.err().map(|e| e.to_string());
+        Ok(ade_core::contract::conversations::AgentAnswerOutcome {
+            tag: Default::default(),
+            operation_id: request.operation_id.clone(),
+            request_id: p.id,
+            source_attempt_id: p.source_attempt_id,
+            request_revision: p.revision,
+            response_delivery: p.response_delivery,
+            resolution: p.resolution,
+            error,
+        })
     }
     pub(super) fn answer(
         &self,
@@ -1359,6 +1913,40 @@ mod tests {
     use super::*;
 
     #[test]
+    fn native_withdrawal_uses_native_request_id_not_local_responder_id() {
+        let metadata = ade_core::requests::RequestMetadata {
+            schema_version: 1,
+            summary: "fixture".into(),
+            schema: ade_core::requests::RequestSchema::Unsupported {
+                reason: "fixture".into(),
+            },
+            blocking: None,
+            created_at_ms: None,
+            expires_at_ms: None,
+            native_revision: None,
+            native_session_id: Some("session-a".into()),
+            native_turn_id: None,
+            native_request_id: serde_json::json!("native-control-a"),
+            native_item_id: None,
+            native_callback_id: Some(serde_json::json!("local-responder-a")),
+        };
+        assert!(resolved_request_matches(
+            Some(&metadata),
+            "session-a",
+            &serde_json::json!("native-control-a")
+        ));
+        assert!(!resolved_request_matches(
+            Some(&metadata),
+            "session-b",
+            &serde_json::json!("native-control-a")
+        ));
+        assert!(!resolved_request_matches(
+            Some(&metadata),
+            "session-a",
+            &serde_json::json!("local-responder-a")
+        ));
+    }
+    #[test]
     fn an_unconfirmed_stop_keeps_the_lease_and_marks_the_attempt_interrupted() {
         // The runtime answered `Unconfirmed`, or its socket was refused
         // because the supervisor exited while the provider group lives on.
@@ -1381,6 +1969,16 @@ mod tests {
         assert!(pauses_queue("error", Some("turn-old"), "turn-a"));
         // A completed turn never pauses the queue.
         assert!(!pauses_queue("ready", None, "turn-a"));
+        assert!(!pauses_queue(
+            "interrupted",
+            Some("submission-a"),
+            "submission-a"
+        ));
+        assert!(pauses_queue(
+            "interrupted",
+            Some("submission-old"),
+            "submission-a"
+        ));
     }
 
     #[test]

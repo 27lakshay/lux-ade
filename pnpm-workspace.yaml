@@ -3,6 +3,8 @@ packages:
   - packages/*
   - providers/claude
   - providers/omp
+  - providers/codex
+verifyDepsBeforeRun: error
 allowBuilds:
   nx: true
   electron-winstaller: false
@@ -15,3 +17,11 @@ minimumReleaseAgeExclude:
   - '@tanstack/router-core@1.171.33'
   - '@tanstack/hotkeys@0.10.1'
   - '@tanstack/react-hotkeys@0.12.1'
+  - '@effect/tsgo-darwin-arm64@0.47.1'
+  - '@effect/tsgo-darwin-x64@0.47.1'
+  - '@effect/tsgo-linux-arm64@0.47.1'
+  - '@effect/tsgo-linux-arm@0.47.1'
+  - '@effect/tsgo-linux-x64@0.47.1'
+  - '@effect/tsgo-win32-arm64@0.47.1'
+  - '@effect/tsgo-win32-x64@0.47.1'
+  - '@effect/tsgo@0.47.1'

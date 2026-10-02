@@ -7,7 +7,7 @@ export class Subagents {
   constructor() {
     this.tasks = new Map()
   }
-  consume(message, turn) {
+  consume(message, context) {
     if (message.type !== 'system' || !['task_started', 'task_progress', 'task_notification'].includes(message.subtype))
       return null
     if (!bounded(message.task_id, 4096)) throw new Error('Invalid Claude task identity')
@@ -15,7 +15,7 @@ export class Subagents {
     const startsAgent =
       message.subtype === 'task_started' &&
       message.task_type === 'local_agent' &&
-      turn &&
+      context?.session &&
       !message.skip_transcript &&
       !message.ambient
     // A resumed native task keeps its identity but gets a new Agent tool call.
@@ -35,7 +35,7 @@ export class Subagents {
     if (!resumed && before?.tool && message.tool_use_id && before.tool !== message.tool_use_id) return null
     const state = message.subtype === 'task_notification' ? terminal[message.status] : 'running'
     if (!state) throw new Error('Unknown Claude child outcome')
-    const owner = before?.turn ?? turn
+    const owner = before?.owner ?? context
     const name = bounded(message.subagent_type, 256) ? message.subagent_type : (before?.name ?? null)
     const summary = bounded(message.summary, 16384)
       ? message.summary
@@ -45,12 +45,12 @@ export class Subagents {
     const id =
       before?.id ??
       `subagent:${createHash('sha256')
-        .update(JSON.stringify([owner, message.task_id]))
+        .update(JSON.stringify([owner.session, message.task_id]))
         .digest('hex')}`
     const item = {
       id,
       client_id: null,
-      turn: owner,
+      turn: owner.turn ?? null,
       role: 'tool',
       kind: 'subagent',
       text: `${name ?? message.task_id}: ${state}`,
@@ -64,7 +64,7 @@ export class Subagents {
     const encoded = JSON.stringify(item)
     this.tasks.set(message.task_id, {
       id,
-      turn: owner,
+      owner,
       tool: resumed ? message.tool_use_id : (before?.tool ?? message.tool_use_id),
       name,
       summary,

@@ -4,6 +4,23 @@ use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// Provider-reported terminal evidence, kept separate from ADE's interrupt request.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NativeTerminalEvidence {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subtype: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_error: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_error_status: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub errors: Option<Value>,
+}
 /// The daemon advertises the same contract it uses to validate configuration.
 /// Clients consume descriptors; they do not infer support from a provider name.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
@@ -96,7 +113,7 @@ pub fn descriptor(id: &str) -> Result<&'static Descriptor> {
         .ok_or_else(|| crate::error::ProviderNotFound(id.to_owned()).into())
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     pub model: Option<String>,
@@ -141,11 +158,21 @@ impl Config {
         Ok(())
     }
 }
-#[derive(Clone, Serialize, Deserialize)]
+/// Provider-native transcript identity. It is independent of ADE message IDs,
+/// client IDs, and turn IDs, and is valid only in its native session.
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
+pub struct NativeMessageLocator {
+    pub provider: String,
+    pub session: String,
+    pub message_id: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Item {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content: Option<crate::transcript::Content>,
     pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_message: Option<NativeMessageLocator>,
     pub client_id: Option<String>,
     pub turn: Option<String>,
     pub role: String,
@@ -158,6 +185,7 @@ impl Item {
         Message {
             content: self.content.clone(),
             review_feedback: None,
+            delivery: None,
             attachments: vec![],
             id: self
                 .client_id
@@ -170,11 +198,12 @@ impl Item {
             status: self.status.clone(),
             turn_id: self.turn.clone(),
             provider_item_id: Some(self.id.clone()),
+            native_message: self.native_message.clone(),
             sequence: 0,
         }
     }
 }
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Connected {
     pub session: String,
     pub history: Vec<Item>,
@@ -183,7 +212,7 @@ pub struct Connected {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rewound_from: Option<String>,
 }
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
     OperationFailed {
@@ -192,24 +221,42 @@ pub enum Event {
     },
     Submitted {
         submission: String,
-        turn: String,
+        turn: Option<String>,
+        #[serde(default)]
+        admitted: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        dispatch: Option<crate::contract::conversations::SubmissionDispatch>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        native_outcome: Option<crate::contract::conversations::SubmissionNativeOutcome>,
     },
     Started {
         session: String,
-        turn: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        submission: Option<String>,
+        turn: Option<String>,
     },
     Finished {
         session: String,
-        turn: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        submission: Option<String>,
+        turn: Option<String>,
         status: String,
         error: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        native_terminal: Option<NativeTerminalEvidence>,
+        #[serde(default)]
+        interrupt_requested: bool,
     },
     Item {
         session: String,
+        #[serde(default)]
+        submission: Option<String>,
         item: Item,
     },
     Delta {
         session: String,
+        #[serde(default)]
+        submission: Option<String>,
         turn: Option<String>,
         id: String,
         role: String,
@@ -218,14 +265,24 @@ pub enum Event {
     },
     Request {
         session: String,
-        turn: String,
+        #[serde(default)]
+        submission: Option<String>,
+        turn: Option<String>,
         id: Value,
         method: String,
         params: Value,
         supported: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        metadata: Option<crate::requests::RequestMetadata>,
     },
     Resolved {
+        #[serde(default)]
+        session: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        submission: Option<String>,
         id: Value,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        resolution: Option<crate::requests::RequestResolution>,
     },
     /// Token, cost or rate-limit figures exactly as the provider reported
     /// them. `source` names the native event; the daemon normalizes `report`

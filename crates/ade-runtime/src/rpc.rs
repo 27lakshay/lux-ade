@@ -96,10 +96,19 @@ impl Rpc {
     }
     /// Like [`Rpc::spawn`], with a stateful decoder and a chosen framing.
     pub fn spawn_with(
+        command: Command,
+        events: mpsc::SyncSender<crate::provider::Event>,
+        framing: Framing,
+        decode: impl Fn(WireEvent) -> Result<Option<crate::provider::Event>> + Send + 'static,
+    ) -> Result<Arc<Self>> {
+        Self::spawn_with_limit(command, events, framing, decode, 16 * 1024 * 1024)
+    }
+    pub(crate) fn spawn_with_limit(
         mut command: Command,
         events: mpsc::SyncSender<crate::provider::Event>,
         framing: Framing,
         decode: impl Fn(WireEvent) -> Result<Option<crate::provider::Event>> + Send + 'static,
+        max_frame_bytes: u64,
     ) -> Result<Arc<Self>> {
         use std::os::unix::process::CommandExt;
         let mut child = command
@@ -156,12 +165,16 @@ impl Rpc {
                 let mut reader = BufReader::new(output);
                 loop {
                     let mut line = String::new();
-                    let n = reader
-                        .by_ref()
-                        .take(16 * 1024 * 1024)
-                        .read_line(&mut line)?;
+                    let n = reader.by_ref().take(max_frame_bytes).read_line(&mut line)?;
                     ensure!(n != 0, TransportError::Disconnected);
                     ensure!(line.ends_with('\n'), TransportError::MessageTooLarge);
+                    ensure!(
+                        ade_core::json_budget::within_budget(
+                            line.as_bytes(),
+                            max_frame_bytes as usize
+                        ),
+                        TransportError::MessageTooLarge
+                    );
                     let message: Value =
                         serde_json::from_str(&line).map_err(|_| TransportError::InvalidMessage)?;
                     let Some(this) = weak.upgrade() else {

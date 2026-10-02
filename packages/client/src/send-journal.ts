@@ -49,6 +49,7 @@ export type SendJournalRecord = SendJournalIdentity & {
   draftText: string
   draftRevision: number
   attachments: unknown[]
+  contextNodes: unknown[]
   dispatchStarted: boolean
   restoreHold?: true
 }
@@ -107,6 +108,7 @@ function validRecord(value: unknown): value is SendJournalRecord {
   const fields = [
     'attachments',
     'conversationId',
+    'contextNodes',
     'dispatchStarted',
     'draftRevision',
     'draftText',
@@ -140,6 +142,7 @@ function validRecord(value: unknown): value is SendJournalRecord {
     Buffer.byteLength(JSON.stringify(candidate.attachments)) > maxAttachmentsBytes
   )
     return false
+  if (!Array.isArray(candidate.contextNodes) || !jsonValue(candidate.contextNodes)) return false
   return typeof candidate.dispatchStarted === 'boolean'
 }
 
@@ -244,6 +247,8 @@ function matchingIntent(record: SendJournalRecord, response: unknown): boolean {
     intent.text === record.text &&
     Array.isArray(intent.attachments) &&
     JSON.stringify(intent.attachments) === JSON.stringify(record.attachments) &&
+    Array.isArray(intent.context_nodes) &&
+    JSON.stringify(intent.context_nodes) === JSON.stringify(record.contextNodes) &&
     (intent.state === 'pending' || intent.state === 'rejected')
   )
 }
@@ -397,7 +402,8 @@ export class SendJournal {
             record.text !== candidate.text ||
             record.draftText !== candidate.draftText ||
             record.draftRevision !== candidate.draftRevision ||
-            JSON.stringify(record.attachments) !== JSON.stringify(candidate.attachments)
+            JSON.stringify(record.attachments) !== JSON.stringify(candidate.attachments) ||
+            JSON.stringify(record.contextNodes) !== JSON.stringify(candidate.contextNodes)
           )
         })
       ) {
@@ -440,7 +446,7 @@ export class SendJournal {
         previous.draftText === next.draftText &&
         previous.draftRevision === next.draftRevision &&
         JSON.stringify(previous.attachments) === JSON.stringify(next.attachments) &&
-        !(previous.dispatchStarted && !next.dispatchStarted) &&
+        JSON.stringify(previous.contextNodes) === JSON.stringify(next.contextNodes) &&
         !(previous.restoreHold && !next.restoreHold),
       'Another prompt or payload owns this send recovery record',
     )

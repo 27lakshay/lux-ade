@@ -7,6 +7,7 @@
 // (delete half) is in restarts/stale-rewind.spec.ts; F043's search half is in
 // catalogs/history.spec.ts.
 import {
+  cancelActiveSubmission,
   conversationStatus,
   expect,
   isRunning,
@@ -245,7 +246,7 @@ test('refuses a delete while a turn runs and records nothing, then deletes under
   // The turn was not touched.
   expect(await conversationStatus(profile, conversationId)).toBe('running')
 
-  await profile.call('agent.cancel', { conversation_id: conversationId })
+  await cancelActiveSubmission(profile, conversationId)
   await expect.poll(() => conversationStatus(profile, conversationId)).toBe('interrupted')
   // The refusal left no receipt, so the same ID now deletes.
   const deleted = await profile.call('conversation.delete', {

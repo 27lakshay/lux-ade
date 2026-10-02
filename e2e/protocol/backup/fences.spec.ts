@@ -1,7 +1,17 @@
 // R014 and F050: a restored profile is a new identity. It must not send what
 // the source profile may still send, and it must not treat the source
 // profile's runtime as its own.
-import { expect, isRunning, prompts, send, startConversation, test, turnReply, waitForMessage } from '../fixtures'
+import {
+  cancelActiveSubmission,
+  expect,
+  isRunning,
+  prompts,
+  send,
+  startConversation,
+  test,
+  turnReply,
+  waitForMessage,
+} from '../fixtures'
 import { codexTurns, createBackup, restoreIntoNewProfile } from './helpers'
 
 test('a restored profile holds queued prompts and pending sends, and starts without the source runtime incarnation', async ({
@@ -118,7 +128,7 @@ test('a restored profile holds queued prompts and pending sends, and starts with
 
   // The source profile kept its own turn and queue throughout.
   // The source's held turn was still live in its own runtime; the source still owns its queue.
-  await profile.call('agent.cancel', { conversation_id: busy.conversationId })
+  await cancelActiveSubmission(profile, busy.conversationId)
   await expect
     .poll(
       async () =>

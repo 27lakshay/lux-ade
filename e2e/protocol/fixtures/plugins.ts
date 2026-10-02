@@ -3,13 +3,27 @@
 // lifecycle hook; `provider` is a provider worker. A spec copies one into its
 // temp root, so it may edit the copy (dev-mode reload) without touching the
 // checked-in source or another test.
-import { cp, mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { access, cp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { join, resolve } from 'node:path'
 import type { ScratchProfile } from './profile'
-
+const repositoryRoot = resolve(__dirname, '../../..')
 export type FixturePlugin = 'backend' | 'provider'
 
 export const fixturePluginIds: Record<FixturePlugin, string> = { backend: 'e2e.backend', provider: 'e2e.agent' }
+
+/** The self-contained, prebuilt Effect diagnostic plugin used by install and inspection tests. */
+export async function providerSdkDiagnosticArtifact(isolatedRoot: string): Promise<string> {
+  const source = join(repositoryRoot, 'packages/provider-sdk/dist/diagnostic-plugin')
+  const artifact = join(isolatedRoot, 'provider-sdk-diagnostic')
+  await rm(artifact, { recursive: true, force: true })
+  await cp(source, artifact, { recursive: true, dereference: true })
+  await Promise.all([
+    access(join(artifact, 'ade-plugin.json')),
+    access(join(artifact, 'examples/diagnostic-worker.mjs')),
+    access(join(artifact, 'node_modules/effect/package.json')),
+  ])
+  return realpath(artifact)
+}
 
 let copies = 0
 

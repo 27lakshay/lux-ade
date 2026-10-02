@@ -29,6 +29,7 @@ impl Sessions {
                 })
             }
             "provider.readiness" => self.readiness(decode(request)?),
+            "provider.inspect" => self.inspect_worker(decode(request)?),
             "provider.quota" => self.quota(decode(request)?),
             "provider.registrations" => self.registrations(decode(request)?),
             "preset.list" => {
@@ -116,9 +117,115 @@ impl Sessions {
         })
     }
 
+    fn inspect_worker(&self, request: ProviderInspectRequest) -> Result<Value> {
+        let provider = non_empty("provider", &request.provider)?;
+        ensure!(
+            provider.starts_with("plugin:"),
+            "provider.inspect is available for installed plugin workers only"
+        );
+        let workers = match &self.plugins {
+            Ok(plugins) => plugins.provider_workers(),
+            Err(_) => {
+                return reply(&ProviderInspect {
+                    tag: Default::default(),
+                    provider: provider.into(),
+                    state: ReadinessState::Unavailable,
+                    reason: "Plugin registry is unavailable; retry".into(),
+                    version: None,
+                    descriptor: None,
+                });
+            }
+        };
+        let Some((_, worker)) = workers?
+            .into_iter()
+            .find(|(_, worker)| worker.provider == provider)
+        else {
+            return reply(&ProviderInspect {
+                tag: Default::default(),
+                provider: provider.into(),
+                state: ReadinessState::MissingExecutable,
+                reason: "No enabled plugin registers this provider; enable the plugin first".into(),
+                version: None,
+                descriptor: None,
+            });
+        };
+        let result = self.runtime.agent(AgentOp::ProviderInspect {
+            worker: serde_json::to_value(&worker)?,
+        });
+        match result {
+            Ok(value) => {
+                let descriptor: ProviderWorkerInitialize =
+                    serde_json::from_value(value["descriptor"].clone())?;
+                let state: ReadinessState = serde_json::from_value(value["state"].clone())?;
+                let reason = value["reason"]
+                    .as_str()
+                    .context("Provider inspection omitted its reason")?
+                    .to_owned();
+                reply(&ProviderInspect {
+                    tag: Default::default(),
+                    provider: provider.into(),
+                    state,
+                    reason,
+                    version: value["version"].as_str().map(str::to_owned),
+                    descriptor: Some(descriptor),
+                })
+            }
+            Err(_) => reply(&ProviderInspect {
+                tag: Default::default(),
+                provider: provider.into(),
+                state: ReadinessState::Incompatible,
+                reason: "Installed worker failed protocol initialization or confirmed cleanup"
+                    .into(),
+                version: Some(worker.pin.version),
+                descriptor: None,
+            }),
+        }
+    }
     fn readiness(self: &Arc<Self>, request: ProviderReadinessRequest) -> Result<Value> {
         let provider = non_empty("provider", &request.provider)?;
         let account_id = request.account_id.filter(|id| !id.is_empty());
+        if provider.starts_with("plugin:") {
+            ensure!(
+                account_id.is_none(),
+                "Plugin providers use their own login; ADE manages no accounts for them"
+            );
+            let inspection: ProviderInspect =
+                serde_json::from_value(self.inspect_worker(ProviderInspectRequest {
+                    provider: provider.into(),
+                })?)?;
+            let check_state = if matches!(
+                inspection.state,
+                ReadinessState::Ready | ReadinessState::InstalledUnchecked
+            ) {
+                CheckState::Passed
+            } else {
+                CheckState::Failed
+            };
+            return reply(&ProviderReadiness {
+                tag: Default::default(),
+                provider: provider.into(),
+                account_id: None,
+                state: inspection.state,
+                reason: inspection.reason.clone(),
+                version: inspection.version.clone(),
+                checks: vec![
+                    ReadinessCheck {
+                        check: "worker.initialize".into(),
+                        state: check_state,
+                        detail: inspection.reason,
+                    },
+                    ReadinessCheck {
+                        check: "provider.native_work".into(),
+                        state: CheckState::Skipped,
+                        detail:
+                            "Read-only readiness inspection does not execute provider operations"
+                                .into(),
+                    },
+                ],
+                capability_revision: 0,
+                checked_at: now_ms(),
+            });
+        }
         if let Some(record) = self.registered_record(provider)? {
             return registered_readiness(record, account_id);
         }

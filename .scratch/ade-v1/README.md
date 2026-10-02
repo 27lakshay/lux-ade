@@ -56,6 +56,20 @@ It preserves the owning domains and does not reopen excluded editor scope.
 
 [The 24 approved theming tickets](01-foundation/issues/theming/README.md) declare direct blocking edges and coverage of TH01–TH32. Start with ticket 01, then prioritize terminal recovery in 02. All tickets are `ready-for-agent`; implementation acceptance remains unverified.
 
+## Detailed delivery specifications
+
+| Spec | Refines | Delivery relationship |
+|---|---|---|
+| [TypeScript provider SDK and conversation UI](02-providers/provider-sdk-conversation-ui.md) | F021–F043, F046, F049–F050, conversation-facing F051–F060, R001–R020 | Effect v4 RC adapter SDK over Rust-owned contracts; build native providers and production conversation UI together; prove independent installation before contract freeze |
+
+This detail preserves the existing feature dispositions and recorded backend evidence.
+Its SDK parity, desktop and contract-freeze acceptance remain unverified. Publication
+does not authorize a build.
+
+## Provider SDK and conversation UI implementation tickets
+
+[The 32 approved provider SDK and conversation UI tickets](02-providers/issues/provider-sdk-conversation/README.md) declare the blocking edges and PC01–PC38 contributions. Tickets 01 and 02 form the initial frontier. All tickets are `ready-for-agent`; implementation and acceptance remain unverified.
+
 ## Delivery checkpoints
 
 | Checkpoint | Completion evidence |

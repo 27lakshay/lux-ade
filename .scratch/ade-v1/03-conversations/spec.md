@@ -90,4 +90,11 @@ Task organization dashboard/pins/labels/archive UI, automatic settlement and hib
 
 ## Further Notes
 
+The [TypeScript provider SDK and conversation UI specification](../02-providers/provider-sdk-conversation-ui.md)
+details the 2026-09-30 delivery direction: build production conversation content
+alongside native adapters, preserving delivery, execution, activity and synchronization
+as separate facts. It defines composer, requests, history, recovery, extension fallback
+and measured performance acceptance. Existing headless feature evidence remains valid
+for its recorded scope; it does not certify the production desktop surface.
+
 This specification records required behavior, not implemented completeness. The shared v1 register contains all 140 original catalogue dispositions, scope corrections, delivery dependencies and remaining decisions. No source file layout or package candidate overrides the agreed product behavior.

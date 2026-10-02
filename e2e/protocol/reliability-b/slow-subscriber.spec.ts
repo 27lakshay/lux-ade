@@ -9,6 +9,7 @@
 import { join } from 'node:path'
 import { access } from 'node:fs/promises'
 import {
+  cancelActiveSubmission,
   expect,
   primaryShell,
   prompts,
@@ -141,7 +142,7 @@ test('a feed client that stops reading is evicted while a flood, another provide
   expect(
     (await profile.call('conversation.get', { conversation_id: flood.conversationId })).conversation,
   ).toMatchObject({ status: 'running', error: null })
-  await profile.call('agent.cancel', { conversation_id: flood.conversationId })
+  await cancelActiveSubmission(profile, flood.conversationId)
   await expect
     .poll(
       async () =>

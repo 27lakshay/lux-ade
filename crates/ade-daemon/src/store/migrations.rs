@@ -84,6 +84,7 @@ impl Store {
             creation_interruption_checkpoint();
             tx.commit()?;
         }
+        super::send_intents::ensure_context_table(&connection)?;
         Ok(Self {
             connection,
             data_directory,

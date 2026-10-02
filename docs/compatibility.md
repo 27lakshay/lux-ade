@@ -41,3 +41,31 @@ with the [troubleshooting commands](troubleshooting.md) before either operation.
 The controller is not an app updater. Automatic download, signing, rollout and rollback require
 a release policy and separate tests. [Build and release](build-and-release.md) lists the current
 packaging path and the remaining release verification.
+
+## Native Codex history compatibility
+
+The public worker SDK requires Node 22 or newer and pins Effect and
+`@effect/platform-node` to `4.0.0-rc.118`. Bundled Codex uses this same SDK
+boundary and an ADE-owned Rust translator for the native app-server protocol.
+
+The installed Codex CLI `0.159.0` reports legacy history mode. Its runtime rejects
+`thread/items/list` despite declaring that API in generated schemas, including
+with experimental APIs enabled. ADE therefore dispatches by the native history
+mode, not by schema presence. File-backed legacy sources stream bounded pages.
+Non-file legacy transcripts use a bounded read and refuse `resource_limit` before
+decoding an over-budget full response. Modern cursor paging is covered by a
+provider-protocol fixture; it is not a claim of installed modern CLI support.
+
+A query-only smoke used Node `24.19.0`, Codex `0.159.0`, an isolated native home
+and a 2,215,640-byte rollout through the public SDK worker and owned helper. Five
+bounded reads preserved the source byte-for-byte and confirmed worker exit.
+No credentials, model request, native submission or session resume were needed.
+
+Native source continuation is oldest-first and forward. Source position is not
+ADE sequence. Source size stays unknown when it cannot be measured; zero is a
+real empty measurement. See [the worker protocol](provider-worker-protocol.md)
+for the 32-item/512-KiB page boundary, pre-decode aggregate reservation, source
+identity, durable delivery and epoch fences. Legacy bulk import and
+branch-sensitive Claude projection still require a whole source within the
+1-MiB decode boundary; they refuse larger inputs rather than partially import
+them. Codex file-backed history queries do not have that whole-file limitation.

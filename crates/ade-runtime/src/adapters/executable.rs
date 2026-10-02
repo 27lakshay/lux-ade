@@ -273,7 +273,8 @@ impl Adapter {
         });
         if let Err(error) = self.events.try_send(Event::Started {
             session: session.into(),
-            turn: turn.into(),
+            submission: None,
+            turn: Some(turn.into()),
         }) {
             active.interrupt(Interruption::Cancelled);
             let _ = self.finish_tree(&active);
@@ -328,9 +329,11 @@ impl Adapter {
                 if !text.is_empty() {
                     let _ = events.send(Event::Item {
                         session: session.clone(),
+                        submission: None,
                         item: Item {
                             content: None,
                             id: format!("{}:output", active.turn),
+                            native_message: None,
                             client_id: None,
                             turn: Some(active.turn.clone()),
                             role: "assistant".into(),
@@ -347,9 +350,12 @@ impl Adapter {
                 }
                 let _ = events.send(Event::Finished {
                     session,
-                    turn: active.turn.clone(),
+                    submission: None,
+                    turn: Some(active.turn.clone()),
                     status: status.into(),
                     error,
+                    native_terminal: None,
+                    interrupt_requested: false,
                 });
                 if !stopped {
                     closed.store(true, Ordering::SeqCst);
@@ -457,6 +463,7 @@ fn read_output(
         // A full queue drops the live delta only; the completed item carries all text.
         let _ = events.try_send(Event::Delta {
             session: session.into(),
+            submission: None,
             turn: Some(turn.into()),
             id: item.into(),
             role: "assistant".into(),

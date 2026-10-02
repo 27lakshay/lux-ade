@@ -43,8 +43,11 @@ Paths below are relative to `apps/desktop`.
   not routes. Native-menu shortcuts go through `src/main/app-menu.ts`; other shortcuts use the
   renderer command service with a `when` clause.
 - Terminal output stays outside React state. Terminal pane content renders with Ghostty
-  WebAssembly. Conversation, browser, file and diff pane content is still unbuilt; `?bench`
-  supplies synthetic conversation content for development measurements.
+  WebAssembly. Production conversation panes render retained history and execution context;
+  the mounted composer saves revisioned per-view drafts, exposes stash recovery, and sends
+  through the main-process pipeline with daemon admission and reconciliation. Browser, file and
+  diff pane content
+  is still unbuilt; `?bench` supplies synthetic conversation content for development measurements.
 - `?safeMode=1` means main reloaded after a hang or crash. Keep core recovery visible and avoid
   loading plugins in safe mode.
 

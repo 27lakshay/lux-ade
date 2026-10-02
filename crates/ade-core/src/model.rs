@@ -78,6 +78,10 @@ pub struct Conversation {
     pub provider: String,
     pub account_id: Option<String>,
     pub account_context: AccountContext,
+    /// The ADE placement of this Conversation; filled from the profile placement record for each reply.
+    #[schemars(with = "crate::contract::placement::ExecutionHost")]
+    #[schemars(required)]
+    pub execution_host: Option<crate::contract::placement::ExecutionHost>,
     #[schemars(with = "serde_json::Value")]
     pub provider_config: crate::provider::Config,
     pub provider_thread_id: Option<String>,
@@ -109,6 +113,7 @@ impl Conversation {
             unread: false,
             parent_conversation_id: None,
             group_id: None,
+            execution_host: None,
             ..self.clone()
         }
     }
@@ -213,6 +218,8 @@ pub struct Message {
     pub content: Option<crate::transcript::Content>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub review_feedback: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivery: Option<crate::contract::conversations::SubmissionDelivery>,
     pub id: String,
     pub conversation_id: String,
     pub role: String,
@@ -221,15 +228,24 @@ pub struct Message {
     pub status: String,
     pub turn_id: Option<String>,
     pub provider_item_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_message: Option<crate::provider::NativeMessageLocator>,
     pub sequence: i64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<Attachment>,
 }
+fn initial_request_revision() -> u64 {
+    1
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
 pub struct PendingRequest {
     pub id: String,
     pub conversation_id: String,
     pub run_id: String,
+    /// Native request ownership is optional when the callback is session-scoped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_attempt_id: Option<String>,
     pub rpc_id: Value,
     pub method: String,
     pub params: Value,
@@ -240,6 +256,16 @@ pub struct PendingRequest {
     pub answer_dispatched: bool,
     #[serde(default)]
     pub answer_attempt: u32,
+    #[serde(default = "initial_request_revision")]
+    pub revision: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<crate::requests::RequestMetadata>,
+    #[serde(default)]
+    pub resolution: crate::requests::RequestResolution,
+    #[serde(default)]
+    pub response_delivery: crate::requests::ResponseDelivery,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_operation_id: Option<String>,
 }
 impl PendingRequest {
     pub fn answer_command_key(&self) -> String {

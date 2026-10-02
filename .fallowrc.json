@@ -7,7 +7,10 @@
     "apps/desktop/src/renderer/src/bootstrap.ts",
     "apps/desktop/src/renderer/src/dev/*.ts",
     // Node's own test runner runs these (the root check:static script); nothing imports them.
-    "apps/desktop/src/**/*.test.mjs"
+    "apps/desktop/src/**/*.test.mjs",
+    "packages/provider-sdk/src/index.ts",
+    "packages/provider-sdk/src/node.ts",
+    "packages/provider-sdk/examples/diagnostic-worker.mjs"
   ],
   // The stock shadcn/ui kit: installed whole, used piece by piece, so unused parts are expected.
   "ignoreFindings": [
@@ -25,14 +28,11 @@
     "@atlaskit/pragmatic-drag-and-drop",
     "@atlaskit/pragmatic-drag-and-drop-auto-scroll",
     "@atlaskit/pragmatic-drag-and-drop-hitbox",
-    "@tanstack/react-virtual",
     "@tiptap/extension-mention",
+    // Required peer of @tiptap/react and dependency of @tiptap/starter-kit, not a direct renderer import.
     "@tiptap/pm",
-    "@tiptap/react",
-    "@tiptap/starter-kit",
     "@tiptap/suggestion",
     "sonner",
-    "streamdown",
     "zod",
     "@pierre/trees",
     "@tanstack/react-hotkeys",

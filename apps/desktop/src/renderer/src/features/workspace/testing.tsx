@@ -112,7 +112,7 @@ export async function openTitled(kind: 'conversation' | 'terminal', title: strin
       ...catalog,
       conversations: [
         ...catalog.conversations,
-        { id, workspace_id: WORKSPACE, title, provider: 'fake', status: 'idle' },
+        { id, workspace_id: WORKSPACE, title, provider: 'fake', status: 'idle', execution_host: { kind: 'local' } },
       ],
     }
   daemon.pushClientState(clientState({ sequence, catalog }))

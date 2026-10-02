@@ -75,7 +75,7 @@ def copy_providers(source, destination):
 def stage_providers(destination):
     """Make self-contained provider trees from the shared workspace lockfile."""
     destination.mkdir(parents=True, exist_ok=True)
-    for name, package in (('claude', 'ade-claude-adapter'), ('omp', 'ade-omp-bridge')):
+    for name, package in (('claude', 'ade-claude-adapter'), ('codex', 'ade-codex-worker'), ('omp', 'ade-omp-bridge')):
         subprocess.run(['pnpm', '--filter', package, 'deploy',
                         '--config.inject-workspace-packages=true', '--prod',
                         '--frozen-lockfile', '--ignore-scripts', str(destination / name)],
@@ -84,7 +84,7 @@ def stage_providers(destination):
         # and the distribution manifest must retain the source declaration.
         shutil.copy2(ROOT / 'providers' / name / 'package.json', destination / name / 'package.json')
     for source in ROOT.joinpath('providers').iterdir():
-        if source.name in ('claude', 'omp'):
+        if source.name in ('claude', 'codex', 'omp'):
             continue
         target = destination / source.name
         if source.is_dir():

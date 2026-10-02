@@ -1,10 +1,11 @@
 // F050, readable history export: `ade conversation export ID FILE` writes a
 // Conversation's complete history as JSON through the public paginated read.
-// It pages past the 100-message page size, never overwrites a file, leaves no
+// It pages beyond the bounded read window, never overwrites a file, leaves no
 // partial file behind, and refuses a history that changes while it reads.
 // The managed backup half of F050 is proved in e2e/protocol/backup.
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { expect, prompts, send, startConversation, test, waitForIdle, type ScratchProfile } from '../fixtures'
 import { claudeRecords, claudeTranscript } from '../fixtures/native-sessions'
 
@@ -20,10 +21,10 @@ type Exported = {
   messages: Array<{ id: string; sequence: number; role: string; text: string; conversation_id: string }>
 }
 
-/** Import a Claude Code transcript of `pairs` user and assistant turns; returns its Conversation ID. */
+/** Seed stored history after a bounded native import; bulk import limits are a separate contract. */
 async function importedConversation(profile: ScratchProfile, root: string, pairs: number): Promise<string> {
   const workspace = (await profile.call('workspace.open', { path: root })).workspace
-  const turns = Array.from({ length: pairs * 2 }, (_, index) => ({
+  const turns = Array.from({ length: 2 }, (_, index) => ({
     uuid: `m${index}`,
     parent: index ? `m${index - 1}` : null,
     role: (index % 2 ? 'assistant' : 'user') as 'user' | 'assistant',
@@ -34,7 +35,33 @@ async function importedConversation(profile: ScratchProfile, root: string, pairs
     'history.import.session' as never,
     { provider: 'claude', native_session_id: sessionId, workspace_id: workspace.id } as never,
   )) as { conversation: { provenance: { conversation_id: string } } }
-  return imported.conversation.provenance.conversation_id
+  const conversationId = imported.conversation.provenance.conversation_id
+  const templates = (await profile.call('conversation.get', { conversation_id: conversationId })).messages
+  const database = new DatabaseSync(join(profile.dataDirectory, 'sessions.sqlite'))
+  try {
+    const insert = database.prepare(
+      'INSERT INTO messages(id,conversation_id,provider_item_id,sequence,data) VALUES(?,?,NULL,?,?)',
+    )
+    database.exec('BEGIN')
+    for (let index = 2; index < pairs * 2; index++) {
+      const role = index % 2 ? 'assistant' : 'user'
+      const template = templates.find((message) => message.role === role)
+      if (!template) throw new Error('Bounded native fixture did not import both message roles')
+      const text = `${role === 'assistant' ? 'Answer' : 'Question'} ${index}`
+      const message = {
+        ...template,
+        id: `export-fixture:${conversationId}:${index}`,
+        sequence: index + 1,
+        provider_item_id: null,
+        text,
+      }
+      insert.run(message.id, conversationId, message.sequence, JSON.stringify(message))
+    }
+    database.exec('COMMIT')
+  } finally {
+    database.close()
+  }
+  return conversationId
 }
 
 test('F050: an export writes the complete readable history across pages into a new private file', async ({
@@ -73,8 +100,8 @@ test('F050: an export writes the complete readable history across pages into a n
   expect(exported.messages.at(-1)).toMatchObject({ role: 'user', text: 'Question 0', conversation_id: conversationId })
   expect(exported.messages[0]).toMatchObject({ role: 'assistant', text: 'Answer 259' })
   // The export equals what the public read returns page by page.
-  const newest = await profile.call('conversation.get', { conversation_id: conversationId, limit: 100 })
-  expect(exported.messages.slice(0, 100).map((message) => message.id)).toEqual(
+  const newest = await profile.call('conversation.get', { conversation_id: conversationId, limit: 32 })
+  expect(exported.messages.slice(0, newest.messages.length).map((message) => message.id)).toEqual(
     [...newest.messages].reverse().map((message) => (message as { id: string }).id),
   )
 
@@ -120,7 +147,7 @@ test('F050: an export whose history changes while it pages is refused and leaves
   await mkdir(directory, { recursive: true })
 
   // Turns in another Conversation move the profile's revision while the
-  // export reads eight pages. Each export either sees one revision throughout
+  // export reads bounded pages. Each export either sees one revision throughout
   // and is complete, or is refused and writes nothing.
   let refused = 0
   let completed = 0

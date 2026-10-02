@@ -4,7 +4,7 @@
 // - orchestration.child.answer is identified by the child's native request;
 // - plugin.command.invoke can be held inside its plugin host while the
 //   daemon dies, which is the window between dispatch and settlement.
-import { expect, fixtureAnswers, prompts, test, type ScratchProfile } from '../fixtures'
+import { expect, prompts, test, type ScratchProfile } from '../fixtures'
 import { sendAndLoseReply } from '../fixtures/lost-reply'
 import { deviceProfile, hostId, send } from '../devices/steps'
 import { installAndEnable, pluginLines, releasePlugin, stagePlugin } from '../fixtures/plugins'
@@ -66,7 +66,7 @@ async function childQuestion(profile: ScratchProfile) {
     request_id: question!.request_id,
     caller: { kind: 'user' as const },
     decision: 'answer',
-    answers: fixtureAnswers({ id: question!.request_id, method: question!.method, params: question!.params }, text),
+    answers: Object.fromEntries((question!.params.questions as Array<{ id: string }>).map((item) => [item.id, [text]])),
   })
   return { childId, answer }
 }

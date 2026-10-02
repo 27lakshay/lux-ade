@@ -2,6 +2,12 @@ use super::*;
 
 pub use ade_core::contract::conversations::SendIntent;
 
+pub(super) fn ensure_context_table(db: &Connection) -> Result<()> {
+    db.execute_batch(
+        "CREATE TABLE IF NOT EXISTS send_intent_context(request_id TEXT PRIMARY KEY REFERENCES send_intents(request_id) ON DELETE CASCADE, context_nodes TEXT NOT NULL)",
+    )?;
+    Ok(())
+}
 pub(super) fn send_intent_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SendIntent> {
     Ok(SendIntent {
         request_id: row.get(0)?,
@@ -12,6 +18,7 @@ pub(super) fn send_intent_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SendI
         text: row.get(5)?,
         attachments: attachment_row(row, 6)?,
         state: row.get(7)?,
+        context_nodes: super::drafts::context_row(row, 8)?,
     })
 }
 
@@ -33,7 +40,7 @@ impl Store {
         self.conversation(conversation)?;
         check_id(window)?;
         self.connection.query_row(
-            "SELECT request_id,conversation_id,window_id,draft_revision,draft_text,text,attachments,state FROM send_intents WHERE conversation_id=?1 AND window_id=?2 AND state IN ('pending','rejected')",
+            "SELECT request_id,conversation_id,window_id,draft_revision,draft_text,text,attachments,state,COALESCE((SELECT context_nodes FROM send_intent_context WHERE request_id=send_intents.request_id),'[]') FROM send_intents WHERE conversation_id=?1 AND window_id=?2 AND state IN ('pending','rejected')",
             params![conversation, window],
             send_intent_row,
         ).optional().map_err(Into::into)
@@ -48,7 +55,7 @@ impl Store {
         attachments: &[Attachment],
     ) -> Result<()> {
         let intent: Option<SendIntent> = self.connection.query_row(
-            "SELECT request_id,conversation_id,window_id,draft_revision,draft_text,text,attachments,state FROM send_intents WHERE request_id=?1",
+            "SELECT request_id,conversation_id,window_id,draft_revision,draft_text,text,attachments,state,COALESCE((SELECT context_nodes FROM send_intent_context WHERE request_id=send_intents.request_id),'[]') FROM send_intents WHERE request_id=?1",
             [request_id], send_intent_row,
         ).optional()?;
         if let Some(intent) = intent {
@@ -105,15 +112,17 @@ impl Store {
             "Prompt is empty"
         );
         validate_attachments(&self.connection, conversation, &draft.attachments)?;
+        super::drafts::check_context_nodes(&draft.context_nodes)?;
         let tx = self.transaction()?;
         if let Some(existing) = tx.query_row(
-            "SELECT request_id,conversation_id,window_id,draft_revision,draft_text,text,attachments,state FROM send_intents WHERE request_id=?1",
+            "SELECT request_id,conversation_id,window_id,draft_revision,draft_text,text,attachments,state,COALESCE((SELECT context_nodes FROM send_intent_context WHERE request_id=send_intents.request_id),'[]') FROM send_intents WHERE request_id=?1",
             [request_id], send_intent_row,
         ).optional()? {
             ensure!(existing.conversation_id == conversation && existing.window_id == window
                 && existing.draft_revision == draft.revision && existing.draft_text == draft.text
                 && existing.text == text
-                && existing.attachments == draft.attachments,
+                && existing.attachments == draft.attachments
+                && existing.context_nodes == draft.context_nodes,
                 "Send intent ID was already used for a different prompt or owner");
             return Ok(existing);
         }
@@ -126,6 +135,7 @@ impl Store {
             saved.text == draft.text
                 && saved.revision == draft.revision
                 && saved.attachments == draft.attachments
+                && saved.context_nodes == draft.context_nodes
                 && saved.revision > 0,
             "Draft changed before prompt admission"
         );
@@ -135,6 +145,10 @@ impl Store {
         ).optional()?.is_none(), "Resolve the pending send before preparing another prompt");
         tx.execute("INSERT INTO send_intents(request_id,conversation_id,window_id,draft_revision,draft_text,text,attachments,state) VALUES(?1,?2,?3,?4,?5,?6,?7,'pending')",
             params![request_id,conversation,window,draft.revision,draft.text,text,encode(&draft.attachments)?])?;
+        tx.execute(
+            "INSERT INTO send_intent_context(request_id,context_nodes) VALUES(?1,?2)",
+            params![request_id, encode(&draft.context_nodes)?],
+        )?;
         tx.commit()?;
         Ok(SendIntent {
             request_id: request_id.into(),
@@ -144,6 +158,7 @@ impl Store {
             draft_text: draft.text.clone(),
             text: text.into(),
             attachments: draft.attachments.clone(),
+            context_nodes: draft.context_nodes.clone(),
             state: "pending".into(),
         })
     }
@@ -160,7 +175,7 @@ impl Store {
         self.ensure_send_intent_unheld(request_id)?;
         let tx = self.transaction()?;
         let intent: SendIntent = tx.query_row(
-            "SELECT request_id,conversation_id,window_id,draft_revision,draft_text,text,attachments,state FROM send_intents WHERE request_id=?1",
+            "SELECT request_id,conversation_id,window_id,draft_revision,draft_text,text,attachments,state,COALESCE((SELECT context_nodes FROM send_intent_context WHERE request_id=send_intents.request_id),'[]') FROM send_intents WHERE request_id=?1",
             [request_id], send_intent_row,
         ).optional()?.context("Unknown send intent")?;
         ensure!(
@@ -191,7 +206,8 @@ impl Store {
         ensure!(
             saved.revision == intent.draft_revision
                 && saved.text == intent.draft_text
-                && saved.attachments == intent.attachments,
+                && saved.attachments == intent.attachments
+                && saved.context_nodes == intent.context_nodes,
             "Draft changed while send was pending; resolve the conflict"
         );
         let next = saved
@@ -248,7 +264,7 @@ impl Store {
         self.ensure_send_intent_unheld(request_id)?;
         let tx = self.transaction()?;
         let intent: SendIntent = tx.query_row(
-            "SELECT request_id,conversation_id,window_id,draft_revision,draft_text,text,attachments,state FROM send_intents WHERE request_id=?1",
+            "SELECT request_id,conversation_id,window_id,draft_revision,draft_text,text,attachments,state,COALESCE((SELECT context_nodes FROM send_intent_context WHERE request_id=send_intents.request_id),'[]') FROM send_intents WHERE request_id=?1",
             [request_id], send_intent_row,
         ).optional()?.context("Unknown send intent")?;
         ensure!(

@@ -6,6 +6,7 @@ import {
   requestDaemon,
   type DailyUseOperation,
   type DailyUseRequest,
+  type DailyUseResponse,
 } from '@ade/client'
 import { CliError, namedOptions, required, requiredOperationId, type CommandResult } from '../shared.js'
 
@@ -78,9 +79,9 @@ const TIMEOUTS = { list: 60_000, screenshot: 60_000, install: 330_000, launch: 1
 
 async function call<O extends DailyUseOperation>(
   socketPath: string,
-  request: DailyUseRequest<O>,
+  request: DailyUseRequest<O> & { op: O },
   timeoutMs: number,
-): Promise<Record<string, unknown>> {
+): Promise<DailyUseResponse<O>> {
   decodeDailyUseRequest(request)
   const { op, ...fields } = request
   const response = await requestDaemon(socketPath, op, fields, { timeoutMs })

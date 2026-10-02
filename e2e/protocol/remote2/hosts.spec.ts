@@ -135,6 +135,15 @@ test('two hosts at once keep their own feeds, cursors and provider accounts, and
   ])
 
   for (const [link, turn] of [[betaLink, betaTurn]] as const) {
-    await remoteCall(link, 'agent.cancel', { conversation_id: turn.conversation.id })
+    const { conversation } = await remoteCall(link, 'conversation.get', { conversation_id: turn.conversation.id })
+    if (!conversation.runtime_run || !conversation.runtime_submission) {
+      throw new Error('Conversation has no active cancellation identity')
+    }
+    await remoteCall(link, 'agent.cancel', {
+      conversation_id: turn.conversation.id,
+      source_attempt_id: conversation.runtime_run,
+      submission_id: conversation.runtime_submission,
+      ...(conversation.active_turn_id === null ? {} : { turn_id: conversation.active_turn_id }),
+    })
   }
 })

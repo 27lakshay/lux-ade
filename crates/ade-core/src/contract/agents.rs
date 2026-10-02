@@ -10,7 +10,10 @@ use serde_json::Value;
 
 pub fn operations() -> Vec<OperationSpec> {
     vec![
-        OperationSpec::new::<AgentCancelRequest, Ack>("agent.cancel", Tier::EffectCommand),
+        OperationSpec::new::<AgentCancelRequest, AgentCancelOutcome>(
+            "agent.cancel",
+            Tier::EffectCommand,
+        ),
         OperationSpec::new::<AgentResumeRequest, Ack>("agent.resume", Tier::EffectCommand),
         OperationSpec::new::<AgentDisconnectRequest, Ack>("agent.disconnect", Tier::EffectCommand),
         OperationSpec::new::<AgentChildTranscriptRequest, ChildTranscriptPage>(
@@ -37,7 +40,7 @@ fn present<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
     T::deserialize(deserializer).map(Some)
 }
 
-/// `agent.cancel`: cancel the Conversation's active turn.
+/// `agent.cancel`: target one immutable ADE runtime attempt and submission.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct AgentCancelRequest {
     /// The caller's operation ID. The daemon keeps a receipt under it: a
@@ -45,12 +48,33 @@ pub struct AgentCancelRequest {
     /// the same ID with another payload is a conflict.
     pub operation_id: String,
     pub conversation_id: String,
-    /// The turn the caller saw active. When present, the cancel applies only
-    /// while that turn is still the active one, so a late or retried cancel
-    /// never stops its successor. Absent, it cancels whatever turn is active.
+    /// Runtime attempt and ADE submission are the immutable target identity.
+    pub source_attempt_id: String,
+    pub submission_id: String,
+    /// Native turn, when known. Absence is never a wildcard.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "String")]
     pub turn_id: Option<String>,
+}
+
+/// Native interruption evidence attached to the durable agent.cancel operation receipt.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct AgentCancelOutcome {
+    #[serde(rename = "type")]
+    pub tag: AgentCancelOutcomeTag,
+    pub operation_id: String,
+    pub conversation_id: String,
+    pub source_attempt_id: String,
+    pub submission_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<String>,
+    pub evidence: super::providers::ProviderCancelEvidence,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentCancelOutcomeTag {
+    AgentCancelOutcome,
 }
 
 /// `agent.resume`: reconnect the Conversation's Agent.
@@ -281,13 +305,31 @@ mod tests {
     #[test]
     fn lifecycle_commands_round_trip() {
         for op in ["agent.cancel", "agent.resume", "agent.disconnect"] {
-            let wire = json!({"op": op, "operation_id": "o", "conversation_id": "conversation_1"});
+            let wire = if op == "agent.cancel" {
+                json!({"op": op, "operation_id": "o", "conversation_id": "conversation_1",
+                    "source_attempt_id": "run_1", "submission_id": "submission_1"})
+            } else {
+                json!({"op": op, "operation_id": "o", "conversation_id": "conversation_1"})
+            };
             match op {
                 "agent.cancel" => drop(request::<AgentCancelRequest>(op, wire)),
                 "agent.resume" => drop(request::<AgentResumeRequest>(op, wire)),
                 _ => drop(request::<AgentDisconnectRequest>(op, wire)),
             }
-            response::<Ack>(op, json!({"type": "ack"}));
+            if op == "agent.cancel" {
+                response::<AgentCancelOutcome>(
+                    op,
+                    json!({"type": "agent_cancel_outcome", "operation_id": "o",
+                        "conversation_id": "conversation_1", "source_attempt_id": "run_1",
+                        "submission_id": "submission_1",
+                        "evidence": {"scope": "turn", "interruption_requested": true,
+                            "termination": "unknown", "active_work_remaining": null,
+                            "queued_work_count": null, "background_work_remaining": null,
+                            "observed_at_ms": null}}),
+                );
+            } else {
+                response::<Ack>(op, json!({"type": "ack"}));
+            }
             let (name, _, _) = operation(op);
             assert!(!validator(&name).is_valid(&json!({"op": op})));
             assert!(
@@ -297,7 +339,7 @@ mod tests {
         let fenced: AgentCancelRequest = request(
             "agent.cancel",
             json!({"op": "agent.cancel", "operation_id": "o", "conversation_id": "conversation_1",
-                "turn_id": "turn_1"}),
+                "source_attempt_id":"run_1", "submission_id":"submission_1", "turn_id": "turn_1"}),
         );
         assert_eq!(fenced.turn_id.as_deref(), Some("turn_1"));
     }

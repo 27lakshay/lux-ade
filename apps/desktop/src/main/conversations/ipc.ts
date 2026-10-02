@@ -2,8 +2,9 @@ import { BrowserWindow } from 'electron'
 import { handle } from '../ipc'
 import { randomUUID } from 'node:crypto'
 import { isAbsolute } from 'node:path'
-import { dailyUseCommand, type DailyUseRequest, type DailyUseResponse } from '@ade/client'
+import { dailyUseCommand, type DailyUseCommand, type DailyUseRequest, type DailyUseResponse } from '@ade/client'
 import { SendJournal } from '@ade/client/journals'
+import { CONVERSATION_WINDOW } from '@ade/client/sync'
 import {
   getClient,
   getClientGeneration,
@@ -60,7 +61,7 @@ function sendTransferRequest(
   }
   return { profile, location }
 }
-/** The `draft.*` reply: main's draft for this window and conversation. */
+/** The draft.* reply: main's draft for this renderer view and Conversation. */
 function draftState(entry: DraftEntry): DraftState {
   return {
     type: 'draft',
@@ -156,8 +157,20 @@ export function registerConversationIpc(): void {
     const endpoint = getSocket()
     const generation = getClientGeneration()
     const args = fields as Record<string, unknown>
+    if (
+      (op === 'draft.get' ||
+        op === 'draft.save' ||
+        op === 'draft.flush' ||
+        op === 'draft.stash.list' ||
+        op === 'draft.stash.restore' ||
+        op === 'agent.send' ||
+        op === 'agent.retry_send') &&
+      !validId(args.view_id)
+    ) {
+      throw new Error('Invalid conversation view ID')
+    }
     if (op === 'draft.get' && endpoint && validId(args.conversation_id)) {
-      const cached = drafts.get(draftKey(event.sender.id, endpoint, args.conversation_id))
+      const cached = drafts.get(draftKey(event.sender.id, endpoint, args.conversation_id, args.view_id as string))
       if (cached) return draftState(cached)
     }
     if (getClient().getState().status !== 'connected' || !endpoint) {
@@ -165,6 +178,19 @@ export function registerConversationIpc(): void {
     }
     const catalog = getClient().getState().catalog
     if (op === 'provider.list') return dailyUseCommand(endpoint, { op })
+    if (op === 'provider.inspect' || op === 'provider.readiness') {
+      const pending = dailyUseCommand(endpoint, {
+        ...(args as Record<string, unknown>),
+        op,
+      } as unknown as DailyUseRequest<typeof op>) as Promise<
+        DailyUseResponse<'provider.inspect' | 'provider.readiness'>
+      >
+      const result = await pending
+      if (getClientGeneration() !== generation || getSocket() !== endpoint) {
+        throw new Error('Profile changed during provider request; inspect the original profile before retrying')
+      }
+      return result
+    }
     if (
       op === 'account.list' ||
       op === 'account.create' ||
@@ -202,13 +228,25 @@ export function registerConversationIpc(): void {
     if (!validId(args.conversation_id) || !catalog?.conversations.some((item) => item.id === args.conversation_id)) {
       throw new Error('Conversation is unavailable in this profile')
     }
+    if (op === 'draft.stash.list' || op === 'draft.stash.restore') {
+      const entry = await loadDraft(event.sender.id, endpoint, args.conversation_id, args.view_id as string)
+      if (op === 'draft.stash.list') {
+        return { type: 'draft_stashes', stashes: await pipeline().listDraftStashes(entry) }
+      }
+      if (typeof args.name !== 'string' || !Number.isSafeInteger(args.stash_revision)) {
+        throw new Error('Invalid draft recovery selection')
+      }
+      await pipeline().restoreDraftStash(entry, args.name, args.stash_revision as number)
+      return draftState(entry)
+    }
     if (op === 'draft.get' || op === 'draft.save' || op === 'draft.flush') {
-      const entry = await loadDraft(event.sender.id, endpoint, args.conversation_id)
+      const entry = await loadDraft(event.sender.id, endpoint, args.conversation_id, args.view_id as string)
       if (op === 'draft.save') {
-        if (entry.unclearedText || entry.send) throw new Error('Resolve the previous prompt before editing this draft')
+        if (entry.unclearedText || entry.send || entry.recoveryPending)
+          throw new Error('Resolve the previous prompt before editing this draft')
         // The daemon's `draft.save` holds the size limit.
         if (typeof args.text !== 'string') throw new Error('Invalid draft')
-        entry.draft = { text: args.text, revision: entry.draft.revision + 1, attachments: [] }
+        entry.draft = { ...entry.draft, text: args.text, revision: entry.draft.revision + 1 }
         pipeline().schedule(entry)
       }
       if (op === 'draft.flush') {
@@ -217,15 +255,55 @@ export function registerConversationIpc(): void {
       }
       return draftState(entry)
     }
-    if (op === 'conversation.get')
-      return dailyUseCommand(endpoint, { op, conversation_id: args.conversation_id, limit: 200 })
-    if (op === 'agent.cancel' || op === 'agent.resume') {
-      // The contract check rejects a non-string ID before it reaches the daemon.
-      const conversationId = args.conversation_id
-      const result =
-        op === 'agent.cancel'
-          ? await dailyUseCommand(endpoint, { op, conversation_id: conversationId })
-          : await dailyUseCommand(endpoint, { op, conversation_id: conversationId })
+    if (op === 'conversation.history') {
+      const result = await dailyUseCommand(endpoint, {
+        ...(args as Record<string, unknown>),
+        op,
+      } as unknown as DailyUseRequest<'conversation.history'>)
+      if (getClientGeneration() !== generation || getSocket() !== endpoint) {
+        throw new Error('Profile changed during native history read; refresh the conversation before retrying')
+      }
+      return result
+    }
+    if (op === 'conversation.get') {
+      const request = {
+        ...(args as Record<string, unknown>),
+        op,
+        limit: args.limit === undefined ? CONVERSATION_WINDOW : args.limit,
+      } as unknown as DailyUseCommand<'conversation.get'>
+      return dailyUseCommand(endpoint, request)
+    }
+    if (op === 'agent.cancel') {
+      const operationId = args.operation_id
+      const sourceAttemptId = args.source_attempt_id
+      const submissionId = args.submission_id
+      const turnId = args.turn_id
+      if (
+        typeof operationId !== 'string' ||
+        !operationId ||
+        typeof sourceAttemptId !== 'string' ||
+        !sourceAttemptId ||
+        typeof submissionId !== 'string' ||
+        !submissionId ||
+        (turnId !== undefined && (typeof turnId !== 'string' || !turnId))
+      ) {
+        throw new Error('Cancellation target is missing or invalid; refresh the active turn before retrying')
+      }
+      const result = await dailyUseCommand(endpoint, {
+        op,
+        conversation_id: args.conversation_id as string,
+        source_attempt_id: sourceAttemptId,
+        submission_id: submissionId,
+        ...(turnId === undefined ? {} : { turn_id: turnId }),
+        operation_id: operationId,
+      })
+      if (getClientGeneration() !== generation || getSocket() !== endpoint) {
+        throw new Error('Profile changed during agent request; inspect the original profile before retrying')
+      }
+      return result
+    }
+    if (op === 'agent.resume') {
+      const result = await dailyUseCommand(endpoint, { op, conversation_id: args.conversation_id as string })
       if (getClientGeneration() !== generation || getSocket() !== endpoint) {
         throw new Error('Profile changed during agent request; inspect the original profile before retrying')
       }
@@ -235,19 +313,20 @@ export function registerConversationIpc(): void {
       // The SDK's send pipeline holds the rules: one prompt per window and Conversation at a time,
       // and a retry names the prompt awaiting confirmation. Review feedback is its own daemon
       // command (`review.feedback.send`, main/review.ts).
-      const entry = await loadDraft(event.sender.id, endpoint, args.conversation_id)
+      const entry = await loadDraft(event.sender.id, endpoint, args.conversation_id, args.view_id as string)
       return op === 'agent.retry_send'
         ? await pipeline().retry(entry, args.request_id as string | undefined)
         : await pipeline().send(entry, args.request_id as string, args.text as string)
     }
-    // The daemon checks the decision and answers against the pending request.
-    if (!validId(args.request_id)) throw new Error('Invalid answer')
+    // The daemon validates the answer against the exact pending-request revision.
     return dailyUseCommand(endpoint, {
       op: 'agent.answer',
-      conversation_id: args.conversation_id,
-      request_id: args.request_id,
-      decision: args.decision as DailyUseRequest<'agent.answer'>['decision'],
-      ...(args.decision === 'answer' ? { answers: args.answers as DailyUseRequest<'agent.answer'>['answers'] } : {}),
+      conversation_id: args.conversation_id as string,
+      request_id: args.request_id as string,
+      request_revision: args.request_revision as number,
+      source_attempt_id: args.source_attempt_id as string,
+      operation_id: args.operation_id as string,
+      answer: args.answer as DailyUseRequest<'agent.answer'>['answer'],
     })
   })
 }

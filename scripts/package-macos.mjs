@@ -116,6 +116,7 @@ exec "$macos/Lux ADE" "$macos/../Resources/cli/dist/index.js" "$@"
 )
 for (const [packageName, folder] of [
   ['ade-claude-adapter', 'claude'],
+  ['ade-codex-worker', 'codex'],
   ['ade-omp-bridge', 'omp'],
 ]) {
   run('pnpm', [

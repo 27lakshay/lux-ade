@@ -2,6 +2,8 @@
 // sends stream into a structured transcript, a request ID admits one turn,
 // and the prompt queue survives a daemon restart without duplicate dispatch.
 import {
+  answerFor,
+  answerIntent,
   codexPrompts,
   conversationStatus,
   expect,
@@ -43,7 +45,38 @@ for (const provider of ['codex', 'claude'] as MockProvider[]) {
       )
       .toEqual([[turnReply[provider], 'streaming']])
     expect(await conversationStatus(profile, conversationId)).toBe('running')
-    await profile.call('agent.cancel', { conversation_id: conversationId })
+    const beforeCancel = await snapshot(profile, conversationId)
+    const source_attempt_id = beforeCancel.conversation.runtime_run
+    const submission_id = beforeCancel.conversation.runtime_submission
+    if (!source_attempt_id || !submission_id) throw new Error('The held turn has no cancellation identity')
+    const cancelRequest = {
+      operation_id: 'cancel-held-turn',
+      conversation_id: conversationId,
+      source_attempt_id,
+      submission_id,
+      ...(beforeCancel.conversation.active_turn_id === null
+        ? {}
+        : { turn_id: beforeCancel.conversation.active_turn_id }),
+    }
+    const cancelled = await profile.call('agent.cancel', cancelRequest)
+    expect(cancelled).toMatchObject({
+      conversation_id: conversationId,
+      source_attempt_id,
+      submission_id,
+      evidence: {
+        scope: 'turn',
+        interruption_requested: true,
+        termination: 'requested',
+        active_work_remaining: null,
+        queued_work_count: null,
+        background_work_remaining: null,
+        observed_at_ms: null,
+      },
+    })
+    expect(await profile.call('agent.cancel', cancelRequest)).toEqual(cancelled)
+    if (provider === 'codex') {
+      expect((await profile.mockCalls('codex')).filter((call) => call.method === 'turn/interrupt')).toHaveLength(1)
+    }
     // A cancelled turn settles as interrupted, and cancelling pauses the queue.
     await expect.poll(() => conversationStatus(profile, conversationId)).toBe('interrupted')
     expect((await snapshot(profile, conversationId)).conversation.queue_paused).toBe(true)
@@ -60,11 +93,11 @@ for (const provider of ['codex', 'claude'] as MockProvider[]) {
   })
 }
 
-test('F031: tool events and an unknown item keep their order and readable fallback across a daemon restart', async ({
+test('F031: public summaries, tools and unknown items retain native identity and privacy across restart', async ({
   profile,
-}) => {
+}, testInfo) => {
   const { conversationId } = await startConversation(profile, 'codex')
-  await send(profile, conversationId, 'typed-unknown', 'typed-unknown-turn')
+  await send(profile, conversationId, 'typed-summary-large-tool', 'typed-unknown-turn')
   await waitForMessage(profile, conversationId, turnReply.codex)
   await waitForIdle(profile, conversationId)
   const before = await snapshot(profile, conversationId)
@@ -80,12 +113,28 @@ test('F031: tool events and an unknown item keep their order and readable fallba
   const tool = before.messages.find((message) => message.kind === 'commandExecution')
   expect(tool).toMatchObject({ role: 'tool', status: 'failed' })
   expect(tool?.text).toContain('fixture failure')
+  expect(tool?.provider_item_id).toBe('command-typed-unknown-turn')
+  expect(tool?.content).toMatchObject({
+    type: 'tool',
+    call_id: 'command-typed-unknown-turn',
+    output: 'fixture failure\n' + 'x'.repeat(8000) + '\nTOOL_OUTPUT_TAIL_SENTINEL',
+    is_error: true,
+  })
+  const summary = before.messages.find((message) => message.provider_item_id === 'public-reasoning-typed-unknown-turn')
+  expect(summary).toMatchObject({
+    kind: 'reasoning',
+    role: 'assistant',
+    status: 'completed',
+    text: 'Checking the fixture command before answering.',
+    turn_id: 'turn-typed-unknown-turn',
+  })
   const unknown = before.messages.find((message) => message.kind === 'futurePreview')
   expect(unknown?.text).toContain('Unrecognized Codex item (futurePreview)')
   // Private reasoning and the unknown item's native payload never enter the shared history.
   const everything = JSON.stringify(before.messages)
   expect(everything).not.toContain('PRIVATE_REASONING')
   expect(everything).not.toContain('PRIVATE_NATIVE_PAYLOAD')
+  expect(everything).not.toContain('PRIVATE_DELTA_REASONING')
   const order = before.messages.map((message) => message.id)
   expect(order.indexOf('typed-unknown-turn')).toBeLessThan(order.indexOf(tool!.id))
   expect(order.indexOf(tool!.id)).toBeLessThan(order.indexOf(unknown!.id))
@@ -93,11 +142,16 @@ test('F031: tool events and an unknown item keep their order and readable fallba
   await profile.restartDaemon()
   const after = await snapshot(profile, conversationId)
   expect(view(after.messages)).toEqual(view(before.messages))
+  expect(await turnStarts(profile)).toEqual(['typed-unknown-turn'])
+  await testInfo.attach('native-public-summary-evidence.json', {
+    body: JSON.stringify({ nativeCalls: await profile.mockCalls('codex'), before, after }),
+    contentType: 'application/json',
+  })
 })
 
 test('R002: agent.send with the same request ID admits one turn; a different payload conflicts', async ({
   profile,
-}) => {
+}, testInfo) => {
   const { conversationId } = await startConversation(profile, 'codex')
   const requestId = await send(profile, conversationId, prompts.turn, 'duplicate-send')
   await waitForIdle(profile, conversationId)
@@ -110,7 +164,7 @@ test('R002: agent.send with the same request ID admits one turn; a different pay
   // A different payload under the same ID is refused and admits nothing.
   await expect(
     profile.call('agent.send', { conversation_id: conversationId, request_id: requestId, text: 'another prompt' }),
-  ).rejects.toThrow(/already used for a different prompt/)
+  ).rejects.toMatchObject({ replied: true })
   const conflict = await profile.cli(
     'conversation',
     'send',
@@ -120,16 +174,33 @@ test('R002: agent.send with the same request ID admits one turn; a different pay
     requestId,
   )
   expect(conflict.code).not.toBe(0)
-  expect(JSON.stringify(conflict.json)).toContain('different prompt')
   // Another Conversation cannot reuse the ID either.
   const other = await startConversation(profile, 'codex')
   await expect(
     profile.call('agent.send', { conversation_id: other.conversationId, request_id: requestId, text: prompts.turn }),
-  ).rejects.toThrow(/already used for a different prompt or conversation/)
+  ).rejects.toMatchObject({ replied: true })
 
   expect(await turnStarts(profile)).toEqual([requestId])
+  const nativeCalls = await profile.mockCalls('codex')
+  expect(
+    nativeCalls
+      .filter((call) => ['thread/start', 'thread/resume', 'turn/start'].includes(call.method))
+      .map((call) => call.method),
+  ).toEqual(['thread/start', 'turn/start'])
   const users = (await snapshot(profile, conversationId)).messages.filter((message) => message.role === 'user')
   expect(users.map((message) => message.id)).toEqual([requestId])
+  expect(users[0].text).toBe(prompts.turn)
+  expect(users[0].delivery).toMatchObject({
+    admitted: true,
+    dispatch: 'dispatched',
+    native_outcome: 'accepted',
+    native_turn_id: 'turn-' + requestId,
+    terminal: { correlated: true, turn_id: 'turn-' + requestId, status: 'completed' },
+  })
+  await testInfo.attach('native-replay-evidence.json', {
+    body: JSON.stringify({ nativeCalls, cli, conflict, users }),
+    contentType: 'application/json',
+  })
 })
 
 test('R001: a send whose reply was lost is accepted once and a retry after a daemon crash does not dispatch again', async ({
@@ -186,7 +257,7 @@ test('F034: queued prompts can be inspected, removed and paused, survive a resta
   await profile.call('queue.cancel', { conversation_id: conversationId, request_id: 'queued-2' })
   const paused = await profile.cli('queue', 'pause', conversationId)
   expect(paused.code).toBe(0)
-  await profile.call('agent.answer', { conversation_id: conversationId, request_id: approval.id, decision: 'decline' })
+  await profile.call('agent.answer', answerIntent(approval, answerFor(approval, 'decline')))
   await waitForIdle(profile, conversationId)
   let state = await snapshot(profile, conversationId)
   expect(state.conversation.queue_paused).toBe(true)
@@ -227,7 +298,7 @@ test('F034: a prompt queued behind a running turn dispatches automatically when 
   await send(profile, conversationId, codexPrompts.approval, 'first')
   const approval = await waitForPendingRequest(profile, conversationId)
   await profile.call('queue.enqueue', { conversation_id: conversationId, request_id: 'follow-up', text: prompts.turn })
-  await profile.call('agent.answer', { conversation_id: conversationId, request_id: approval.id, decision: 'accept' })
+  await profile.call('agent.answer', answerIntent(approval, answerFor(approval, 'accept')))
   await expect
     .poll(
       async () =>
@@ -294,7 +365,7 @@ test('F034 and R001: a queued prompt in dispatch when the daemon crashes is deli
     request_id: 'crash-queued',
     text: 'queue-admission',
   })
-  await profile.call('agent.answer', { conversation_id: conversationId, request_id: approval.id, decision: 'decline' })
+  await profile.call('agent.answer', answerIntent(approval, answerFor(approval, 'decline')))
   await expect.poll(() => turnStarts(profile), { timeout: 20_000 }).toEqual(['crash-first', 'crash-queued'])
   await profile.restartDaemon('kill')
   await profile.releaseMock('codex', 'release-admission')

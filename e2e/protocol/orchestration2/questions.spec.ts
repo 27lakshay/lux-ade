@@ -3,7 +3,7 @@
 // answers it once through that view. A different late answer is refused, a
 // forged caller is refused, and the pending question survives a daemon
 // restart until it is answered.
-import { expect, fixtureAnswers, prompts, test, type ScratchProfile } from '../fixtures'
+import { expect, prompts, test, type ScratchProfile } from '../fixtures'
 import { childView, delegate, parentIn, waitForChild } from './steps'
 
 type ChildRequest = { request_id: string; kind: string; method: string; params: Record<string, unknown> }
@@ -17,8 +17,17 @@ async function waitForQuestion(profile: ScratchProfile, parent: string, child: s
   return (await pendingFromParent(profile, parent, child))[0]
 }
 
-function answersFor(request: ChildRequest, answer?: string) {
-  return fixtureAnswers({ id: request.request_id, method: request.method, params: request.params }, answer)
+function answersFor(request: ChildRequest, answer = 'yes') {
+  const questions = request.params.questions
+  if (!Array.isArray(questions)) throw new Error('Child request does not contain structured questions')
+  return Object.fromEntries(
+    questions.map((question) => {
+      if (typeof question !== 'object' || question === null || !('id' in question) || typeof question.id !== 'string') {
+        throw new Error('Child question has no native ID')
+      }
+      return [question.id, [answer]]
+    }),
+  )
 }
 
 test('a child question shows on the parent view and the parent Agent answers it once (F107)', async ({ profile }) => {

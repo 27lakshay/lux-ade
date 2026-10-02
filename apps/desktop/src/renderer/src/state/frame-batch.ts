@@ -3,16 +3,27 @@
  * state, a conversation projection), intermediate values between two paints are never shown, so
  * they are dropped instead of rendered.
  */
-export function latestPerFrame<T>(deliver: (value: T) => void): (value: T) => void {
+export function latestPerFrame<T>(deliver: (value: T) => void): { push: (value: T) => void; stop: () => void } {
   let pending: { value: T } | null = null
-  return (value) => {
-    const scheduled = pending !== null
-    pending = { value }
-    if (scheduled) return
-    requestAnimationFrame(() => {
-      const next = pending
+  let frame: number | null = null
+  let stopped = false
+  return {
+    push(value) {
+      if (stopped) return
+      pending = { value }
+      if (frame !== null) return
+      frame = requestAnimationFrame(() => {
+        frame = null
+        const next = pending
+        pending = null
+        if (next && !stopped) deliver(next.value)
+      })
+    },
+    stop() {
+      stopped = true
       pending = null
-      if (next) deliver(next.value)
-    })
+      if (frame !== null) cancelAnimationFrame(frame)
+      frame = null
+    },
   }
 }

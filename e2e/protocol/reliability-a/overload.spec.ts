@@ -8,6 +8,7 @@
 // covered by recovery/receipt-saturation.spec.ts.
 import { join } from 'node:path'
 import {
+  cancellationIntent,
   expect,
   isRunning,
   prompts,
@@ -26,7 +27,7 @@ import { volumeTest as test } from '../fixtures/scratch-volume'
 const STORAGE_FULL = /database or disk is full/
 
 async function conversation(profile: ScratchProfile, conversationId: string) {
-  return (await profile.call('conversation.get', { conversation_id: conversationId })).conversation
+  return (await profile.call('conversation.get', { conversation_id: conversationId, limit: 0 })).conversation
 }
 
 async function runningTurn(
@@ -74,7 +75,7 @@ test('R004: with the data volume full, new work is refused and a running turn is
   const running = await startConversation(profile, 'codex')
   const idle = await startConversation(profile, 'codex')
   const turn = await runningTurn(profile, running.conversationId)
-
+  const cancellation = await cancellationIntent(profile, running.conversationId, turn)
   // Fill the volume, then use up the database's preallocated space with
   // ordinary writes until storage refuses even the smallest ones.
   await disk.fill()
@@ -119,9 +120,7 @@ test('R004: with the data volume full, new work is refused and a running turn is
   // commit durably where a new Conversation could not. Which one happens
   // depends on page layout, not on the product. An ack must therefore mean
   // the cancellation is recorded; a refusal must name the storage failure.
-  const cancelled = await refusal(
-    profile.call('agent.cancel', { conversation_id: running.conversationId, turn_id: turn }),
-  )
+  const cancelled = await refusal(profile.call('agent.cancel', cancellation))
   testInfo.annotations.push({ type: 'cancel-while-full', description: cancelled })
   if (cancelled.startsWith('accepted')) {
     expect(['cancelling', 'interrupted']).toContain((await conversation(profile, running.conversationId)).status)
@@ -144,7 +143,7 @@ test('R004: with the data volume full, new work is refused and a running turn is
 })
 
 /** Send `agent.cancel`, retrying only while the connection is refused before the request was sent. */
-async function cancelWhenConnected(profile: ScratchProfile, request: { conversation_id: string; turn_id: string }) {
+async function cancelWhenConnected(profile: ScratchProfile, request: Awaited<ReturnType<typeof cancellationIntent>>) {
   for (;;) {
     try {
       return await profile.call('agent.cancel', request)
@@ -160,7 +159,7 @@ function burst(profile: ScratchProfile, conversationId: string, size: number): P
   return Promise.all(
     Array.from({ length: size }, (_, index) =>
       (index % 2
-        ? profile.call('conversation.get', { conversation_id: conversationId })
+        ? profile.call('conversation.get', { conversation_id: conversationId, limit: 0 })
         : profile.call('conversation.steer', {
             operation_id: `burst-${index}`,
             conversation_id: conversationId,
@@ -181,12 +180,23 @@ test('an output flood and a burst of ordinary commands do not keep cancellation 
   test.setTimeout(120_000)
   const profile = await ade.profile({ env: { ADE_CODEX_BIN: recoveryFixtures.floodCodex } })
   const { conversationId } = await startConversation(profile, 'codex')
-  const turn = await runningTurn(profile, conversationId, 'flood')
+  await send(profile, conversationId, 'flood')
+  let activeSnapshot: Awaited<ReturnType<typeof conversation>> | undefined
+  let turn: string | null = null
+  await expect
+    .poll(async () => {
+      activeSnapshot = await conversation(profile, conversationId)
+      turn = activeSnapshot.status === 'running' ? (activeSnapshot.active_turn_id ?? null) : null
+      return turn
+    })
+    .not.toBeNull()
+  if (!turn || !activeSnapshot) throw new Error('Running turn snapshot disappeared')
+  const cancellation = await cancellationIntent(profile, conversationId, turn, activeSnapshot)
   await waitForPidFile(join(mockDirectory(profile.root, 'codex'), 'flood-proxy.pid'))
   await profile.releaseMock('codex', 'flood-release')
   // About 40 MiB of provider output streams while 400 ordinary commands arrive.
   const answered = burst(profile, conversationId, 400)
-  await cancelWhenConnected(profile, { conversation_id: conversationId, turn_id: turn })
+  await cancelWhenConnected(profile, cancellation)
   await expect.poll(() => interrupts(profile), { timeout: 30_000 }).toEqual([turn])
   await expect
     .poll(async () => (await conversation(profile, conversationId)).status, { timeout: 60_000 })
@@ -212,8 +222,9 @@ test('a cancel sent during a connection flood past the socket backlog is admitte
   const profile = await ade.profile()
   const { conversationId } = await startConversation(profile, 'codex')
   const turn = await runningTurn(profile, conversationId)
+  const cancellation = await cancellationIntent(profile, conversationId, turn)
   const full = await fillBacklog(profile, conversationId, 2_000)
-  const cancelled = profile.call('agent.cancel', { conversation_id: conversationId, turn_id: turn }).then(
+  const cancelled = profile.call('agent.cancel', cancellation).then(
     (reply) => ({ reply }),
     (error: unknown) => ({ error }),
   )
@@ -222,7 +233,7 @@ test('a cancel sent during a connection flood past the socket backlog is admitte
   } finally {
     full.resume()
   }
-  expect(await cancelled).toMatchObject({ reply: { type: 'ack' } })
+  expect(await cancelled).toMatchObject({ reply: { type: 'agent_cancel_outcome' } })
   await expect.poll(() => interrupts(profile)).toEqual([turn])
   expectNoneLost(await full.replies)
 })

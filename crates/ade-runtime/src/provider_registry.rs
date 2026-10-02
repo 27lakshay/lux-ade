@@ -382,7 +382,9 @@ fn launch_codex(
     account: Option<&AccountExecution>,
     events: mpsc::SyncSender<Event>,
 ) -> Result<Arc<dyn Provider>> {
-    Ok(crate::codex::Adapter::spawn(cwd, account, events)?)
+    Ok(crate::provider::worker::Worker::spawn_codex(
+        cwd, account, events,
+    )?)
 }
 
 fn launch_claude(
@@ -390,7 +392,9 @@ fn launch_claude(
     account: Option<&AccountExecution>,
     events: mpsc::SyncSender<Event>,
 ) -> Result<Arc<dyn Provider>> {
-    Ok(crate::claude::Adapter::spawn(cwd, account, events)?)
+    Ok(crate::provider::worker::Worker::spawn_claude(
+        cwd, account, events,
+    )?)
 }
 
 /// The bundled providers, registered through [`Registry::register`] in

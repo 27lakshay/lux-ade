@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "tsc && node --test src/catalog.test.mjs src/sync.test.mjs src/outbox.test.mjs src/remote-state.test.mjs src/placement.test.mjs src/call.test.mjs src/request.test.mjs src/git-refusal.test.mjs src/journals.test.mjs src/journal-lock.test.mjs src/worktree-operation.test.mjs"
+    "test": "tsc && node --test src/catalog.test.mjs src/sync.test.mjs src/history.test.mjs src/outbox.test.mjs src/remote-state.test.mjs src/placement.test.mjs src/call.test.mjs src/request.test.mjs src/git-refusal.test.mjs src/journals.test.mjs src/journal-lock.test.mjs src/worktree-operation.test.mjs"
   },
   "dependencies": {
     "@ade/contracts": "workspace:*"
@@ -23,6 +23,10 @@
     "./sync": {
       "types": "./dist/sync.d.ts",
       "default": "./dist/sync.js"
+    },
+    "./history": {
+      "types": "./dist/history.d.ts",
+      "default": "./dist/history.js"
     },
     "./remote": {
       "types": "./dist/remote.d.ts",

@@ -15,6 +15,7 @@
 use crate::provider::{Event, Item};
 use crate::transcript::{Content, PlanStep, StepStatus};
 use ade_core::contract::providers::adapters::AcpHandshake;
+use ade_core::requests::{RequestChoice, RequestMetadata, RequestSchema};
 use anyhow::{Context, Result, bail, ensure};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
@@ -252,7 +253,8 @@ impl Mapper {
         self.turn = Some(turn.into());
         Ok(Event::Started {
             session: self.session.clone(),
-            turn: turn.into(),
+            submission: None,
+            turn: Some(turn.into()),
         })
     }
 
@@ -343,6 +345,7 @@ impl Mapper {
         }
         Ok(vec![Event::Delta {
             session: self.session.clone(),
+            submission: None,
             turn: self.turn.clone(),
             id: self.segments[index].id.clone(),
             role: role.into(),
@@ -368,6 +371,7 @@ impl Mapper {
                 is_error,
             }),
             id: id.into(),
+            native_message: None,
             client_id: None,
             turn: self.turn.clone(),
             role: "tool".into(),
@@ -435,6 +439,7 @@ impl Mapper {
         }
         Ok(vec![Event::Item {
             session: self.session.clone(),
+            submission: None,
             item: self.tool_item(&id, &tool),
         }])
     }
@@ -474,8 +479,10 @@ impl Mapper {
         let turn = self.turn.clone();
         Ok(vec![Event::Item {
             session: self.session.clone(),
+            submission: None,
             item: Item {
                 id: format!("{}:plan", turn.as_deref().unwrap_or("history")),
+                native_message: None,
                 client_id: None,
                 turn,
                 role: "assistant".into(),
@@ -519,6 +526,7 @@ impl Mapper {
             .map(|segment| Item {
                 content: None,
                 id: segment.id.clone(),
+                native_message: None,
                 client_id: None,
                 turn: turn.map(str::to_owned),
                 role: segment.role.into(),
@@ -550,14 +558,18 @@ impl Mapper {
             .filter(|item| item.role != "user")
             .map(|item| Event::Item {
                 session: self.session.clone(),
+                submission: None,
                 item,
             })
             .collect();
         events.push(Event::Finished {
             session: self.session.clone(),
-            turn,
+            submission: None,
+            turn: Some(turn),
             status: status.into(),
             error,
+            native_terminal: None,
+            interrupt_requested: false,
         });
         self.reset();
         self.pending_permissions.clear();
@@ -573,9 +585,40 @@ impl Mapper {
         if valid {
             self.pending_permissions.insert(id.to_string());
         }
+        let metadata = valid.then(|| RequestMetadata {
+            schema_version: 1,
+            summary: params["toolCall"]["title"]
+                .as_str()
+                .filter(|title| !title.is_empty())
+                .unwrap_or("Permission request")
+                .to_owned(),
+            schema: RequestSchema::Choices {
+                choices: params["options"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|option| RequestChoice {
+                        value: option["optionId"].clone(),
+                        label: option["name"].as_str().unwrap_or("Option").to_owned(),
+                        scope: None,
+                        duration: None,
+                    })
+                    .collect(),
+            },
+            blocking: Some(true),
+            created_at_ms: None,
+            expires_at_ms: None,
+            native_revision: None,
+            native_session_id: Some(session.clone()),
+            native_turn_id: Some(turn.clone()),
+            native_request_id: id.clone(),
+            native_item_id: None,
+            native_callback_id: None,
+        });
         Event::Request {
             session,
-            turn,
+            submission: None,
+            turn: Some(turn),
             id: id.clone(),
             method: if valid {
                 PERMISSION_METHOD.into()
@@ -584,6 +627,7 @@ impl Mapper {
             },
             params: json!({"toolCall":params["toolCall"],"options":params["options"]}),
             supported: valid,
+            metadata,
         }
     }
 
@@ -754,7 +798,7 @@ mod tests {
         let Event::Started { turn, .. } = mapper.begin_turn("t1").unwrap() else {
             panic!("expected started");
         };
-        assert_eq!(turn, "t1");
+        assert_eq!(turn.as_deref(), Some("t1"));
         assert!(mapper.begin_turn("t2").is_err());
         let first = mapper
             .update(&update("s1", json!({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Hel"}})))
@@ -825,8 +869,8 @@ mod tests {
             panic!("expected finished");
         };
         assert_eq!(
-            (status.as_str(), error, turn.as_str()),
-            ("completed", &None, "t1")
+            (status.as_str(), error, turn.as_deref()),
+            ("completed", &None, Some("t1"))
         );
         assert!(mapper.turn().is_none());
         assert!(
@@ -1018,7 +1062,10 @@ mod tests {
             panic!("expected request");
         };
         assert!(supported);
-        assert_eq!((method.as_str(), turn.as_str()), (PERMISSION_METHOD, "t1"));
+        assert_eq!(
+            (method.as_str(), turn.as_deref()),
+            (PERMISSION_METHOD, Some("t1"))
+        );
         assert_eq!(mapper.take_pending_permissions(), [json!(8)]);
         assert!(mapper.take_pending_permissions().is_empty());
         assert_eq!(cancelled_outcome()["outcome"]["outcome"], "cancelled");

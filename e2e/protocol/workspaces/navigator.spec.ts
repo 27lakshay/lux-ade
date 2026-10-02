@@ -7,6 +7,7 @@ import { existsSync } from 'node:fs'
 import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import {
+  cancelActiveSubmission,
   expect,
   isRunning,
   primaryShell,
@@ -197,7 +198,7 @@ test('remove is refused while a conversation turn runs and lists what blocks it'
   })
   expect((await catalog(profile)).workspaces.map((item) => item.id)).toContain(workspaceId)
 
-  await profile.call('agent.cancel', { conversation_id: conversationId })
+  await cancelActiveSubmission(profile, conversationId)
   await expect
     .poll(async () => (await profile.call('conversation.get', { conversation_id: conversationId })).conversation.status)
     .not.toMatch(/^(starting|running|waiting|cancelling)$/)

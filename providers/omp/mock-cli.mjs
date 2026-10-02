@@ -34,7 +34,9 @@ const header = records.find((record) => record.type === 'session')
 const entries = records.filter((record) => record.parentId !== undefined)
 const send = (frame) => process.stdout.write(JSON.stringify(frame) + '\n')
 let active = false,
-  pending = null
+  pending = null,
+  mismatchOnAbort = false,
+  mismatchNextState = false
 const append = (message) => {
   const entry = {
     type: 'message',
@@ -75,8 +77,10 @@ for await (const line of createInterface({ input: process.stdin })) {
       data = { protocolVersion: 2 }
       break
     case 'get_state':
+      const mismatchedSession = mismatchNextState
+      mismatchNextState = false
       data = {
-        sessionId: header.id,
+        sessionId: mismatchedSession ? 'replacement-session' : header.id,
         sessionFile: file,
         isStreaming: active,
         isCompacting: false,
@@ -90,11 +94,32 @@ for await (const line of createInterface({ input: process.stdin })) {
       }
       break
     case 'abort':
+      if (mismatchOnAbort) {
+        mismatchNextState = true
+        mismatchOnAbort = false
+      }
       finish(true)
       break
     case 'prompt':
       active = true
+      if (request.message === 'hold-unscoped') mismatchOnAbort = true
       append({ role: 'user', content: request.message })
+      if (request.message === 'typed-tools') {
+        const toolCallId = randomUUID()
+        append({
+          role: 'assistant',
+          responseId: randomUUID(),
+          content: [{ type: 'toolCall', id: toolCallId, name: 'read', arguments: { path: 'README.md' } }],
+          stopReason: 'stop',
+        })
+        append({
+          role: 'toolResult',
+          toolCallId,
+          toolName: 'read',
+          content: [{ type: 'text', text: 'Fixture tool output' }],
+          isError: false,
+        })
+      }
       if (request.message === 'typed-subagents') {
         const sessionFile = file + '.child.jsonl'
         writeFileSync(
@@ -150,6 +175,10 @@ for await (const line of createInterface({ input: process.stdin })) {
             },
           })
       }
+      if (request.message === 'local-only') {
+        active = false
+        send({ type: 'prompt_result', id: request.id, agentInvoked: false })
+      }
       if (request.message === 'approval' || request.message === 'questions') {
         pending = randomUUID()
         send({
@@ -159,8 +188,14 @@ for await (const line of createInterface({ input: process.stdin })) {
           title: 'Fixture request',
           message: 'Allow fixture?',
         })
-      } else if (request.message !== 'hold') finish()
+      } else if (request.message !== 'hold' && request.message !== 'local-only') finish()
       break
   }
   send({ type: 'response', id: request.id, command: request.type, success: true, data })
+  if (request.type === 'prompt' && request.message === 'late-failed')
+    setTimeout(
+      () =>
+        send({ type: 'response', id: request.id, command: 'prompt', success: false, error: 'late fixture failure' }),
+      25,
+    )
 }

@@ -6,7 +6,9 @@
     "test": "node ../../scripts/test-providers.mjs --provider omp"
   },
   "dependencies": {
-    "@oh-my-pi/pi-coding-agent": "18.3.0"
+    "@ade/provider-sdk": "workspace:*",
+    "@oh-my-pi/pi-coding-agent": "18.3.0",
+    "effect": "4.0.0-rc.118"
   },
   "nx": {
     "targets": {

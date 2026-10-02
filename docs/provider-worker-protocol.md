@@ -1,90 +1,71 @@
-# Provider worker protocol, version 1
+# Provider worker protocol, version 2
 
-A plugin adds an agent provider by declaring `entry_points.provider` in
-`ade-plugin.json`. ADE runs that file as a provider worker: a Node process that
-the runtime supervisor starts for one agent run and stops when the run ends.
-The worker speaks JSON-RPC 2.0, one message per line, on stdin and stdout.
-Anything on stderr is diagnostic output.
+ADE runs provider workers as Node processes speaking newline-delimited JSON-RPC 2.0 on stdin and stdout. Diagnostics go to stderr. Plugins declare `entry_points.provider` in `ade-plugin.json`. Bundled Codex uses the same public `@ade/provider-sdk/node` facade; its Rust-owned native client translates Codex app-server requests beneath that boundary, not around it.
 
-The code is `crates/ade-runtime/src/provider_worker.rs`. Where this page and
-the code disagree, the code wins.
+Protocol v2 is a breaking cutover: ADE rejects v1 descriptors before opening a native session or dispatching an effect. Workers use `protocol_version: 2`, include `2` in `compatible_protocol_versions`, and declare SDK API `2` / `@ade/provider-sdk` version `0.2.0`. The authoritative contracts are in `crates/ade-core/src/contract/providers.rs`. The supervisor is `crates/ade-runtime/src/provider_worker.rs`. Code wins if this page disagrees with either.
 
-## Identity and leases
+## Node SDK and packaging
 
-- The provider ID is `plugin:<plugin id>`, such as `plugin:acme.agent`. A
-  plugin cannot register a bundled ID (`claude`, `codex`, `omp`, `opencode`)
-  or an `adapter:` ID.
-- A run is pinned to one installed artifact: plugin ID, version and artifact
-  digest. Installing a newer version serves new sessions only. A session that
-  started on the old version stays on it while that artifact is installed, and
-  is refused, not moved, once it is gone.
-- The worker starts with its working directory set to the workspace root and
-  with `ADE_PROVIDER_ID`, `ADE_PLUGIN_ID` and `ADE_PLUGIN_VERSION` in its
-  environment. `ADE_NODE_BIN` chooses the Node executable.
-- ADE does not pass account credentials to a worker. The worker uses its
-  agent's own login.
+Import `runProviderWorker` from `@ade/provider-sdk/node` and descriptor helpers from `@ade/provider-sdk`. The runner validates descriptors, method-specific requests, replies and events against Rust-generated contracts. `Effect` and `@effect/platform-node` use the pinned `4.0.0-rc.118` release. The output sink respects stdout backpressure and reports write failure as `transport_failure`.
 
-## Requests from ADE
+`providers/codex` is a workspace package with its own production dependency closure. Packaging deploys that closure, including the SDK, contracts and Effect, rather than relying on repository-level `node_modules`. Initialization reports requirements without launching the native client. The owned helper starts lazily when a native operation needs it.
 
-| Method | Params | Result |
+The SDK diagnostic also derives its deployment lockfile from the shared root lockfile, with injected workspace packages, `--offline` and `--frozen-lockfile`. Legacy deployment is not supported: it can freshly resolve a peer outside the root pin. Its offline supply-chain check requires full publication metadata in pnpm's cache as well as tarballs. Hydrate only the locked SDK closure through an ordinary online scratch deployment; a scratch-only `trust-policy=no-downgrade` check populates the full trust/publication mirror without weakening the diagnostic or changing root modules. CLI command results retain the generated operation-response union; DTOs do not need arbitrary dictionary index signatures.
+
+## Identity and admission
+
+A plugin provider ID is `plugin:<plugin id>`; plugins cannot claim bundled or `adapter:` IDs. Each run pins its installed plugin ID, version and artifact digest. Installing a replacement does not move an existing run. Removing its artifact makes that run unavailable.
+
+The worker starts in the workspace root with its provider and plugin identity in the environment. `ADE_NODE_BIN` selects Node. Bundled Codex receives its daemon-owned account context and uses that pinned native home. Caller-authored provider, account, execution or lineage context is not accepted by `conversation.history`.
+
+## Public methods
+
+| Method | Purpose | Required |
 |---|---|---|
-| `initialize` | `versions` (supported protocol versions), `provider`, `plugin` (`id`, `version`) | `protocol_version`, `name`, `capabilities`, `permission_modes` |
-| `open` | `resume` (a native session ID or null), `config` (`model`, `permission_mode`, `setting_sources`) | `session`, `history` (items) |
-| `send` | `session`, `submission`, `message_id`, `text`, `attachments` | `turn` |
-| `steer` | `session`, `turn`, `message_id`, `text`, `attachments` | `turn` |
-| `cancel` | `session`, `turn` | any |
-| `answer` | `id` (the request ID from a `request` event), `decision` (`accept`, `decline` or `answer`), `answers` or `reason` | any |
+| `initialize` | Describe compatible protocol versions, capabilities, permission modes, operations, limits and requirements | Yes |
+| `open` | Open or resume a native session under the supplied configuration | Yes |
+| `send` | Submit the exact admitted prompt and attachments | Yes |
+| `steer` | Steer the identified native turn | Yes |
+| `cancel` | Interrupt the identified native turn | Yes |
+| `answer` | Answer an approval or question, preserving the original native decision | Yes |
+| `history` | Read a bounded pinned source page without opening or resuming a session | Yes |
+| `configure_mcp` | Configure supported native MCP servers | No |
+| `compact` | Request native compaction | No |
+| `rewind` | Request native rollback | No |
+| `child_transcript` | Read a bounded child transcript | No |
 
-`initialize` must answer within 15 seconds; other requests within 45 seconds.
-An error reply fails the call. ADE shows the user a sanitized reason, never the
-raw error text.
+The `initialize` result includes `protocol_version`, `compatible_protocol_versions`, `name`, `capabilities`, `permission_modes`, `operations`, `limits` and `requirements`. Operation availability and tier are authoritative. An unavailable optional operation returns a typed refusal; capability names do not substitute for method availability.
 
-### The handshake
+Initialization has a maximum 15-second deadline; operations have a maximum 45-second deadline. Control requests have reserved capacity alongside ordinary requests. A resume must return the same native session ID. Codex resumes with `excludeTurns: true`; it does not hydrate a full transcript through `open`.
 
-- `protocol_version` must be one of the offered `versions`. Version 1 is the
-  only one.
-- `name` is 1 to 80 printable characters.
-- `capabilities` may contain `streaming`, `images`, `text_attachments`,
-  `resume`, `cancel`, `steering`, `tool_approval` and `questions`. ADE ignores
-  names it does not know and never treats them as supported.
-- `permission_modes` starts with `default` and lists at most 16 distinct names
-  of letters, digits, `-` and `_`.
+## Resource boundaries
 
-ADE refuses a launch whose configuration the handshake does not allow. It sends
-`open` with a `resume` handle only if the worker declared `resume`, `steer`
-only if it declared `steering`, and `cancel` only if it declared `cancel`.
+Public worker frames and native Codex frames are limited to 1 MiB. Both sides inspect raw JSON before materializing it, including unknown fields. The decoded policy limits nesting to 64 and nodes to 4,096, with an 8 MiB conservative reservation (`4 × encoded bytes + 512 × nodes`). This is an admission estimate, not a measured allocator peak.
 
-### History items
+History pages contain at most 32 items and 512 KiB of encoded items. The daemon independently budgets its final `Message[]`, including array delimiters, commas and escaping, and accounts for snapshot metadata and retained cache entries. An oversized first record returns `resource_limit`; it does not silently truncate a record or report source exhaustion. Output queues, pending calls and cleanup have explicit bounds. Shutdown closes the owned helper and confirms process exit instead of detaching it.
 
-`open` returns the session's history as items with `id`, `turn`, `role`,
-`kind`, `text`, `status` and optional `client_id` and `content`. `id` is the
-native item ID and stays attached to the item as provenance. ADE refuses the
-whole history if an item has no `id`, repeats one, or has a `role`, `kind` or
-`status` that is not a short name.
+## Query-only native history
 
-A `resume` must return the same `session` ID it was given. ADE refuses a
-different one, and keeps the original identity.
+`conversation.history` accepts a conversation ID, an optional previously returned snapshot and native cursor, an optional history epoch, and page limits. The daemon derives the provider, execution, account and lineage context. It fences replies against ownership, epoch and source generation changes. Matching concurrent reads coalesce. Temporary query failures can return only an exactly identified retained page as stale, with a typed error and `complete: false`; this is not permission to replay effects.
 
-## Notifications from the worker
+A snapshot reports its native source and generation. `size_bytes: null` or absent means unknown; zero means a measured empty source. Page bytes are never presented as source size. `modified_at_ms` uses Unix milliseconds when known. File sources include measured size and replacement/change guards; virtual sources remain best-effort rather than claiming strong change detection.
 
-The worker reports progress with `event` notifications whose params are one
-event: `submitted`, `started`, `item`, `delta`, `request`, `resolved`,
-`finished`, `usage`, `operation_failed`, `error` or `exited`. The shapes are
-the `Event` enum in `crates/ade-core/src/provider.rs`.
+Native history is oldest-first. Continuation advances forward through that source; it is not ADE's `before` pagination. `complete` means source exhaustion, not accepted or completed submission. Native timestamps retain native provenance. Unknown status or turn context stays unknown. Orphan tools retain their original `call_id`, input and output. Private reasoning is excluded.
 
-ADE records the user's prompt itself, under the `submission` ID of the `send`
-that carried it, and may pre-assign the prompt's native item ID as the send's
-`message_id`. A worker that also reports that prompt as an `item` gives it role
-`user` and kind `text`, sets its `client_id` to that `submission` and, when
-`message_id` is present, its `id` to that `message_id`. ADE then updates its
-own record instead of adding a second copy. A different `id`, role or kind for
-the same record is refused as a changed message identity, and the run fails.
+Offline imported source IDs use canonical line/block keys where the physical line ordinal can be measured within the bounded prefix. Later records use byte/block keys. Active file projection uses an explicit `source-file:` namespace rather than claiming those keys came from the native producer. Only a proven stored item identity acquires an ADE message ID, delivery record and sequence. `Message.sequence = 0` means unknown ADE position; it is never a presentation index. Unmatched native source items and ADE live/pending evidence remain distinct. Reconnect/replay reconciliation is a separate contract.
 
-A worker must not send requests to ADE. A request, a malformed line or a line
-over 16 MiB closes the connection, and the run ends with an exit event.
+`conversation.get` retains ADE sequence pagination and has a maximum/default page size of 32. Aggregate decoding also applies across stored rows, not only to each row separately. Complete-preview readers refuse an over-budget result rather than presenting a truncated page as complete. Native cursors must never be sent as ADE sequence boundaries.
 
-## Failure
+`ade conversation history ID [JSON_OPTIONS]` exposes the native query directly. Pass `snapshot`, `native_cursor` and `history_epoch` from the previous reply to continue, with optional `max_items` and `max_bytes`. The CLI validates those options through the ordinary operation contract; it does not author execution or account context. `conversation export` instead pages stored ADE history in 32-row windows and writes the complete sequence without holding it all in memory.
 
-A worker that exits or breaks the protocol ends its run. ADE does not restart
-it and does not resend the turn in flight, because the worker may already have
-acted on it. The user resumes explicitly.
+## Events and durable delivery
+
+Worker `event` notifications carry the `Event` enum from `crates/ade-core/src/provider.rs`: submission, turn, item, delta, approval/question, completion, usage, failure and exit evidence.
+
+Codex public reasoning summaries travel through `item/reasoning/summaryTextDelta` and completed native item `summary` fields, with the original `provider_item_id`, native `reasoning` kind and turn identity. The adapter excludes `item/reasoning/textDelta` and raw reasoning `content`/`text`; those private fields do not enter shared history.
+
+ADE persists the exact user's prompt and attachments at admission. Its delivery record distinguishes durable admission, dispatch, native acceptance/rejection/unknown outcome, and a correlated terminal result. Admission or dispatch alone does not prove native acceptance. An early terminal event becomes correlated only after acceptance identifies that exact native turn. A disconnect or timeout leaves an uncertain outcome; it does not turn into a definite refusal or erase known acceptance. Exact item identity suppresses duplicate prompt projection without text matching.
+
+Codex submit replies without a string native turn ID are malformed acceptance evidence, not proof of rejection. ADE retains the exact admitted input, reports `invalid_data` with `unknown` native outcome and `reconnect_and_reconcile`, and returns that receipt on same-ID replay without dispatching again. The shared deterministic native peer flushes startup and turn notifications before replies without a submit-delay sleep; its `frames.jsonl` ledger records protocol order independently of daemon scheduling.
+
+A worker exit or protocol break ends its run. ADE does not restart it or resend an in-flight turn because the native provider may already have acted. Recovery is explicit and preserves the admitted prompt and delivery evidence.

@@ -9,7 +9,7 @@
 // when the queue resumes while the cancelled turn is still being cleaned up.
 import { access, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { expect, prompts, send, startConversation, test, type ScratchProfile } from '../fixtures'
+import { cancellationIntent, expect, prompts, send, startConversation, test, type ScratchProfile } from '../fixtures'
 import { mockDirectory } from '../fixtures/providers'
 
 async function conversation(profile: ScratchProfile, conversationId: string) {
@@ -56,7 +56,10 @@ for (const successor of ['a new send', 'a new send after a daemon crash', 'a que
       })
     }
     await profile.releaseMock('codex', 'stale-stream')
-    await profile.call('agent.cancel', { conversation_id: conversationId, turn_id: first })
+    await profile.call('agent.cancel', {
+      ...(await cancellationIntent(profile, conversationId, first)),
+      turn_id: first,
+    })
     // The wake is admitted as soon as the queue resumes, racing the cancelled turn's cleanup.
     if (woken) await profile.call('queue.pause', { conversation_id: conversationId, paused: false })
     else {
@@ -108,7 +111,10 @@ for (const successor of ['a new send', 'a new send after a daemon crash', 'a que
         text: 'still yours',
       }),
     ).toMatchObject({ outcome: 'acknowledged', turn_id: second })
-    await profile.call('agent.cancel', { conversation_id: conversationId, turn_id: second })
+    await profile.call('agent.cancel', {
+      ...(await cancellationIntent(profile, conversationId, second)),
+      turn_id: second,
+    })
     await expect.poll(async () => (await conversation(profile, conversationId)).conversation.status).toBe('interrupted')
     expect((await conversation(profile, conversationId)).conversation.error ?? null).toBeNull()
   })

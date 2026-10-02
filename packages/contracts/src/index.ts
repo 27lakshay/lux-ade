@@ -5,6 +5,27 @@ import type {
   FeedFrame,
   Operation,
   RequestByOperation,
+  ProviderWorkerRequest,
+  ProviderWorkerResponse,
+  ProviderWorkerFailure,
+  ProviderWorkerInitialize,
+  ProviderWorkerOpenRequest,
+  ProviderWorkerSendRequest,
+  ProviderWorkerSendResult,
+  ProviderWorkerEventNotification,
+  ProviderWorkerHistoryRequest,
+  ProviderWorkerHistoryPage,
+  Connected,
+  ProviderWorkerSteerRequest,
+  ProviderWorkerCancelRequest,
+  ProviderWorkerAnswerRequest,
+  ProviderWorkerCompactRequest,
+  ProviderWorkerRewindRequest,
+  ProviderWorkerRewindResult,
+  ProviderWorkerConfigureMcpRequest,
+  ProviderWorkerChildTranscriptRequest,
+  ProviderWorkerAck,
+  ProviderWorkerCancelResult,
   ResponseByOperation,
   TerminalStreamFrame,
 } from './generated/types.js'
@@ -87,4 +108,114 @@ export function decodeTerminalFrame(value: unknown): TerminalStreamFrame {
   }
   check(terminalFrames[value.type as keyof typeof terminalFrames].frame, value, 'terminal')
   return value as TerminalStreamFrame
+}
+
+/** Validate a provider worker request with the Rust-generated schema. */
+export function decodeProviderWorkerRequest(value: unknown): ProviderWorkerRequest {
+  check('ProviderWorkerRequest', value, 'provider_worker.request')
+  return value as ProviderWorkerRequest
+}
+
+/** Validate a provider worker response with the Rust-generated schema. */
+export function decodeProviderWorkerResponse(value: unknown): ProviderWorkerResponse {
+  check('ProviderWorkerResponse', value, 'provider_worker.response')
+  return value as ProviderWorkerResponse
+}
+
+/** Validate a provider worker failure payload with the Rust-generated schema. */
+export function decodeProviderWorkerFailure(value: unknown): ProviderWorkerFailure {
+  check('ProviderWorkerFailure', value, 'provider_worker.failure')
+  return value as ProviderWorkerFailure
+}
+
+/** Validate a provider worker descriptor with the Rust-generated schema. */
+export function decodeProviderWorkerInitialize(value: unknown): ProviderWorkerInitialize {
+  check('ProviderWorkerInitialize', value, 'provider_worker.initialize')
+  return value as ProviderWorkerInitialize
+}
+
+export function decodeProviderWorkerOpenRequest(value: unknown): ProviderWorkerOpenRequest {
+  check('ProviderWorkerOpenRequest', value, 'ProviderWorkerOpenRequest')
+  return value as ProviderWorkerOpenRequest
+}
+
+export function decodeProviderWorkerSendRequest(value: unknown): ProviderWorkerSendRequest {
+  check('ProviderWorkerSendRequest', value, 'ProviderWorkerSendRequest')
+  return value as ProviderWorkerSendRequest
+}
+
+export function decodeProviderWorkerSendResult(value: unknown): ProviderWorkerSendResult {
+  check('ProviderWorkerSendResult', value, 'ProviderWorkerSendResult')
+  return value as ProviderWorkerSendResult
+}
+
+export function decodeProviderWorkerEventNotification(value: unknown): ProviderWorkerEventNotification {
+  check('ProviderWorkerEventNotification', value, 'ProviderWorkerEventNotification')
+  return value as ProviderWorkerEventNotification
+}
+
+export function decodeProviderWorkerHistoryRequest(value: unknown): ProviderWorkerHistoryRequest {
+  check('ProviderWorkerHistoryRequest', value, 'ProviderWorkerHistoryRequest')
+  return value as ProviderWorkerHistoryRequest
+}
+
+export function decodeProviderWorkerHistoryPage(value: unknown): ProviderWorkerHistoryPage {
+  check('ProviderWorkerHistoryPage', value, 'ProviderWorkerHistoryPage')
+  return value as ProviderWorkerHistoryPage
+}
+
+export function decodeConnected(value: unknown): Connected {
+  check('Connected', value, 'Connected')
+  return value as Connected
+}
+
+export function decodeProviderWorkerSteerRequest(value: unknown): ProviderWorkerSteerRequest {
+  check('ProviderWorkerSteerRequest', value, 'ProviderWorkerSteerRequest')
+  return value as ProviderWorkerSteerRequest
+}
+
+export function decodeProviderWorkerCancelRequest(value: unknown): ProviderWorkerCancelRequest {
+  check('ProviderWorkerCancelRequest', value, 'ProviderWorkerCancelRequest')
+  return value as ProviderWorkerCancelRequest
+}
+
+export function decodeProviderWorkerAnswerRequest(value: unknown): ProviderWorkerAnswerRequest {
+  check('ProviderWorkerAnswerRequest', value, 'ProviderWorkerAnswerRequest')
+  return value as ProviderWorkerAnswerRequest
+}
+
+export function decodeProviderWorkerCompactRequest(value: unknown): ProviderWorkerCompactRequest {
+  check('ProviderWorkerCompactRequest', value, 'ProviderWorkerCompactRequest')
+  return value as ProviderWorkerCompactRequest
+}
+
+export function decodeProviderWorkerRewindRequest(value: unknown): ProviderWorkerRewindRequest {
+  check('ProviderWorkerRewindRequest', value, 'ProviderWorkerRewindRequest')
+  return value as ProviderWorkerRewindRequest
+}
+
+export function decodeProviderWorkerRewindResult(value: unknown): ProviderWorkerRewindResult {
+  check('ProviderWorkerRewindResult', value, 'ProviderWorkerRewindResult')
+  return value as ProviderWorkerRewindResult
+}
+
+export function decodeProviderWorkerConfigureMcpRequest(value: unknown): ProviderWorkerConfigureMcpRequest {
+  check('ProviderWorkerConfigureMcpRequest', value, 'ProviderWorkerConfigureMcpRequest')
+  return value as ProviderWorkerConfigureMcpRequest
+}
+
+export function decodeProviderWorkerChildTranscriptRequest(value: unknown): ProviderWorkerChildTranscriptRequest {
+  check('ProviderWorkerChildTranscriptRequest', value, 'ProviderWorkerChildTranscriptRequest')
+  return value as ProviderWorkerChildTranscriptRequest
+}
+
+export function decodeProviderWorkerAck(value: unknown): ProviderWorkerAck {
+  check('ProviderWorkerAck', value, 'ProviderWorkerAck')
+  return value as ProviderWorkerAck
+}
+
+/** Validate a provider worker cancellation result with the Rust-generated schema. */
+export function decodeProviderWorkerCancelResult(value: unknown): ProviderWorkerCancelResult {
+  check('ProviderWorkerCancelResult', value, 'ProviderWorkerCancelResult')
+  return value as ProviderWorkerCancelResult
 }

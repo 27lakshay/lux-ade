@@ -41,6 +41,7 @@ mod conversations;
 mod deletion;
 mod devices;
 mod drafts;
+mod history_queries;
 mod hooks;
 mod imports;
 mod inspection;
@@ -143,6 +144,7 @@ pub struct Sessions {
     hooks: crate::hooks::Dispatcher,
     files: crate::files::Files,
     data: Mutex<Data>,
+    native_history: Mutex<history_queries::Cache>,
     /// Serializes plugin mutations with contribution snapshots and application.
     plugin_lifecycle: Mutex<()>,
     pub boot_id: String,
@@ -194,6 +196,7 @@ impl Sessions {
         let sessions = Arc::new(Self {
             adapters: crate::adapters::Adapters::open(path)?,
             provider_handshakes: Mutex::new(HashMap::new()),
+            native_history: Mutex::new(Default::default()),
             history,
             usage,
             presets,
@@ -584,7 +587,7 @@ impl Sessions {
         let requests = frame_requests(d.store.pending(&c.id)?);
         crate::bench::agent_messages("provider_to_durable_us", messages);
         let queued = d.store.queued(&c.id)?;
-        let c = Self::presented(d, c)?;
+        let c = self.presented(d, c)?;
         self.publish(d,json!({"type":"conversation_changed","conversation":c,"messages":messages,"requests":requests,"queued":queued}));
         if let Err(error) = self.flush_activity(d) {
             eprintln!("Activity feed: {error}");
@@ -883,6 +886,7 @@ impl Sessions {
             | "attachment.put"
             | "conversation.create"
             | "conversation.get"
+            | "conversation.history"
             | "conversation.mark_seen"
             | "agent.child_transcript"
             | "draft.get"
@@ -930,13 +934,49 @@ fn persistence_result<T>(result: anyhow::Result<T>) -> anyhow::Result<T> {
         }
     })
 }
+/// Projects stored native request state into the public conversation contract.
+pub(super) fn project_pending_request(
+    request: PendingRequest,
+) -> ade_core::requests::PendingRequest {
+    let metadata = request
+        .metadata
+        .unwrap_or_else(|| ade_core::requests::RequestMetadata {
+            schema_version: 1,
+            summary: "Agent request requires attention".into(),
+            schema: ade_core::requests::RequestSchema::Unsupported {
+                reason: "No stored provider answer schema is available".into(),
+            },
+            blocking: None,
+            created_at_ms: None,
+            expires_at_ms: None,
+            native_revision: None,
+            native_session_id: None,
+            native_turn_id: None,
+            native_request_id: Value::Null,
+            native_item_id: None,
+            native_callback_id: None,
+        });
+    let response_delivery = request.response_delivery;
+    ade_core::requests::PendingRequest {
+        id: request.id,
+        conversation_id: request.conversation_id,
+        source_attempt_id: request.source_attempt_id,
+        revision: request.revision,
+        metadata,
+        resolution: request.resolution,
+        response_delivery,
+        response_operation_id: request.response_operation_id,
+    }
+}
+
 /// The requests a `conversation_changed` frame carries. Clients replace
 /// their request list with it, so it must match `conversation.get`: an answer
-/// whose delivery is uncertain stays `responding` and still needs its form
-/// for the same-decision retry.
-fn frame_requests(open: Vec<PendingRequest>) -> Vec<PendingRequest> {
+/// whose delivery is uncertain stays `responding`, retaining its form for
+/// receipt inspection and replay without native redispatch.
+fn frame_requests(open: Vec<PendingRequest>) -> Vec<ade_core::requests::PendingRequest> {
     open.into_iter()
         .filter(|r| matches!(r.status.as_str(), "pending" | "responding"))
+        .map(project_pending_request)
         .collect()
 }
 #[cfg(test)]
@@ -947,6 +987,7 @@ mod frame_tests {
             id: id.into(),
             conversation_id: "c".into(),
             run_id: "r".into(),
+            source_attempt_id: None,
             rpc_id: json!(1),
             method: "item/tool/requestUserInput".into(),
             params: json!({}),
@@ -954,8 +995,38 @@ mod frame_tests {
             answer_fingerprint: None,
             answer_dispatched: false,
             answer_attempt: 0,
+            revision: 1,
+            metadata: None,
+            resolution: Default::default(),
+            response_delivery: Default::default(),
+            response_operation_id: None,
         }
     }
+    #[test]
+    fn conversation_feed_requests_use_public_projection() {
+        let requests = frame_requests(vec![request("native-request", "pending")]);
+        let value = serde_json::to_value(&requests[0]).expect("request projection serializes");
+        let object = value.as_object().expect("request projection is an object");
+        for field in [
+            "run_id",
+            "rpc_id",
+            "method",
+            "params",
+            "answer_fingerprint",
+            "answer_dispatched",
+            "answer_attempt",
+        ] {
+            assert!(
+                !object.contains_key(field),
+                "private request field {field} was serialized"
+            );
+        }
+        let decoded: ade_core::requests::PendingRequest =
+            serde_json::from_value(value).expect("feed request matches the public contract");
+        assert_eq!(decoded.id, "native-request");
+        assert_eq!(decoded.metadata.native_request_id, serde_json::Value::Null);
+    }
+
     #[test]
     fn an_uncertain_answer_keeps_its_form_in_the_delta() {
         // agent.answer set the request to `responding`, then the runtime reply

@@ -26,6 +26,7 @@ sha2 = "=0.10.9"
 libc = "0.2"
 portable-pty = "0.9"
 tracing = "0.1"
+semver = "=1.0.28"
 
 [build-dependencies]
 cc = "1"

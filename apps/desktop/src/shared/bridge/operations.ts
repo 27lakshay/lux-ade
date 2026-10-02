@@ -50,12 +50,15 @@ export const scriptOperations = [
 
 const daemonConversationOperations = [
   'provider.list',
+  'provider.inspect',
+  'provider.readiness',
   'account.list',
   'account.create',
   'account.inspect',
   'account.verify',
   'account.disable',
   'conversation.create',
+  'conversation.history',
   'conversation.get',
   'agent.send',
   'agent.answer',
@@ -63,6 +66,8 @@ const daemonConversationOperations = [
   'agent.resume',
   'draft.get',
   'draft.save',
+  'draft.stash.list',
+  'draft.stash.restore',
 ] as const satisfies readonly DailyUseOperation[]
 
 /**

@@ -16,6 +16,7 @@ use crate::{
 use ade_core::{
     contract::providers::adapters::{AcpHandshake, AdapterDefinition},
     error::TransportError,
+    requests::RequestAnswer,
 };
 use anyhow::{Context, Result, bail, ensure};
 use serde_json::{Value, json};
@@ -26,6 +27,34 @@ use std::{
 
 /// `session/load` replays history before it replies; allow for a long one.
 const LOAD_LIMIT: Duration = Duration::from_secs(120);
+
+fn native_permission_answer(
+    p: &PendingRequest,
+    answer: &RequestAnswer,
+) -> Result<(&'static str, Value)> {
+    ensure!(p.method == acp::PERMISSION_METHOD, "Unknown ACP request");
+    let RequestAnswer::Choice { value } = answer else {
+        bail!("An ACP permission must select one native option");
+    };
+    let option_id = value
+        .as_str()
+        .context("ACP permission option ID must be a string")?;
+    let kind = p.params["options"]
+        .as_array()
+        .and_then(|options| {
+            options
+                .iter()
+                .find(|option| option["optionId"] == option_id)
+        })
+        .and_then(|option| option["kind"].as_str())
+        .context("The ACP agent did not offer that option")?;
+    let decision = match kind {
+        "allow_once" | "allow_always" => "accept",
+        "reject_once" | "reject_always" => "decline",
+        _ => bail!("The ACP agent offered an unsupported permission option"),
+    };
+    Ok((decision, json!({ "option_id": option_id })))
+}
 
 type Shared = Arc<Mutex<Option<Mapper>>>;
 
@@ -70,11 +99,13 @@ fn decoder(
                     // service, so any other agent request is unsupported.
                     _ => Ok(Some(Event::Request {
                         session: params["sessionId"].as_str().unwrap_or("").to_owned(),
-                        turn,
+                        submission: None,
+                        turn: Some(turn),
                         id,
                         method,
                         params: json!({}),
                         supported: false,
+                        metadata: None,
                     })),
                 }
             }
@@ -279,6 +310,28 @@ impl Provider for Adapter {
             self.rpc.respond(id, acp::cancelled_outcome())?;
         }
         Ok(())
+    }
+    fn validate_native_answer(&self, p: &PendingRequest, answer: &RequestAnswer) -> Result<()> {
+        p.metadata
+            .as_ref()
+            .context("Request has no typed native answer schema")?
+            .validate_answer(answer)?;
+        let (decision, answers) = native_permission_answer(p, answer)?;
+        acp::permission_outcome(&p.params, decision, Some(&answers)).map(|_| ())
+    }
+    fn answer_native(
+        &self,
+        p: &PendingRequest,
+        operation_id: &str,
+        answer: &RequestAnswer,
+    ) -> Result<()> {
+        ensure!(
+            !operation_id.is_empty() && operation_id.len() <= 256,
+            "Invalid operation ID"
+        );
+        self.validate_native_answer(p, answer)?;
+        let (decision, answers) = native_permission_answer(p, answer)?;
+        self.answer(p, decision, Some(&answers))
     }
     fn validate_answer(
         &self,

@@ -2,7 +2,15 @@
 // and its delegated child. Each message is durably queued once for its
 // receiver, attributed to its sender, listed with its delivery state, and
 // deduplicated by its operation ID across a daemon crash.
-import { expect, prompts, test, turnReply, waitForMessage, type ScratchProfile } from '../fixtures'
+import {
+  cancelActiveSubmission,
+  expect,
+  prompts,
+  test,
+  turnReply,
+  waitForMessage,
+  type ScratchProfile,
+} from '../fixtures'
 import { delegate, opId, parentIn, waitForChild, waitForStatus } from './steps'
 
 type Listed = {
@@ -171,7 +179,7 @@ test('a message for a busy parent waits in its queue and is delivered once the p
   expect(queued.map((prompt) => prompt.id)).toContain(up.message_id)
 
   // Cancelling the parent's turn pauses its queue; the message stays queued, not lost.
-  await profile.call('agent.cancel', { conversation_id: parent })
+  await cancelActiveSubmission(profile, parent)
   await waitForStatus(profile, parent, 'interrupted')
   expect(await delivery()).toBe('queued')
   await profile.restartDaemon('graceful')

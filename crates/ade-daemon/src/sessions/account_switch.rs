@@ -95,7 +95,7 @@ fn transfer(d: &Data, conversation: &str, continuity: SwitchContinuity) -> Resul
             truncated: false,
         });
     }
-    let messages = d.store.messages(conversation, None, 200)?;
+    let messages = d.store.messages(conversation, None, 32)?;
     let lines: Vec<_> = messages
         .iter()
         .map(|message| switch::Line {
@@ -103,7 +103,15 @@ fn transfer(d: &Data, conversation: &str, continuity: SwitchContinuity) -> Resul
             text: &message.text,
         })
         .collect();
-    Ok(switch::excerpt(&lines))
+    let mut excerpt = switch::excerpt(&lines);
+    if let Some(first) = messages.first() {
+        excerpt.truncated |= d.store.connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM messages WHERE conversation_id=?1 AND sequence<?2)",
+            rusqlite::params![conversation, first.sequence],
+            |row| row.get::<_, bool>(0),
+        )?;
+    }
+    Ok(excerpt)
 }
 
 /// Native continuation for Claude (F026): copies the session's transcript,

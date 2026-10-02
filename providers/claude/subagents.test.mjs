@@ -22,23 +22,23 @@ const end = {
 
 test('Claude child completion survives parent turn ending without migrating to the next turn', () => {
   const tasks = new Subagents()
-  const first = tasks.consume(start, 'first')
+  const first = tasks.consume(start, { session: 'parent', turn: 'first' })
   assert.equal(first.content.agents[0].state, 'running')
-  assert.equal(tasks.consume(start, 'first'), null)
-  assert.equal(tasks.consume({ ...end, tool_use_id: 'unrelated' }, 'second'), null)
-  const last = tasks.consume(end, 'second')
+  assert.equal(tasks.consume(start, { session: 'parent', turn: 'first' }), null)
+  assert.equal(tasks.consume({ ...end, tool_use_id: 'unrelated' }, { session: 'parent', turn: 'second' }), null)
+  const last = tasks.consume(end, { session: 'parent', turn: 'second' })
   assert.equal(last.id, first.id)
   assert.equal(last.turn, 'first')
   assert.equal(last.content.agents[0].summary, 'Inspected')
-  assert.equal(tasks.consume(start, 'second'), null)
+  assert.equal(tasks.consume(start, { session: 'parent', turn: 'second' }), null)
 })
 
 test('non-agent tasks and unknown notifications cannot become child agents', () => {
   const tasks = new Subagents()
   for (const task_type of ['local_bash', 'mcp_task', 'local_workflow', undefined])
-    assert.equal(tasks.consume({ ...start, task_type }, 'turn'), null)
-  assert.equal(tasks.consume(end, 'turn'), null)
-  tasks.consume(start, 'turn')
+    assert.equal(tasks.consume({ ...start, task_type }, { session: 'parent', turn: 'turn' }), null)
+  assert.equal(tasks.consume(end, { session: 'parent', turn: 'turn' }), null)
+  tasks.consume(start, { session: 'parent', turn: 'turn' })
   assert.equal(tasks.consume({ ...end, status: 'stopped' }, null).content.agents[0].state, 'interrupted')
 })
 
@@ -105,9 +105,12 @@ test('child reader is paginated, parent scoped and excludes private thinking and
 
 test('resumed Claude child keeps its identity and accepts the new invocation lifecycle', () => {
   const tasks = new Subagents()
-  const first = tasks.consume(start, 'first')
-  tasks.consume(end, 'first')
-  const resumed = tasks.consume({ ...start, tool_use_id: 'resume-call', description: 'Continue inspecting' }, 'second')
+  const first = tasks.consume(start, { session: 'parent', turn: 'first' })
+  tasks.consume(end, { session: 'parent', turn: 'first' })
+  const resumed = tasks.consume(
+    { ...start, tool_use_id: 'resume-call', description: 'Continue inspecting' },
+    { session: 'parent', turn: 'second' },
+  )
   assert.equal(resumed?.content.agents[0].state, 'running')
   assert.equal(resumed.id, first.id)
   assert.equal(resumed.turn, first.turn)
@@ -118,20 +121,23 @@ test('resumed Claude child keeps its identity and accepts the new invocation lif
   assert.equal(completed.id, first.id)
   assert.equal(completed.content.agents[0].state, 'completed')
   assert.equal(completed.content.agents[0].summary, 'Finished again')
-  assert.equal(tasks.consume({ ...start, tool_use_id: 'resume-call' }, 'third'), null)
+  assert.equal(tasks.consume({ ...start, tool_use_id: 'resume-call' }, { session: 'parent', turn: 'third' }), null)
 })
 
 test('unrelated or unowned starts cannot reopen a completed Claude child', () => {
   const tasks = new Subagents()
-  tasks.consume(start, 'first')
-  tasks.consume(end, 'first')
+  tasks.consume(start, { session: 'parent', turn: 'first' })
+  tasks.consume(end, { session: 'parent', turn: 'first' })
   for (const fields of [
     { task_type: 'local_bash' },
     { ambient: true },
     { skip_transcript: true },
     { tool_use_id: undefined },
   ]) {
-    assert.equal(tasks.consume({ ...start, tool_use_id: 'new-call', ...fields }, 'second'), null)
+    assert.equal(
+      tasks.consume({ ...start, tool_use_id: 'new-call', ...fields }, { session: 'parent', turn: 'second' }),
+      null,
+    )
   }
   assert.equal(tasks.consume({ ...start, tool_use_id: 'new-call' }, null), null)
 })

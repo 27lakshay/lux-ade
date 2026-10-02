@@ -25,8 +25,8 @@ use std::{
 };
 
 mod claude;
-mod codex;
-mod parse;
+use ade_core::native_history::{codex, parse};
+pub(crate) mod native_page;
 
 use parse::{Parsed, Plan, Prior};
 
@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS history_imports(
 ";
 
 /// Native files larger than this are refused rather than read into memory.
-const MAX_FILE_BYTES: u64 = 256 * 1024 * 1024;
+const MAX_FILE_BYTES: u64 = 1024 * 1024;
 /// How much of each file a scan reads for its metadata.
 const SCAN_PREFIX_BYTES: u64 = 256 * 1024;
 /// The newest files a scan considers; `more` reports anything beyond.
@@ -224,6 +224,10 @@ fn read(path: &Path, prefix: Option<u64>) -> Result<(String, u64, i64)> {
                 bytes.len() as u64 <= MAX_FILE_BYTES,
                 "The native session file grew past the import limit while it was read"
             );
+            ensure!(
+                ade_core::json_budget::within_budget(&bytes, MAX_FILE_BYTES as usize),
+                ade_core::error::Failure::ResourceLimit
+            );
             let text = String::from_utf8(bytes)
                 .map_err(|_| anyhow!("The native session file is not valid UTF-8"))?;
             Ok((text, size, modified))
@@ -378,6 +382,10 @@ pub fn read_session(store: &NativeStore, id: &str) -> Result<NativeSession> {
     let (text, _, _) = read(&path, None)?;
     let mut parsed = parse_text(store.provider, &text);
     ensure!(
+        !parsed.budget_exceeded,
+        ade_core::error::Failure::ResourceLimit
+    );
+    ensure!(
         parsed
             .session_id
             .as_deref()
@@ -492,6 +500,7 @@ pub fn commit(
                 provider: provider.into(),
                 account_id: None,
                 account_context: crate::model::AccountContext::Ambient,
+                execution_host: None,
                 provider_config: Default::default(),
                 provider_thread_id: None,
                 status: IMPORTED_STATUS.into(),
@@ -546,6 +555,7 @@ pub fn commit(
         let mut message = Message {
             content,
             review_feedback: None,
+            delivery: None,
             id: message_id(target.provider, &id, &item.key),
             conversation_id: conversation.id.clone(),
             role: item.role.into(),
@@ -554,6 +564,7 @@ pub fn commit(
             status: "completed".into(),
             turn_id: None,
             provider_item_id: Some(item.key.clone()),
+            native_message: None,
             sequence: 0,
             attachments: vec![],
         };

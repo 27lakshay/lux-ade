@@ -7,12 +7,12 @@ use serde::{Deserialize, Serialize};
 pub const ATTACHMENT_LIMIT: usize = 8 * 1024 * 1024;
 pub const ATTACHMENT_COUNT: usize = 8;
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Content {
     pub attachment: Attachment,
     pub data: String,
 }
-#[derive(Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Prompt {
     pub text: String,
     #[serde(default)]

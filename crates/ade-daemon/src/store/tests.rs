@@ -111,6 +111,63 @@ fn drafts_are_scoped_durable_and_ignore_late_writes() {
     assert!(store.draft(&first.id, "window-a").unwrap().text.is_empty());
 }
 #[test]
+fn prepared_send_context_is_revision_fenced_and_durable() {
+    let db = Database::new();
+    let store = db.open();
+    let (_, conversation) = fixture(&store);
+    let draft = Draft {
+        context_nodes: vec![ade_core::contract::conversations::DraftContextNode {
+            id: "selection-1".into(),
+            kind: "selection".into(),
+            data: serde_json::json!({"text": "captured context"}),
+        }],
+        text: "draft text".into(),
+        revision: 1,
+        attachments: vec![],
+    };
+    store
+        .save_draft(&conversation.id, "window", &draft)
+        .unwrap();
+    let mut changed = draft.clone();
+    changed.context_nodes[0].data = serde_json::json!({"text": "changed context"});
+    assert!(
+        store
+            .prepare_send_intent(
+                &conversation.id,
+                "window",
+                "request-2",
+                &changed,
+                "send text"
+            )
+            .is_err()
+    );
+    let intent = store
+        .prepare_send_intent(&conversation.id, "window", "request-1", &draft, "send text")
+        .unwrap();
+    assert_eq!(intent.context_nodes, draft.context_nodes);
+    assert!(
+        store
+            .prepare_send_intent(
+                &conversation.id,
+                "window",
+                "request-1",
+                &changed,
+                "send text"
+            )
+            .is_err()
+    );
+    drop(store);
+    let store = db.open();
+    let restored = store
+        .send_intent(&conversation.id, "window")
+        .unwrap()
+        .unwrap();
+    assert_eq!(restored.context_nodes, draft.context_nodes);
+    let (pending, _) = store.pending_sends("window", None, 10).unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].intent.context_nodes, draft.context_nodes);
+}
+#[test]
 fn pristine_draft_is_read_only_and_revisioned_empty_save_still_clears() {
     let db = Database::new();
     let store = db.open();
@@ -321,6 +378,7 @@ pub(super) fn assistant(conversation: &Conversation, id: &str, provider: &str) -
     Message {
         content: None,
         review_feedback: None,
+        delivery: None,
         attachments: vec![],
         id: id.into(),
         conversation_id: conversation.id.clone(),
@@ -330,6 +388,7 @@ pub(super) fn assistant(conversation: &Conversation, id: &str, provider: &str) -
         status: "completed".into(),
         turn_id: Some("turn-1".into()),
         provider_item_id: Some(provider.into()),
+        native_message: None,
         sequence: 0,
     }
 }
@@ -576,6 +635,7 @@ fn recovery_invalidates_requests_but_keeps_resume_and_submission() {
         id: "permission".into(),
         conversation_id: conversation.id.clone(),
         run_id: "run".into(),
+        source_attempt_id: Some("run".into()),
         rpc_id: serde_json::json!({"opaque":[1,"a"]}),
         method: "approval".into(),
         params: serde_json::json!({"command":"test"}),
@@ -583,6 +643,11 @@ fn recovery_invalidates_requests_but_keeps_resume_and_submission() {
         answer_fingerprint: None,
         answer_dispatched: false,
         answer_attempt: 0,
+        revision: 1,
+        metadata: None,
+        resolution: Default::default(),
+        response_delivery: Default::default(),
+        response_operation_id: None,
     };
     store
         .commit_conversation(&conversation, &[], std::slice::from_ref(&request))
@@ -685,7 +750,7 @@ fn provider_replay_retains_message_identity_and_sequence_with_bounded_pages() {
     let db = Database::new();
     let store = db.open();
     let (_, conversation) = fixture(&store);
-    let messages: Vec<_> = (0..205)
+    let messages: Vec<_> = (0..37)
         .map(|i| assistant(&conversation, &format!("m{i}"), &format!("p{i}")))
         .collect();
     store
@@ -697,23 +762,72 @@ fn provider_replay_retains_message_identity_and_sequence_with_bounded_pages() {
         .commit_conversation(&conversation, &[replay], &[])
         .unwrap();
     let page = store.messages(&conversation.id, None, usize::MAX).unwrap();
-    assert_eq!(page.len(), 200);
+    assert_eq!(page.len(), 32);
     assert_eq!(page[0].sequence, 6);
-    assert_eq!(page.last().unwrap().sequence, 205);
+    assert_eq!(page.last().unwrap().sequence, 37);
     let old = store
-        .messages(&conversation.id, Some(page[0].sequence), 200)
+        .messages(&conversation.id, Some(page[0].sequence), 32)
         .unwrap();
     assert_eq!(old.len(), 5);
     assert_eq!(old[0].id, "m0");
     assert_eq!(old[0].text, "final");
     assert_eq!(old[0].sequence, 1);
     assert!(store.message("different-id").unwrap().is_none());
+    assert_eq!(
+        store
+            .messages_from(&conversation.id, 0)
+            .unwrap_err()
+            .downcast_ref::<ade_core::error::Failure>(),
+        Some(&ade_core::error::Failure::ResourceLimit)
+    );
     assert!(
         store
             .messages(&conversation.id, None, 0)
             .unwrap()
             .is_empty()
     );
+}
+
+#[test]
+fn dense_small_rows_share_one_decoded_page_budget_without_changing_durable_identity() {
+    let db = Database::new();
+    let store = db.open();
+    let (_, conversation) = fixture(&store);
+    let messages: Vec<_> = (0..32)
+        .map(|i| {
+            assistant(
+                &conversation,
+                &format!("dense-{i}"),
+                &format!("provider-{i}"),
+            )
+        })
+        .collect();
+    store
+        .commit_conversation(&conversation, &messages, &[])
+        .unwrap();
+    let unknown = serde_json::to_string(&vec![0; 180]).unwrap();
+    store.connection.execute("UPDATE messages SET data=json_set(data,'$.unmodeled',json(?1)) WHERE conversation_id=?2", params![unknown, conversation.id]).unwrap();
+    let raw_bytes: i64 = store
+        .connection
+        .query_row(
+            "SELECT sum(length(CAST(data AS BLOB))) FROM messages WHERE conversation_id=?1",
+            [&conversation.id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(raw_bytes < 524288);
+    let failure = store.messages(&conversation.id, None, 32).unwrap_err();
+    assert_eq!(
+        failure.downcast_ref::<ade_core::error::Failure>(),
+        Some(&ade_core::error::Failure::ResourceLimit)
+    );
+    let bounded = store.messages(&conversation.id, None, 8).unwrap();
+    assert_eq!(bounded.first().unwrap().sequence, 25);
+    assert_eq!(bounded.last().unwrap().sequence, 32);
+    let exact = store.message("dense-0").unwrap().unwrap();
+    assert_eq!(exact.id, messages[0].id);
+    assert_eq!(exact.text, messages[0].text);
+    assert_eq!(exact.provider_item_id, messages[0].provider_item_id);
 }
 #[test]
 fn another_schema_version_is_refused_untouched_with_the_delete_instruction() {

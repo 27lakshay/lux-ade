@@ -3,7 +3,16 @@
 // that count each process once across nested groups. Each group is correlated
 // with the daemon boot, runtime incarnation, Agent run or terminal incarnation
 // it measures.
-import { expect, isRunning, prompts, send, startConversation, test, type ScratchProfile } from '../fixtures'
+import {
+  cancelActiveSubmission,
+  expect,
+  isRunning,
+  prompts,
+  send,
+  startConversation,
+  test,
+  type ScratchProfile,
+} from '../fixtures'
 import { configureService, waitForReadiness, writeServicePrograms } from '../fixtures/services'
 
 async function resources(profile: ScratchProfile) {
@@ -102,7 +111,7 @@ test('groups measure whole process trees with provenance, and totals count neste
   await expect
     .poll(async () => (await resources(profile)).groups.some((group) => group.subject === owner.terminal_id))
     .toBe(false)
-  await profile.call('agent.cancel', { conversation_id: conversationId })
+  await cancelActiveSubmission(profile, conversationId)
 })
 
 test('a lost runtime is marked unknown, not measured as zero, and a new one is measured again', async ({ profile }) => {

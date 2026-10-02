@@ -2,7 +2,16 @@
 // durable parent link, messages to the child, non-blocking waits, questions
 // answered once, and effect-command deduplication, over real daemon and
 // runtime processes with the provider mocks.
-import { expect, fixtureAnswers, prompts, test, turnReply, waitForMessage } from '../fixtures'
+import {
+  answerIntent,
+  cancelActiveSubmission,
+  expect,
+  fixtureAnswers,
+  prompts,
+  test,
+  turnReply,
+  waitForMessage,
+} from '../fixtures'
 import { createWorktree } from '../fixtures/worktrees'
 import { waitForAttemptRecord } from '../fixtures/recovery'
 import { opId, parentIn, waitForChild, waitOnce } from './steps'
@@ -112,7 +121,7 @@ test('messages a child, attributes the parent Agent, and waits on each message w
   // Cancelling the held turn settles it as interrupted and pauses the child's queue. The queued
   // message is reported blocked, not pending, until the queue is resumed. The child's Agent
   // is still connected, so resuming the queue dispatches it, as for an idle child.
-  await profile.call('agent.cancel', { conversation_id: childId })
+  await cancelActiveSubmission(profile, childId)
   const interrupted = await waitForChild(profile, childId, 'settled', {
     messageId: held.message_id,
     outcome: 'interrupted',
@@ -147,26 +156,13 @@ test('a child question is reported as needs_input and is answered once; a late a
   const requestId = asked.request_ids![0]
 
   const snapshot = await profile.call('conversation.get', { conversation_id: childId })
-  const request = snapshot.requests.find((item) => (item as { id: string }).id === requestId) as {
-    id: string
-    method: string
-    params: Record<string, unknown>
-  }
-  await profile.call('agent.answer', {
-    conversation_id: childId,
-    request_id: requestId,
-    decision: 'answer',
-    answers: fixtureAnswers(request),
-  })
+  const request = snapshot.requests.find((item) => item.id === requestId)
+  if (!request) throw new Error('Delegated native question disappeared before it was answered')
+  await profile.call('agent.answer', answerIntent(request, fixtureAnswers(request)))
   await waitForChild(profile, childId, 'settled', { outcome: 'completed' })
 
   await expect(
-    profile.call('agent.answer', {
-      conversation_id: childId,
-      request_id: requestId,
-      decision: 'answer',
-      answers: fixtureAnswers(request, 'late answer'),
-    }),
+    profile.call('agent.answer', answerIntent(request, fixtureAnswers(request, 'late answer'))),
   ).rejects.toThrow()
   const answered = (await profile.mockCalls('codex')).filter((call) => call.method === 'approval/reply')
   expect(answered).toHaveLength(1)
@@ -488,7 +484,7 @@ test('the CLI delegates, lists, reads, messages and waits on a child with struct
 
   const usage = await profile.cli('child', 'wait', childId, '--timeout-ms', 'soon')
   expect(usage.code).not.toBe(0)
-  await profile.call('agent.cancel', { conversation_id: childId })
+  await cancelActiveSubmission(profile, childId)
   const cancelled = await profile.cli('child', 'wait', childId, '--timeout-ms', '20000')
   expect(cancelled.json).toMatchObject({ state: 'settled', outcome: 'interrupted' })
 })

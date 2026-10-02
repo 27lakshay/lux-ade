@@ -49,7 +49,10 @@ export type ContractDefinition =
   | AdapterRemoved
   | AgentAccountInspectRequest
   | AgentAccountInspection
+  | AgentAnswerOutcome
   | AgentAnswerRequest
+  | AgentCancelOutcome
+  | AgentCancelOutcomeTag
   | AgentCancelRequest
   | AgentChildTranscriptRequest
   | AgentDisconnectRequest
@@ -174,6 +177,7 @@ export type ContractDefinition =
   | CheckpointRestoreVerdict
   | CheckpointRestored
   | CheckpointSummary
+  | Child
   | ChildAnswerRequest
   | ChildAnswered
   | ChildDelegated
@@ -187,6 +191,7 @@ export type ContractDefinition =
   | ChildReply
   | ChildRequest
   | ChildSendRequest
+  | ChildState
   | ChildTranscriptPage
   | ChildWait
   | ChildWaitRequest
@@ -211,6 +216,10 @@ export type ContractDefinition =
   | CommittedChanges
   | CommittedFile
   | Config
+  | Config2
+  | Connected
+  | Content
+  | Content2
   | ContextCaptureRequest
   | ContextGetRequest
   | ContextKind
@@ -240,6 +249,8 @@ export type ContractDefinition =
   | ConversationDeletedFrame
   | ConversationDeletion
   | ConversationGetRequest
+  | ConversationHistory
+  | ConversationHistoryRequest
   | ConversationMarkSeenRequest
   | ConversationReloadFrame
   | ConversationRewindHistory
@@ -349,6 +360,7 @@ export type ContractDefinition =
   | DraftStashSaveRequest
   | DropZone
   | Edge
+  | Event
   | Excluded
   | Exclusion
   | ExecutableIdentity
@@ -357,6 +369,7 @@ export type ContractDefinition =
   | ExecutionHostEntry
   | ExecutionHosts
   | ExecutionState
+  | Failure
   | FileEntry
   | FileKind
   | FileList
@@ -431,6 +444,7 @@ export type ContractDefinition =
   | Inspection
   | InstallOutcome
   | Installation
+  | Item
   | KeybindingReset
   | Keybindings
   | Layout
@@ -464,6 +478,8 @@ export type ContractDefinition =
   | MessageDirection
   | ModelCapabilities
   | ModelFormat
+  | NativeMessageLocator
+  | NativeTerminalEvidence
   | NotificationDeliveries
   | NotificationDelivery
   | NotificationDeliveryClaim
@@ -510,6 +526,7 @@ export type ContractDefinition =
   | Placements
   | PlainScreenRecovery
   | PlanRejection
+  | PlanStep
   | PlannedPart
   | PluginActivation
   | PluginCommandContribution
@@ -587,8 +604,16 @@ export type ContractDefinition =
   | ProjectKind
   | Projected
   | PromptInput
+  | ProviderCancelEvidence
+  | ProviderCancelScope
+  | ProviderCancelTermination
   | ProviderCapabilities
   | ProviderCapabilitiesRequest
+  | ProviderHistoryConsistency
+  | ProviderHistoryContext
+  | ProviderHistorySnapshot
+  | ProviderInspect
+  | ProviderInspectRequest
   | ProviderListRequest
   | ProviderMediaSupport
   | ProviderOrigin
@@ -602,9 +627,46 @@ export type ContractDefinition =
   | ProviderSelection
   | ProviderSupport
   | ProviderWorker
+  | ProviderWorkerAck
+  | ProviderWorkerAnswerRequest
+  | ProviderWorkerAvailability
+  | ProviderWorkerCancelRequest
+  | ProviderWorkerCancelResult
+  | ProviderWorkerCancelTag
+  | ProviderWorkerCapability
+  | ProviderWorkerCapabilityName
+  | ProviderWorkerChildTranscriptRequest
+  | ProviderWorkerCompactRequest
+  | ProviderWorkerConfigureMcpRequest
+  | ProviderWorkerErrorResponse
+  | ProviderWorkerEventMethod
+  | ProviderWorkerEventNotification
+  | ProviderWorkerFailure
+  | ProviderWorkerFailureCode
+  | ProviderWorkerHistoryPage
+  | ProviderWorkerHistoryRequest
+  | ProviderWorkerInitialize
+  | ProviderWorkerJsonRpcVersion
+  | ProviderWorkerLimits
+  | ProviderWorkerMethod
+  | ProviderWorkerOpenRequest
+  | ProviderWorkerOperation
   | ProviderWorkerPin
+  | ProviderWorkerRequest
+  | ProviderWorkerRequestId
+  | ProviderWorkerRequirements
+  | ProviderWorkerResponse
+  | ProviderWorkerResponseId
+  | ProviderWorkerResultResponse
+  | ProviderWorkerRewindRequest
+  | ProviderWorkerRewindResult
+  | ProviderWorkerRpcError
+  | ProviderWorkerSendRequest
+  | ProviderWorkerSendResult
+  | ProviderWorkerSteerRequest
   | ProvidersReply
   | ProxyAvailability
+  | QuestionOption
   | QueueCancelRequest
   | QueueEnqueueRequest
   | QueuePauseRequest
@@ -621,6 +683,7 @@ export type ContractDefinition =
   | RebindListRequest
   | RecoveredAttempt
   | RecoveredAttemptKind
+  | Recovery
   | RecoveryClassification
   | RecoveryReport
   | RecoveryStatus
@@ -666,7 +729,14 @@ export type ContractDefinition =
   | RepositoryRebindRequest
   | RepositoryRecord
   | RepositoryTransport
+  | RequestAnswer
+  | RequestChoice
   | RequestKind
+  | RequestMetadata
+  | RequestQuestion
+  | RequestResolution
+  | RequestSchema
+  | RequestScope
   | ResolvedAppearance
   | ResolvedSyntaxAppearance
   | ResolvedTerminalAppearance
@@ -680,6 +750,7 @@ export type ContractDefinition =
   | ResourcesDeviceReleaseRequest
   | ResourcesInspectRequest
   | ResourcesRegistryAcceptRequest
+  | ResponseDelivery
   | RestartPrepared
   | RetentionApply
   | RetentionApplyRequest
@@ -843,6 +914,11 @@ export type ContractDefinition =
   | SplitDirection
   | SplitNode
   | StartOutcome
+  | StepStatus
+  | SubmissionDelivery
+  | SubmissionDispatch
+  | SubmissionNativeOutcome
+  | SubmissionTerminal
   | Support
   | SwitchContinuity
   | SystemAppearanceObservation
@@ -924,6 +1000,7 @@ export type ContractDefinition =
   | ThemeSummary
   | ThemeValidateRequest
   | ThemeValidationResponse
+  | Tier
   | TokenReference
   | TrackedDescendant
   | TransportCoverage
@@ -1108,6 +1185,32 @@ export type ProbeOutcome =
  * Whether an adapter may be trusted to have the probed capabilities now.
  */
 export type AdapterReadiness = 'unprobed' | 'ready' | 'failed' | 'stale'
+export type RequestResolution = 'outstanding' | 'resolved' | 'withdrawn' | 'expired' | 'unsupported' | 'invalidated'
+export type ResponseDelivery = 'not_sent' | 'admitted' | 'dispatched' | 'acknowledged' | 'unknown' | 'rejected'
+export type RequestAnswer =
+  | {
+      kind: 'choice'
+      value: unknown
+    }
+  | {
+      answers: {
+        [k: string]: unknown[]
+      }
+      kind: 'questions'
+    }
+  | {
+      kind: 'permissions'
+      permissions: unknown
+      scope: RequestScope
+      strict_auto_review?: boolean | null
+    }
+export type RequestScope = 'once' | 'turn' | 'session' | 'persistent'
+/**
+ * What the adapter can prove after requesting a native interruption.
+ */
+export type ProviderCancelScope = 'turn' | 'submission' | 'session' | 'process' | 'unknown'
+export type ProviderCancelTermination = 'requested' | 'confirmed' | 'unknown'
+export type AgentCancelOutcomeTag = 'agent_cancel_outcome'
 /**
  * An app command a key runs: the desktop's application-menu commands
  * (F015). Every client reads the same keys for them from the daemon.
@@ -1290,6 +1393,8 @@ export type CheckpointRestoreOutcome = 'unchanged' | 'restored' | 'partial'
  * Whether a restore may run now.
  */
 export type CheckpointRestoreVerdict = 'unchanged' | 'ready' | 'needs_confirmation' | 'blocked'
+export type ChildState =
+  'pending' | 'running' | 'waiting' | 'completed' | 'failed' | 'interrupted' | 'closed' | 'unknown'
 /**
  * What a pending request asks for.
  */
@@ -1435,6 +1540,29 @@ export type CommittedChanges =
  * How an ignored resource of the primary checkout reaches a tree.
  */
 export type ResourceMode = 'copy' | 'link' | 'skip'
+export type Content2 =
+  | {
+      explanation: string | null
+      steps: PlanStep[]
+      type: 'plan'
+      [k: string]: unknown
+    }
+  | {
+      call_id: string
+      input: unknown
+      is_error: boolean
+      name: string
+      output: string | null
+      type: 'tool'
+      [k: string]: unknown
+    }
+  | {
+      agents: Child[]
+      operation: string
+      type: 'subagents'
+      [k: string]: unknown
+    }
+export type StepStatus = 'pending' | 'inProgress' | 'completed' | 'blocked' | 'abandoned'
 /**
  * One selection to capture.
  */
@@ -1501,6 +1629,68 @@ export type ConversationControl = 'steer' | 'compact' | 'rewind_conversation' | 
  */
 export type ControlOutcome =
   'unavailable' | 'acknowledged' | 'restored' | 'unchanged' | 'partial' | 'refused' | 'unknown'
+export type SubmissionDispatch = 'pending' | 'dispatched'
+/**
+ * Categories carry no raw provider payload. Recovery is advice, never an
+ * authorization to replay a mutation whose outcome might be unknown.
+ */
+export type Failure =
+  | 'authentication'
+  | 'rate_limit'
+  | 'usage_limit'
+  | 'process_exited'
+  | 'disconnected'
+  | 'invalid_data'
+  | 'save_failed'
+  | 'outcome_unknown'
+  | 'unavailable'
+  | 'session_unavailable'
+  | 'rejected'
+  | 'resource_limit'
+export type SubmissionNativeOutcome = 'pending' | 'accepted' | 'rejected' | 'unknown'
+export type Recovery =
+  | 'sign_in'
+  | 'wait_then_retry_manually'
+  | 'check_account'
+  | 'reconnect_and_reconcile'
+  | 'check_storage'
+  | 'check_provider'
+export type RequestSchema =
+  | {
+      choices: RequestChoice[]
+      kind: 'choices'
+    }
+  | {
+      decline?: RequestChoice | null
+      kind: 'questions'
+      questions: RequestQuestion[]
+    }
+  | {
+      kind: 'permissions'
+      requested: unknown
+      scopes: RequestScope[]
+      supports_strict_auto_review: boolean
+    }
+  | {
+      kind: 'unsupported'
+      reason: string
+    }
+export type ProviderWorkerFailureCode =
+  | 'invalid_request'
+  | 'unsupported'
+  | 'authentication_required'
+  | 'permission_denied'
+  | 'rate_limited'
+  | 'resource_limit'
+  | 'provider_failure'
+  | 'protocol_mismatch'
+  | 'transport_failure'
+  | 'timeout'
+  | 'shutdown'
+  | 'cancelled'
+  | 'integration_bug'
+  | 'internal'
+export type ProviderHistoryConsistency = 'snapshot' | 'best_effort'
 /**
  * What a rewind returns to an earlier point.
  */
@@ -1689,6 +1879,103 @@ export type DropZone = 'left' | 'right' | 'top' | 'bottom' | 'centre'
  * An outer edge of the whole centre area.
  */
 export type Edge = 'left' | 'right' | 'top' | 'bottom'
+export type Event =
+  | {
+      error: string
+      submission: string | null
+      type: 'operation_failed'
+      [k: string]: unknown
+    }
+  | {
+      admitted: boolean
+      dispatch?: SubmissionDispatch | null
+      native_outcome?: SubmissionNativeOutcome | null
+      submission: string
+      turn: string | null
+      type: 'submitted'
+      [k: string]: unknown
+    }
+  | {
+      session: string
+      submission?: string | null
+      turn: string | null
+      type: 'started'
+      [k: string]: unknown
+    }
+  | {
+      error: string | null
+      interrupt_requested: boolean
+      native_terminal?: NativeTerminalEvidence | null
+      session: string
+      status: string
+      submission?: string | null
+      turn: string | null
+      type: 'finished'
+      [k: string]: unknown
+    }
+  | {
+      item: Item
+      session: string
+      submission: string | null
+      type: 'item'
+      [k: string]: unknown
+    }
+  | {
+      id: string
+      kind: string
+      role: string
+      session: string
+      submission: string | null
+      text: string
+      turn: string | null
+      type: 'delta'
+      [k: string]: unknown
+    }
+  | {
+      id: unknown
+      metadata?: RequestMetadata | null
+      method: string
+      params: unknown
+      session: string
+      submission: string | null
+      supported: boolean
+      turn: string | null
+      type: 'request'
+      [k: string]: unknown
+    }
+  | {
+      id: unknown
+      resolution?: RequestResolution | null
+      session: string
+      submission?: string | null
+      type: 'resolved'
+      [k: string]: unknown
+    }
+  | {
+      report: {
+        [k: string]: unknown
+      }
+      session: string
+      source: string
+      turn: string | null
+      type: 'usage'
+      [k: string]: unknown
+    }
+  | {
+      error: string
+      /**
+       * The provider turn the error belongs to, when the provider names
+       * one. An error for another turn never reaches the active one.
+       */
+      turn?: string | null
+      type: 'error'
+      [k: string]: unknown
+    }
+  | {
+      error: string
+      type: 'exited'
+      [k: string]: unknown
+    }
 /**
  * Why an entry does not reach a provider.
  */
@@ -2199,6 +2486,47 @@ export type PluginSource =
 export type ReducedMotion = 'system' | 'on' | 'off'
 export type TerminalCursorShape = 'block' | 'bar' | 'underline'
 export type TerminalFontKerning = 'auto' | 'normal' | 'none'
+export type ProviderWorkerCapabilityName =
+  | 'streaming'
+  | 'images'
+  | 'text_attachments'
+  | 'resume'
+  | 'cancel'
+  | 'steering'
+  | 'tool_approval'
+  | 'questions'
+  | 'child_transcript'
+export type ProviderWorkerAvailability = 'available' | 'unavailable' | 'unsupported'
+/**
+ * An operation handled by the current worker protocol. Unknown methods cannot be declared supported.
+ */
+export type ProviderWorkerMethod =
+  | 'initialize'
+  | 'open'
+  | 'send'
+  | 'steer'
+  | 'cancel'
+  | 'answer'
+  | 'history'
+  | 'configure_mcp'
+  | 'compact'
+  | 'rewind'
+  | 'child_transcript'
+/**
+ * The durability tier of an operation (proposed architecture, section 4).
+ */
+export type Tier = 'query' | 'idempotent_command' | 'effect_command'
+/**
+ * The overall readiness verdict.
+ */
+export type ReadinessState2 =
+  | ('missing_executable' | 'needs_authentication' | 'account_disabled')
+  | 'ready'
+  | 'installed_unchecked'
+  | 'incompatible'
+  | 'needs_verification'
+  | 'identity_changed'
+  | 'unavailable'
 /**
  * Who registered a provider. Every origin goes through the same registry
  * and the same provider interface; none has a privileged path.
@@ -2220,18 +2548,16 @@ export type ProviderOrigin =
       [k: string]: unknown
     }
 export type QuotaState = 'reported' | 'not_reported' | 'unavailable'
-/**
- * The overall readiness verdict.
- */
-export type ReadinessState2 =
-  | ('missing_executable' | 'needs_authentication' | 'account_disabled')
-  | 'ready'
-  | 'installed_unchecked'
-  | 'incompatible'
-  | 'needs_verification'
-  | 'identity_changed'
-  | 'unavailable'
 export type RegistrationState = 'registered' | 'refused'
+export type ProviderWorkerCancelTag = 'cancel_result'
+export type ProviderWorkerResponseId = string | number | null
+export type ProviderWorkerJsonRpcVersion = '2.0'
+export type ProviderWorkerEventMethod = 'event'
+export type ProviderWorkerRequestId = string | number
+/**
+ * A JSON-RPC response with an ADE-owned typed failure in error.data.
+ */
+export type ProviderWorkerResponse = ProviderWorkerResultResponse | ProviderWorkerErrorResponse
 export type ProxyAvailability = 'bound' | 'port_occupied'
 export type ReadinessBasis =
   ('execution_state' | 'identity_changed') | 'direct_process_tcp_listener' | 'process_tree_tcp_listener'
@@ -3096,20 +3422,72 @@ export interface AgentAccountInspection {
   [k: string]: unknown
 }
 /**
- * `agent.answer`: answer a pending provider request by its ID.
+ * `agent.answer`: the durable effect receipt and latest native resolution evidence.
  */
-export interface AgentAnswerRequest {
-  /**
-   * Structured answers; required by the `answer` decision.
-   */
-  answers?: unknown
-  conversation_id: string
-  decision: string
-  op: 'agent.answer'
+export interface AgentAnswerOutcome {
+  error?: string | null
+  operation_id: string
   request_id: string
+  request_revision: number
+  resolution: RequestResolution
+  response_delivery: ResponseDelivery
+  source_attempt_id?: string | null
+  /**
+   * The `agent_answer_outcome` type tag.
+   */
+  type: 'agent_answer_outcome'
 }
 /**
- * `agent.cancel`: cancel the Conversation's active turn.
+ * An answer is fenced by the caller's durable operation and exact request revision.
+ */
+export interface AgentAnswerRequest {
+  answer: RequestAnswer
+  conversation_id: string
+  op: 'agent.answer'
+  operation_id: string
+  request_id: string
+  request_revision: number
+  source_attempt_id?: string | null
+}
+/**
+ * Native interruption evidence attached to the durable agent.cancel operation receipt.
+ */
+export interface AgentCancelOutcome {
+  conversation_id: string
+  evidence: ProviderCancelEvidence
+  operation_id: string
+  source_attempt_id: string
+  submission_id: string
+  turn_id?: string | null
+  type: AgentCancelOutcomeTag
+  [k: string]: unknown
+}
+/**
+ * Evidence returned by a native cancellation command and any follow-up status sample.
+ */
+export interface ProviderCancelEvidence {
+  /**
+   * Null means the provider has no evidence about remaining foreground work.
+   */
+  active_work_remaining: boolean | null
+  /**
+   * Null means the provider has no evidence about background work.
+   */
+  background_work_remaining: boolean | null
+  interruption_requested: boolean
+  /**
+   * Unix milliseconds for a point-in-time native state sample, when available.
+   */
+  observed_at_ms: number | null
+  /**
+   * Null means the provider has no queue-depth evidence.
+   */
+  queued_work_count: number | null
+  scope: ProviderCancelScope
+  termination: ProviderCancelTermination
+}
+/**
+ * `agent.cancel`: target one immutable ADE runtime attempt and submission.
  */
 export interface AgentCancelRequest {
   conversation_id: string
@@ -3121,9 +3499,12 @@ export interface AgentCancelRequest {
    */
   operation_id: string
   /**
-   * The turn the caller saw active. When present, the cancel applies only
-   * while that turn is still the active one, so a late or retried cancel
-   * never stops its successor. Absent, it cancels whatever turn is active.
+   * Runtime attempt and ADE submission are the immutable target identity.
+   */
+  source_attempt_id: string
+  submission_id: string
+  /**
+   * Native turn, when known. Absence is never a wildcard.
    */
   turn_id?: string
 }
@@ -4752,6 +5133,17 @@ export interface Conversation {
   attention: 'idle' | 'running' | 'needs_you' | 'error'
   error: string | null
   /**
+   * The ADE placement of this Conversation; filled from the profile placement record for each reply.
+   */
+  execution_host:
+    | {
+        kind: 'local'
+      }
+    | {
+        host_id: string
+        kind: 'remote'
+      }
+  /**
    * The orchestration group this child runs in, if any. Set on every
    * reply, never stored.
    */
@@ -5229,6 +5621,14 @@ export interface CheckpointRestored {
   verified: boolean
   [k: string]: unknown
 }
+export interface Child {
+  id: string
+  name: string | null
+  session_id: string | null
+  state: ChildState
+  summary: string | null
+  [k: string]: unknown
+}
 /**
  * `orchestration.child.answer`: answer a question or approval a child is
  * waiting on, from the parent's view.
@@ -5692,6 +6092,53 @@ export interface Hook {
    */
   timeout_seconds?: number
 }
+export interface Config2 {
+  model: string | null
+  permission_mode: string
+  setting_sources: string[]
+}
+export interface Connected {
+  history: Item[]
+  /**
+   * Set when a rewind forked `session` from this one after the Agent
+   * opened (F039): a daemon that reattaches may still hold it.
+   */
+  rewound_from?: string | null
+  session: string
+  [k: string]: unknown
+}
+export interface Item {
+  client_id: string | null
+  content?: Content2 | null
+  id: string
+  kind: string
+  native_message?: NativeMessageLocator | null
+  role: string
+  status: string
+  text: string
+  turn: string | null
+  [k: string]: unknown
+}
+export interface PlanStep {
+  status: StepStatus
+  step: string
+  [k: string]: unknown
+}
+/**
+ * Provider-native transcript identity. It is independent of ADE message IDs,
+ * client IDs, and turn IDs, and is valid only in its native session.
+ */
+export interface NativeMessageLocator {
+  message_id: string
+  provider: string
+  session: string
+  [k: string]: unknown
+}
+export interface Content {
+  attachment: Attachment
+  data: string
+  [k: string]: unknown
+}
 /**
  * `context.capture`: capture one selection into a context node.
  */
@@ -5915,8 +6362,10 @@ export interface Message {
   attachments?: Attachment[]
   content?: unknown
   conversation_id: string
+  delivery?: SubmissionDelivery | null
   id: string
   kind: string
+  native_message?: NativeMessageLocator | null
   provider_item_id: string | null
   review_feedback?: unknown
   role: string
@@ -5926,6 +6375,48 @@ export interface Message {
   turn_id: string | null
   [k: string]: unknown
 }
+/**
+ * Durable, request-correlated send evidence. A command acknowledgement is not native acceptance.
+ */
+export interface SubmissionDelivery {
+  admitted: boolean
+  dispatch: SubmissionDispatch
+  error: Failure | null
+  native_outcome: SubmissionNativeOutcome
+  native_turn_id: string | null
+  /**
+   * The saved user Message whose prompt/attachments remain available for manual recovery.
+   */
+  recoverable_message_id: string
+  recovery: Recovery | null
+  request_id: string
+  terminal: SubmissionTerminal | null
+}
+export interface SubmissionTerminal {
+  /**
+   * False until the send receipt proves this native turn belongs to request_id.
+   */
+  correlated: boolean
+  error: Failure | null
+  interrupt_requested: boolean
+  native_terminal?: NativeTerminalEvidence | null
+  /**
+   * Native terminal status, including unknown provider values; not derived from assistant text.
+   */
+  status: string
+  turn_id?: string | null
+}
+/**
+ * Provider-reported terminal evidence, kept separate from ADE's interrupt request.
+ */
+export interface NativeTerminalEvidence {
+  api_error_status?: unknown
+  errors?: unknown
+  is_error?: boolean | null
+  stop_reason?: string | null
+  subtype?: string | null
+  terminal_reason?: string | null
+}
 export interface QueuedPrompt {
   attachments?: Attachment[]
   conversation_id: string
@@ -5934,18 +6425,64 @@ export interface QueuedPrompt {
   text: string
   [k: string]: unknown
 }
+/**
+ * Client-facing state; raw provider params and answers remain private.
+ */
 export interface PendingRequest {
-  answer_attempt: number
-  answer_dispatched: boolean
-  answer_fingerprint?: string | null
   conversation_id: string
   id: string
-  method: string
-  params: unknown
-  rpc_id: unknown
-  run_id: string
-  status: string
-  [k: string]: unknown
+  metadata: RequestMetadata
+  resolution: RequestResolution
+  response_delivery: ResponseDelivery
+  response_operation_id?: string | null
+  /**
+   * ADE-owned revision, separate from source-attempt and native revisions.
+   */
+  revision: number
+  source_attempt_id?: string | null
+}
+/**
+ * Immutable, versioned display schema supplied by the provider adapter.
+ */
+export interface RequestMetadata {
+  /**
+   * Preserve absence when the provider does not state whether this blocks.
+   */
+  blocking: boolean | null
+  created_at_ms?: number | null
+  expires_at_ms?: number | null
+  native_callback_id?: unknown
+  native_item_id?: string | null
+  native_request_id: unknown
+  native_revision?: unknown
+  native_session_id?: string | null
+  native_turn_id?: string | null
+  schema: RequestSchema
+  schema_version: number
+  summary: string
+}
+/**
+ * A native choice. `value` is the provider's ID or decision, not an ADE ID.
+ */
+export interface RequestChoice {
+  duration?: string | null
+  label: string
+  scope?: RequestScope | null
+  value: unknown
+}
+export interface RequestQuestion {
+  allow_other: boolean
+  header?: string | null
+  id: string
+  multiple: boolean
+  options?: QuestionOption[] | null
+  prompt: string
+  secret: boolean
+}
+export interface QuestionOption {
+  description: string
+  label: string
+  value: unknown
 }
 /**
  * `conversation.compact`: ask the provider to compact its context now.
@@ -5995,6 +6532,10 @@ export interface ConversationRewindHistory {
    */
   history_epoch: number
   kept_messages: number
+  /**
+   * Provider-native locator for the prompt the rewind removes; distinct from ADE IDs.
+   */
+  native_message?: NativeMessageLocator | null
   /**
    * After a rewind the provider performed by forking: the native session
    * the Conversation continues in. The earlier one is kept unchanged.
@@ -6187,10 +6728,83 @@ export interface ConversationGetRequest {
    */
   history_epoch?: number
   /**
-   * Page size; the daemon uses 50 when it is absent.
+   * Page size; defaults to 32 and may not exceed 32. ADE sequence/epoch paging is unchanged.
    */
   limit?: number
   op: 'conversation.get'
+}
+export interface ConversationHistory {
+  /**
+   * False for a failed or truncated read, including a single oversized item.
+   */
+  complete: boolean
+  conversation_id: string
+  error: ProviderWorkerFailure | null
+  history_epoch: number
+  messages: Message[]
+  next_native_cursor: string | null
+  /**
+   * Actual encoded retained Message array bytes, not a claimed source/page limit.
+   */
+  retained_bytes: number
+  /**
+   * Null only when an initial read failed before identifying its native source.
+   */
+  snapshot: ProviderHistorySnapshot | null
+  /**
+   * True only for safely matching identified content retained after a temporary refusal.
+   */
+  stale: boolean
+  /**
+   * The `conversation_history` type tag.
+   */
+  type: 'conversation_history'
+}
+export interface ProviderWorkerFailure {
+  code: ProviderWorkerFailureCode
+  message: string
+}
+/**
+ * Native snapshot identity; never an ADE feed cursor or message sequence.
+ */
+export interface ProviderHistorySnapshot {
+  account_id?: string | null
+  consistency: ProviderHistoryConsistency
+  execution_id: string
+  generation: string
+  invalidation_epoch: number
+  lineage?: string | null
+  /**
+   * Native source timestamp in milliseconds since Unix epoch; unknown is absent/null.
+   */
+  modified_at_ms?: number | null
+  provider: string
+  session: string
+  /**
+   * Actual measured native file bytes; unknown is absent/null, never a page cap or synthetic zero.
+   */
+  size_bytes?: number | null
+  source: string
+}
+/**
+ * Read native history through the owning daemon, not the provider SDK or runtime.
+ * The daemon constructs and validates execution/account/source context. Native
+ * cursors below are distinct from conversation.get's ADE message sequence.
+ */
+export interface ConversationHistoryRequest {
+  conversation_id: string
+  /**
+   * ADE's durable invalidation fence, never a native cursor or source generation.
+   */
+  history_epoch?: number | null
+  max_bytes?: number
+  max_items?: number
+  native_cursor?: string | null
+  op: 'conversation.history'
+  /**
+   * Echo a previously returned native snapshot; null/absent starts an identified read.
+   */
+  snapshot?: ProviderHistorySnapshot | null
 }
 /**
  * `conversation.mark_seen`: the person has seen the Conversation, so it is
@@ -6279,6 +6893,10 @@ export interface ConversationRewindRequest {
    * The preview's `state_token` (of `files` or `history`); required for both scopes.
    */
   expected_state?: string | null
+  /**
+   * Exact provider-native locator returned by the matching history preview.
+   */
+  native_message?: NativeMessageLocator | null
   op: 'conversation.rewind'
   operation_id: string
   scope: RewindScope
@@ -7421,6 +8039,7 @@ export interface DraftSendListRequest {
  */
 export interface DraftSendPrepareRequest {
   attachments?: Attachment[]
+  context_nodes?: DraftContextNode[]
   conversation_id: string
   draft_text: string
   op: 'draft.send.prepare'
@@ -9926,6 +10545,7 @@ export interface PendingSend {
  */
 export interface SendIntent {
   attachments: Attachment[]
+  context_nodes: DraftContextNode[]
   conversation_id: string
   draft_revision: number
   draft_text: string
@@ -10961,6 +11581,94 @@ export interface ProviderCapabilitiesRequest {
   provider?: string | null
 }
 /**
+ * Pinned by the daemon/runtime for this query. Querying never implicitly opens/resumes execution.
+ */
+export interface ProviderHistoryContext {
+  account_id: string | null
+  execution_id: string
+  invalidation_epoch: number
+  lineage: string | null
+  provider: string
+}
+export interface ProviderInspect {
+  descriptor: ProviderWorkerInitialize | null
+  provider: string
+  reason: string
+  state: ReadinessState2
+  /**
+   * The `provider_inspect` type tag.
+   */
+  type: 'provider_inspect'
+  version: string | null
+  [k: string]: unknown
+}
+/**
+ * Exact JSON-RPC initialize reply; every field is required and unknown fields are rejected.
+ */
+export interface ProviderWorkerInitialize {
+  capabilities: ProviderWorkerCapability[]
+  compatible_protocol_versions: number[]
+  limits: ProviderWorkerLimits
+  name: string
+  operations: ProviderWorkerOperation[]
+  permission_modes: string[]
+  protocol_version: number
+  requirements: ProviderWorkerRequirements
+}
+/**
+ * A capability advertised by a provider worker. Support and current availability are independent.
+ */
+export interface ProviderWorkerCapability {
+  available: boolean
+  name: ProviderWorkerCapabilityName
+  reason: string
+  support: Support
+}
+export interface ProviderWorkerLimits {
+  max_cleanup_ms: number
+  max_concurrency: number
+  /**
+   * Maximum visible transcript items returned by open, history or child transcript.
+   */
+  max_history_page_items: number
+  max_initialize_ms: number
+  /**
+   * Maximum immediate child values in any input JSON object or array.
+   */
+  max_input_entries: number
+  max_input_frame_bytes: number
+  max_operation_ms: number
+  /**
+   * Maximum immediate child values in any output JSON object or array.
+   */
+  max_output_entries: number
+  max_output_frame_bytes: number
+  max_partial_frame_ms: number
+}
+export interface ProviderWorkerOperation {
+  availability: ProviderWorkerAvailability
+  method: ProviderWorkerMethod
+  reason: string
+  tier: Tier
+}
+/**
+ * Version metadata declared by the packaged SDK worker.
+ */
+export interface ProviderWorkerRequirements {
+  effect_version: string
+  node_engine: string
+  platform_node_version: string
+  sdk_api_version: number
+  sdk_version: string
+}
+/**
+ * Inspect one enabled plugin worker without opening a session or submitting input.
+ */
+export interface ProviderInspectRequest {
+  op: 'provider.inspect'
+  provider: string
+}
+/**
  * `provider.list`: the providers this daemon can launch.
  */
 export interface ProviderListRequest {
@@ -11147,6 +11855,131 @@ export interface ProviderRegistrations {
  */
 export interface ProviderRegistrationsRequest {
   op: 'provider.registrations'
+}
+export interface ProviderWorkerAck {}
+export interface ProviderWorkerAnswerRequest {
+  answer: RequestAnswer
+  id: unknown
+  operation_id: string
+  reason?: string | null
+}
+export interface ProviderWorkerCancelRequest {
+  session: string
+  source_attempt_id: string
+  submission_id: string
+  turn?: string | null
+}
+export interface ProviderWorkerCancelResult {
+  evidence: ProviderCancelEvidence
+  type: ProviderWorkerCancelTag
+}
+export interface ProviderWorkerChildTranscriptRequest {
+  child: string
+  cursor: string | null
+  offset: number
+  session: string
+}
+export interface ProviderWorkerCompactRequest {
+  operation: string
+  session: string
+}
+export interface ProviderWorkerConfigureMcpRequest {
+  servers: {
+    [k: string]: unknown
+  }
+}
+export interface ProviderWorkerErrorResponse {
+  error: ProviderWorkerRpcError
+  id: ProviderWorkerResponseId
+  jsonrpc: ProviderWorkerJsonRpcVersion
+}
+export interface ProviderWorkerRpcError {
+  code: number
+  data: ProviderWorkerFailure
+  message: string
+}
+export interface ProviderWorkerEventNotification {
+  jsonrpc: ProviderWorkerJsonRpcVersion
+  method: ProviderWorkerEventMethod
+  params: Event
+}
+export interface ProviderWorkerHistoryPage {
+  complete: boolean
+  /**
+   * A failed refresh may retain only content with this exact snapshot identity.
+   */
+  error: ProviderWorkerFailure | null
+  /**
+   * Genuine native continuation after each item, when the source supports exact byte-window trimming.
+   *
+   * @maxItems 32
+   */
+  item_cursors?: string[]
+  items: Item[]
+  next_cursor: string | null
+  retained_bytes: number
+  snapshot: ProviderHistorySnapshot
+}
+export interface ProviderWorkerHistoryRequest {
+  context: ProviderHistoryContext
+  cursor: string | null
+  max_bytes: number
+  max_items: number
+  session: string
+  snapshot: ProviderHistorySnapshot | null
+}
+export interface ProviderWorkerOpenRequest {
+  config: Config2
+  resume: string | null
+}
+/**
+ * The request envelope spoken by every provider worker. Parameters remain
+ * provider-specific JSON, but the JSON-RPC envelope and method are generated.
+ */
+export interface ProviderWorkerRequest {
+  id: ProviderWorkerRequestId
+  jsonrpc: ProviderWorkerJsonRpcVersion
+  method: ProviderWorkerMethod
+  params: {
+    [k: string]: unknown
+  }
+}
+export interface ProviderWorkerResultResponse {
+  id: ProviderWorkerResponseId
+  jsonrpc: ProviderWorkerJsonRpcVersion
+  result: unknown
+}
+export interface ProviderWorkerRewindRequest {
+  native_message?: NativeMessageLocator | null
+  operation: string
+  session: string
+  turn: string | null
+}
+export interface ProviderWorkerRewindResult {
+  previous_session?: string | null
+  scope?: RewindScope | null
+  session: string | null
+}
+export interface ProviderWorkerSendRequest {
+  attachments: Content[]
+  message_id: string | null
+  session: string
+  source_attempt_id: string
+  submission: string
+  text: string
+}
+export interface ProviderWorkerSendResult {
+  admitted: boolean
+  dispatch: SubmissionDispatch
+  native_outcome: SubmissionNativeOutcome
+  turn: string | null
+}
+export interface ProviderWorkerSteerRequest {
+  attachments: Content[]
+  message_id: string
+  session: string
+  text: string
+  turn: string
 }
 /**
  * The `provider.list` reply.
@@ -16052,7 +16885,7 @@ export interface WorktreeSwitchRequest {
   target: string
 }
 
-export type Operation = "catalog.get" | "workspace.open" | "workspace.rename" | "workspace.remove" | "workspace.create_worktree" | "workspace.delete_worktree" | "rebind.list" | "workspace.rebind" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "conversation.mark_seen" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "conversation.controls" | "conversation.steer" | "conversation.compact" | "conversation.rewind.preview" | "conversation.rewind" | "conversation.snooze" | "conversation.unsnooze" | "conversation.snooze.list" | "conversation.delete" | "draft.history.list" | "draft.history.restore" | "draft.stash.save" | "draft.stash.list" | "draft.stash.restore" | "draft.stash.drop" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "account.switch.preview" | "account.switch" | "account.switch.list" | "terminal.appearance.get" | "terminal.appearance.set" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "terminal.close" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.branch" | "review.stash" | "review.merge" | "review.fetch" | "review.pull" | "review.push" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "review.feedback.send" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "worktree.carry.preview" | "worktree.carry" | "worktree.resources.apply" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "runtime.recovery" | "runtime.recovery.release" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "notification.preferences.get" | "notification.preferences.set" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.place" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "plugin.command.invoke" | "plugin.host.status" | "plugin.host.restart" | "plugin.dev.enter" | "plugin.dev.leave" | "plugin.generation.list" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.child.answer" | "orchestration.parent.send" | "orchestration.child.messages" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "resources.device.hold" | "resources.device.release" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "remote.host.install" | "retention.preview" | "retention.apply" | "retention.policy.get" | "retention.policy.set" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get" | "browser.partition.list" | "browser.partition.create" | "browser.import.preview" | "browser.import.run" | "browser.import.get" | "browser.context.capture" | "browser.click" | "browser.type" | "browser.evaluate" | "browser.wait" | "browser.screenshot" | "repository.coverage" | "repository.clone" | "repository.publish.preview" | "repository.publish" | "hook.subscription.list" | "hook.delivery.list" | "hook.delivery.inspect" | "hook.delivery.retry" | "hook.delivery.abandon" | "provider.capabilities" | "provider.readiness" | "provider.quota" | "provider.registrations" | "preset.list" | "preset.get" | "preset.save" | "preset.delete" | "adapter.list" | "adapter.put" | "adapter.remove" | "adapter.probe" | "device.list" | "device.screenshot" | "device.boot" | "device.app.install" | "device.app.launch" | "device.input" | "placement.hosts" | "placement.check" | "placement.record" | "placement.resolve" | "placement.list" | "placement.release" | "command.list" | "command.invoke" | "context.capture" | "context.get" | "context.plan" | "window.list" | "window.create" | "window.close" | "window.reopen" | "window.claim" | "window.set_bounds" | "window.show_workspace" | "window.set_view_state" | "layout.get" | "layout.apply" | "tab.close" | "pane.close" | "settings.appearance.observe" | "settings.palettes" | "settings.appearance.reset" | "settings.appearance" | "settings.get" | "settings.set" | "themes.ghostty.export" | "themes.ghostty.validate" | "themes.warp.validate" | "themes.file.validate" | "themes.pack.export" | "themes.validate" | "themes.list" | "themes.inspect" | "themes.install" | "themes.rename" | "themes.export" | "themes.preview" | "themes.draft.preview" | "themes.removal" | "themes.remove"
+export type Operation = "catalog.get" | "workspace.open" | "workspace.rename" | "workspace.remove" | "workspace.create_worktree" | "workspace.delete_worktree" | "rebind.list" | "workspace.rebind" | "repository.rebind" | "conversation.get" | "conversation.history" | "agent.send" | "agent.answer" | "conversation.create" | "conversation.mark_seen" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "conversation.controls" | "conversation.steer" | "conversation.compact" | "conversation.rewind.preview" | "conversation.rewind" | "conversation.snooze" | "conversation.unsnooze" | "conversation.snooze.list" | "conversation.delete" | "draft.history.list" | "draft.history.restore" | "draft.stash.save" | "draft.stash.list" | "draft.stash.restore" | "draft.stash.drop" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "account.switch.preview" | "account.switch" | "account.switch.list" | "terminal.appearance.get" | "terminal.appearance.set" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "terminal.close" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.branch" | "review.stash" | "review.merge" | "review.fetch" | "review.pull" | "review.push" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "review.feedback.send" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "worktree.carry.preview" | "worktree.carry" | "worktree.resources.apply" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "runtime.recovery" | "runtime.recovery.release" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "notification.preferences.get" | "notification.preferences.set" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.place" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "plugin.command.invoke" | "plugin.host.status" | "plugin.host.restart" | "plugin.dev.enter" | "plugin.dev.leave" | "plugin.generation.list" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.child.answer" | "orchestration.parent.send" | "orchestration.child.messages" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "resources.device.hold" | "resources.device.release" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "remote.host.install" | "retention.preview" | "retention.apply" | "retention.policy.get" | "retention.policy.set" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get" | "browser.partition.list" | "browser.partition.create" | "browser.import.preview" | "browser.import.run" | "browser.import.get" | "browser.context.capture" | "browser.click" | "browser.type" | "browser.evaluate" | "browser.wait" | "browser.screenshot" | "repository.coverage" | "repository.clone" | "repository.publish.preview" | "repository.publish" | "hook.subscription.list" | "hook.delivery.list" | "hook.delivery.inspect" | "hook.delivery.retry" | "hook.delivery.abandon" | "provider.capabilities" | "provider.readiness" | "provider.quota" | "provider.inspect" | "provider.registrations" | "preset.list" | "preset.get" | "preset.save" | "preset.delete" | "adapter.list" | "adapter.put" | "adapter.remove" | "adapter.probe" | "device.list" | "device.screenshot" | "device.boot" | "device.app.install" | "device.app.launch" | "device.input" | "placement.hosts" | "placement.check" | "placement.record" | "placement.resolve" | "placement.list" | "placement.release" | "command.list" | "command.invoke" | "context.capture" | "context.get" | "context.plan" | "window.list" | "window.create" | "window.close" | "window.reopen" | "window.claim" | "window.set_bounds" | "window.show_workspace" | "window.set_view_state" | "layout.get" | "layout.apply" | "tab.close" | "pane.close" | "settings.appearance.observe" | "settings.palettes" | "settings.appearance.reset" | "settings.appearance" | "settings.get" | "settings.set" | "themes.ghostty.export" | "themes.ghostty.validate" | "themes.warp.validate" | "themes.file.validate" | "themes.pack.export" | "themes.validate" | "themes.list" | "themes.inspect" | "themes.install" | "themes.rename" | "themes.export" | "themes.preview" | "themes.draft.preview" | "themes.removal" | "themes.remove"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
@@ -16065,6 +16898,7 @@ export interface RequestByOperation {
   "workspace.rebind": WorkspaceRebindRequest
   "repository.rebind": RepositoryRebindRequest
   "conversation.get": ConversationGetRequest
+  "conversation.history": ConversationHistoryRequest
   "agent.send": AgentSendRequest
   "agent.answer": AgentAnswerRequest
   "conversation.create": ConversationCreateRequest
@@ -16311,6 +17145,7 @@ export interface RequestByOperation {
   "provider.capabilities": ProviderCapabilitiesRequest
   "provider.readiness": ProviderReadinessRequest
   "provider.quota": ProviderQuotaRequest
+  "provider.inspect": ProviderInspectRequest
   "provider.registrations": ProviderRegistrationsRequest
   "preset.list": PresetListRequest
   "preset.get": PresetGetRequest
@@ -16383,8 +17218,9 @@ export interface ResponseByOperation {
   "workspace.rebind": WorkspaceAck
   "repository.rebind": RepositoryAck
   "conversation.get": ConversationSnapshot
+  "conversation.history": ConversationHistory
   "agent.send": Ack
-  "agent.answer": Ack
+  "agent.answer": AgentAnswerOutcome
   "conversation.create": ConversationCreated
   "conversation.mark_seen": Ack
   "draft.get": DraftReply
@@ -16418,7 +17254,7 @@ export interface ResponseByOperation {
   "draft.stash.list": DraftStashList
   "draft.stash.restore": DraftRestored
   "draft.stash.drop": DraftStashDropped
-  "agent.cancel": Ack
+  "agent.cancel": AgentCancelOutcome
   "agent.resume": Ack
   "agent.disconnect": Ack
   "agent.child_transcript": ChildTranscriptPage
@@ -16629,6 +17465,7 @@ export interface ResponseByOperation {
   "provider.capabilities": ProviderCapabilities
   "provider.readiness": ProviderReadiness
   "provider.quota": ProviderQuota
+  "provider.inspect": ProviderInspect
   "provider.registrations": ProviderRegistrations
   "preset.list": PresetList
   "preset.get": PresetView

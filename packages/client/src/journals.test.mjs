@@ -6,7 +6,9 @@ import assert from 'node:assert/strict'
 import fs, { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { syncBuiltinESMExports } from 'node:module'
 import { tmpdir } from 'node:os'
+import { createServer } from 'node:net'
 import { join } from 'node:path'
+import { ContractError } from '@ade/contracts'
 import { test } from 'node:test'
 import {
   deliverHeldSends,
@@ -27,6 +29,180 @@ async function scratch(t) {
   return directory
 }
 
+async function fakeSendDaemon(t, socketPath) {
+  let draft = { text: '', revision: 0, attachments: [], context_nodes: [] }
+  let intent = null
+  let outcome = 'prepared'
+  let agentSendCalls = 0
+  let effects = 0
+  let stashes = []
+  const effectRequests = new Set()
+  const server = createServer((socket) => {
+    let buffered = ''
+    let greeted = false
+    socket.on('data', (chunk) => {
+      buffered += chunk.toString('utf8')
+      for (;;) {
+        const end = buffered.indexOf('\n')
+        if (end < 0) return
+        const line = buffered.slice(0, end)
+        buffered = buffered.slice(end + 1)
+        const request = JSON.parse(line)
+        if (!greeted) {
+          greeted = true
+          socket.write(
+            JSON.stringify({
+              type: 'hello',
+              application_protocol: 'ade-application-v1',
+              session_protocol: 'ade-sessions-v1',
+            }) + '\n',
+          )
+          continue
+        }
+        let response
+        switch (request.op) {
+          case 'draft.get':
+            response = { type: 'draft', draft: structuredClone(draft) }
+            break
+          case 'draft.send.get':
+            response = { type: 'send_intent', intent: intent && structuredClone(intent), restored_from_backup: false }
+            break
+          case 'draft.send.list':
+            response = {
+              type: 'pending_sends',
+              next_cursor: null,
+              restored_from_backup: false,
+              sends: intent ? [{ intent: structuredClone(intent), outcome }] : [],
+            }
+            break
+          case 'draft.save':
+            if (request.expected_revision !== undefined && request.expected_revision !== draft.revision) {
+              response = { type: 'error', code: 'conflict', message: 'Draft revision changed' }
+              break
+            }
+            draft = {
+              text: request.text,
+              revision: request.revision,
+              attachments: request.attachments ?? [],
+              context_nodes: request.context_nodes ?? [],
+            }
+            response = { type: 'draft', draft: structuredClone(draft) }
+            break
+          case 'draft.stash.save': {
+            const existing = stashes.find((stash) => stash.name === request.name)
+            const stash = {
+              attachments: request.attachments ?? [],
+              context_nodes: request.context_nodes ?? [],
+              conversation_id: request.conversation_id,
+              name: request.name,
+              revision: existing ? existing.revision + 1 : 1,
+              saved_at: Date.now(),
+              text: request.text,
+              window_id: request.window_id,
+            }
+            if (existing) stashes = stashes.map((item) => (item.name === request.name ? stash : item))
+            else stashes.unshift(stash)
+            response = {
+              type: 'draft_stash',
+              outcome: existing ? 'replaced' : 'created',
+              stash: structuredClone(stash),
+            }
+            break
+          }
+          case 'draft.stash.list':
+            response = { type: 'draft_stashes', stashes: structuredClone(stashes) }
+            break
+          case 'draft.stash.restore': {
+            const selected = stashes.find(
+              (stash) => stash.name === request.name && stash.revision === request.stash_revision,
+            )
+            if (!selected || request.expected_revision !== draft.revision) {
+              response = {
+                type: 'draft_restore',
+                context_nodes: [],
+                displaced_entry_id: null,
+                draft: structuredClone(draft),
+                outcome: 'conflict',
+              }
+              break
+            }
+            draft = {
+              text: selected.text,
+              revision: request.revision,
+              attachments: selected.attachments,
+              context_nodes: selected.context_nodes,
+            }
+            response = {
+              type: 'draft_restore',
+              context_nodes: structuredClone(draft.context_nodes),
+              displaced_entry_id: null,
+              draft: structuredClone(draft),
+              outcome: 'restored',
+            }
+            break
+          }
+          case 'draft.send.prepare':
+            intent = {
+              attachments: request.attachments ?? [],
+              context_nodes: request.context_nodes ?? [],
+              conversation_id: request.conversation_id,
+              draft_revision: request.revision,
+              draft_text: request.draft_text,
+              request_id: request.request_id,
+              state: 'pending',
+              text: request.text,
+              window_id: request.window_id,
+            }
+            outcome = 'prepared'
+            response = { type: 'send_intent', intent: structuredClone(intent) }
+            break
+          case 'agent.send':
+            agentSendCalls++
+            if (!effectRequests.has(request.request_id)) {
+              effectRequests.add(request.request_id)
+              effects++
+            }
+            socket.destroy()
+            return
+          case 'draft.send.acknowledge':
+            draft = { ...draft, text: '', revision: draft.revision + 1 }
+            intent = null
+            response = {
+              type: 'send_acknowledged',
+              conversation_id: request.conversation_id,
+              request_id: request.request_id,
+              resolution: 'completed',
+              draft: structuredClone(draft),
+            }
+            break
+          default:
+            response = { type: 'error', code: 'unsupported', message: 'Unsupported fixture operation' }
+        }
+        socket.end(JSON.stringify(response) + '\n')
+      }
+    })
+  })
+  await new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(socketPath, resolve)
+  })
+  t.after(() => new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve()))))
+  return {
+    endpoint: socketPath,
+    setDraft: (next) => {
+      draft = structuredClone(next)
+    },
+    omitIntentContextNodes: () => {
+      if (intent) delete intent.context_nodes
+    },
+    accept: () => {
+      outcome = 'accepted'
+      if (intent) intent.state = 'pending'
+    },
+    counts: () => ({ agentSendCalls, effects }),
+  }
+}
+
 const record = {
   profileId: 'profile-a',
   windowId: 'window-a',
@@ -37,6 +213,7 @@ const record = {
   draftText: 'hello',
   draftRevision: 1,
   attachments: [],
+  contextNodes: [],
   dispatchStarted: false,
 }
 
@@ -70,6 +247,15 @@ test('the send journal keeps a record across reopening and drops it only for its
   assert.equal(await reopened.send.remove({ ...record, requestId: 'request-b' }), false)
   assert.equal(await reopened.send.remove(record), true)
   assert.deepEqual(await (await openClientJournals(directory)).send.list(), [])
+})
+
+test('a send journal record without its admitted context snapshot is refused without replacing the valid record', async (t) => {
+  const directory = await scratch(t)
+  const { send } = await openClientJournals(directory)
+  await send.upsert(record)
+  const { contextNodes: _contextNodes, ...missingContext } = record
+  await assert.rejects(send.upsert(missingContext), /Invalid send recovery record/)
+  assert.deepEqual(await send.list(), [record])
 })
 
 test('the Git journal holds one operation per workspace, with any CLI request ID', async (t) => {
@@ -225,7 +411,7 @@ function entry(directory, fields = {}) {
     profileId: 'profile-a',
     windowId: 'window-a',
     conversationId: 'conversation-a',
-    draft: { text: 'draft', revision: 1, attachments: [] },
+    draft: { text: 'draft', revision: 1, attachments: [], context_nodes: [] },
     timer: null,
     pending: Promise.resolve(),
     savedRevision: 1,
@@ -242,11 +428,134 @@ const preparing = {
   draftText: 'Fix the build',
   revision: 1,
   attachments: [],
+  contextNodes: [],
   state: 'pending',
   preparing: true,
   admitted: false,
   inFlight: null,
 }
+test('separate views share one owner send intent, keep their drafts, and reconcile without redispatch after restart', async (t) => {
+  const directory = await scratch(t)
+  const endpoint = join(directory, 'daemon.sock')
+  const daemon = await fakeSendDaemon(t, endpoint)
+  const journal = (await openClientJournals(directory)).send
+  const owner = { endpoint, profileId: 'profile-a', windowId: 'stable-owner', conversationId: 'conversation-a' }
+  const pipeline = new SendPipeline(journal)
+  const [viewA, viewB] = await Promise.all([
+    pipeline.open(owner, { viewId: 'view-a' }),
+    pipeline.open(owner, { viewId: 'view-b' }),
+  ])
+  const viewAContext = [{ id: 'send-context-a', kind: 'reference', data: { label: 'View A context' } }]
+  viewA.draft = { text: 'View A draft', revision: 1, attachments: [], context_nodes: viewAContext }
+  const viewBContext = [{ id: 'send-context-b', kind: 'reference', data: { label: 'View B context' } }]
+  viewB.draft = { text: 'Keep this view B draft', revision: 1, attachments: [], context_nodes: viewBContext }
+
+  const firstSend = pipeline.send(viewA, 'request-cross-view', 'Run this once')
+  assert.deepEqual(await pipeline.send(viewB, 'request-cross-view', 'Run this once'), {
+    type: 'send_pending',
+    request_id: 'request-cross-view',
+    text: 'Run this once',
+  })
+  await assert.rejects(pipeline.send(viewB, 'request-successor', 'A different prompt'), /Resolve the previous prompt/)
+  assert.strictEqual(viewA.send, viewB.send)
+  assert.equal(viewB.draft.text, 'Keep this view B draft')
+  assert.deepEqual(viewB.draft.context_nodes, viewBContext)
+
+  assert.deepEqual(await firstSend, {
+    type: 'send_pending',
+    request_id: 'request-cross-view',
+    text: 'Run this once',
+    message: 'Prompt delivery is unconfirmed. Retry will use the same request ID.',
+  })
+  assert.deepEqual(daemon.counts(), { agentSendCalls: 1, effects: 1 })
+  assert.deepEqual(await journal.list(), [])
+
+  daemon.setDraft({
+    text: 'A later draft',
+    revision: 2,
+    attachments: [],
+    context_nodes: [{ id: 'later-context', kind: 'reference', data: { label: 'Do not substitute this context' } }],
+  })
+  const restarted = new SendPipeline(journal)
+  const recovered = await restarted.open(owner, { viewId: 'reopened-view-a' })
+  assert.equal(recovered.send?.requestId, 'request-cross-view')
+  assert.deepEqual(recovered.send?.contextNodes, viewAContext)
+  daemon.accept()
+  assert.deepEqual(await restarted.retry(recovered, 'request-cross-view'), {
+    type: 'ack',
+    request_id: 'request-cross-view',
+    reconciled: true,
+  })
+  assert.deepEqual(daemon.counts(), { agentSendCalls: 1, effects: 1 })
+  assert.equal(recovered.send, null)
+})
+
+test('empty admitted context is preserved and a missing daemon snapshot is refused rather than replaced from the current draft', async (t) => {
+  const directory = await scratch(t)
+  const endpoint = join(directory, 'daemon.sock')
+  const daemon = await fakeSendDaemon(t, endpoint)
+  const journal = (await openClientJournals(directory)).send
+  const owner = { endpoint, profileId: 'profile-a', windowId: 'stable-owner', conversationId: 'conversation-a' }
+  const pipeline = new SendPipeline(journal)
+  const view = await pipeline.open(owner, { viewId: 'view-a' })
+  view.draft = { text: 'Draft captured at send', revision: 1, attachments: [], context_nodes: [] }
+
+  assert.equal((await pipeline.send(view, 'request-empty-context', 'Run this once')).type, 'send_pending')
+  assert.deepEqual(daemon.counts(), { agentSendCalls: 1, effects: 1 })
+
+  const laterContext = [{ id: 'later-context', kind: 'reference', data: { label: 'Current draft only' } }]
+  daemon.setDraft({ text: 'Later draft', revision: 2, attachments: [], context_nodes: laterContext })
+  const recovered = await new SendPipeline(journal).open(owner, { viewId: 'reopened-view' })
+  assert.deepEqual(recovered.send?.contextNodes, [])
+  assert.deepEqual(recovered.draft.context_nodes, laterContext)
+
+  daemon.omitIntentContextNodes()
+  await assert.rejects(
+    new SendPipeline(journal).open(owner, { viewId: 'invalid-recovery' }),
+    (error) => error instanceof ContractError,
+  )
+  assert.deepEqual(daemon.counts(), { agentSendCalls: 1, effects: 1 })
+})
+test('stale-view draft text and context remain recoverable across restart and restore', async (t) => {
+  const directory = await scratch(t)
+  const endpoint = join(directory, 'daemon.sock')
+  await fakeSendDaemon(t, endpoint)
+  const journal = (await openClientJournals(directory)).send
+  const owner = { endpoint, profileId: 'profile-a', windowId: 'stable-owner', conversationId: 'conversation-a' }
+  const pipeline = new SendPipeline(journal)
+  const [viewA, viewB] = await Promise.all([
+    pipeline.open(owner, { viewId: 'view-a' }),
+    pipeline.open(owner, { viewId: 'view-b' }),
+  ])
+  const contextA = [{ id: 'context-a', kind: 'reference', data: { label: 'Saved view context' } }]
+  const contextB = [{ id: 'context-b', kind: 'reference', data: { label: 'Local view context' } }]
+  viewA.draft = { text: 'Saved by view A', revision: 1, attachments: [], context_nodes: contextA }
+  viewB.draft = { text: 'Keep this local draft', revision: 1, attachments: [], context_nodes: contextB }
+
+  await pipeline.flush(viewA)
+  await pipeline.flush(viewB)
+  assert.equal(viewB.savedRevision, 0)
+  assert.equal(viewB.draft.text, 'Keep this local draft')
+  assert.match(viewB.error, /saved for recovery/)
+
+  const restarted = new SendPipeline(journal)
+  const recoveryView = await restarted.open(owner, { viewId: 'view-b-restarted' })
+  assert.equal(recoveryView.draft.text, 'Saved by view A')
+  const stashes = await restarted.listDraftStashes(recoveryView)
+  const local = stashes.find((stash) => stash.text === 'Keep this local draft')
+  assert.ok(local)
+  assert.deepEqual(local.context_nodes, contextB)
+  const restored = await restarted.restoreDraftStash(recoveryView, local.name, local.revision)
+  assert.equal(restored.outcome, 'restored')
+  assert.equal(recoveryView.draft.text, 'Keep this local draft')
+  assert.deepEqual(recoveryView.draft.context_nodes, contextB)
+  assert.equal(recoveryView.savedRevision, 2)
+  assert.ok(
+    (await restarted.listDraftStashes(recoveryView)).some(
+      (stash) => stash.text === 'Saved by view A' && JSON.stringify(stash.context_nodes) === JSON.stringify(contextA),
+    ),
+  )
+})
 
 test('the send pipeline holds one prompt per window and Conversation, and a retry names it', async (t) => {
   const directory = await scratch(t)

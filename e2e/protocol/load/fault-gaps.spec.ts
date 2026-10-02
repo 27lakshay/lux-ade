@@ -13,7 +13,16 @@ import { chmod, mkdir } from 'node:fs/promises'
 import { createServer, type Server } from 'node:net'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { expect, primaryShell, prompts, type ScratchProfile, send, startConversation, test } from '../fixtures'
+import {
+  cancellationIntent,
+  expect,
+  primaryShell,
+  prompts,
+  type ScratchProfile,
+  send,
+  startConversation,
+  test,
+} from '../fixtures'
 import { ownerStorageProfile, fixedBrowserProfile } from '../fixtures/browser-owner'
 import { rawReply } from '../fixtures/raw-reply'
 import { socketReply } from '../fixtures/sockets'
@@ -70,7 +79,7 @@ test('fault class 2: a cancel sent as a snooze falls due stops only the running 
   await profile.call('conversation.snooze', { conversation_id: conversationId, until })
   await expect.poll(() => Date.now(), { timeout: 5_000 }).toBeGreaterThanOrEqual(until)
   // The cancel and the wake are processed at the same moment.
-  await profile.call('agent.cancel', { conversation_id: conversationId, turn_id: turn })
+  await profile.call('agent.cancel', { ...(await cancellationIntent(profile, conversationId, turn)), turn_id: turn })
 
   await expect
     .poll(async () => (await conversation(profile, conversationId)).status, { timeout: 20_000 })

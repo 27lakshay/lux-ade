@@ -1,6 +1,6 @@
-// Electron main's wiring for the SDK's send pipeline (`@ade/client/journals`): one
-// draft entry per window and Conversation, and the hooks that tie a send to the
-// window's profile. The journal, the durable draft owner ID (`ClientJournals.ownerId`)
+// Electron main's wiring for the SDK's send pipeline (@ade/client/journals): one in-memory
+// draft entry per renderer view and Conversation, and the hooks that tie a send to the
+// window's profile. The journal, the durable draft owner ID (ClientJournals.ownerId)
 // and every delivery rule live in the SDK.
 import { BrowserWindow } from 'electron'
 import { stat, writeFile } from 'node:fs/promises'
@@ -30,18 +30,18 @@ export async function daemon<O extends DailyUseOperation>(
   return decodeDailyUseResponse(op, await requestDaemon(endpoint, op, fields as Record<string, unknown>, options))
 }
 
-/** A window's draft for one Conversation; `senderId` names the window's web contents. */
-export type DraftEntry = SendEntry & { senderId: number }
+/** A renderer view's local draft cache entry; senderId only routes main-process errors. */
+export type DraftEntry = SendEntry & { senderId: number; viewId: string }
 
 export const windowIds = new Map<number, string>()
 export const drafts = new Map<string, DraftEntry>()
-export const draftKey = (senderId: number, endpoint: string, conversationId: string): string =>
-  `${senderId}:${endpoint}:${conversationId}`
+export const draftKey = (senderId: number, endpoint: string, conversationId: string, viewId: string): string =>
+  senderId + ':' + viewId + ':' + endpoint + ':' + conversationId
 
 function publishDraftError(entry: DraftEntry, message: string): void {
   const window = BrowserWindow.getAllWindows().find((item) => item.webContents.id === entry.senderId)
   if (window && !window.isDestroyed())
-    emit(window.webContents, 'ade:draft-error', { conversationId: entry.conversationId, message })
+    emit(window.webContents, 'ade:draft-error', { conversationId: entry.conversationId, viewId: entry.viewId, message })
 }
 
 async function e2ePauseAfterSendJournal(): Promise<void> {
@@ -88,16 +88,21 @@ export const flushDraft = (entry: DraftEntry): Promise<void> => pipeline().flush
 export const reconcileAcceptedSend = (entry: DraftEntry): Promise<void> => pipeline().reconcileAccepted(entry)
 export const unsafePending = (entries: DraftEntry[]): Promise<boolean> => pipeline().unsafePending(entries)
 
-/** The window's entry for a Conversation, loaded once from the daemon and the journal. */
-export async function loadDraft(senderId: number, endpoint: string, conversationId: string): Promise<DraftEntry> {
-  const key = draftKey(senderId, endpoint, conversationId)
+/** The view's entry for a Conversation, loaded once from the daemon and the journal. */
+export async function loadDraft(
+  senderId: number,
+  endpoint: string,
+  conversationId: string,
+  viewId: string,
+): Promise<DraftEntry> {
+  const key = draftKey(senderId, endpoint, conversationId, viewId)
   const cached = drafts.get(key)
   if (cached) return cached
   const windowId = windowIds.get(senderId)
   if (!windowId) throw new Error('Window is unavailable')
   const entry = await pipeline().open(
     { endpoint, profileId: journalProfileId(endpoint), windowId, conversationId },
-    { senderId },
+    { senderId, viewId },
   )
   const concurrent = drafts.get(key)
   if (concurrent) return concurrent

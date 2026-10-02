@@ -75,4 +75,10 @@ Marketplace distribution, hostile plugin sandboxing, localization and mandatory 
 
 The [detailed theming specification](../01-foundation/theming.md) defines shared appearance behavior and TH01–TH32 acceptance under D20. The owning feature IDs remain unchanged; appearance acceptance is unverified until the relevant detailed criteria pass.
 
+The [TypeScript provider SDK and conversation UI specification](../02-providers/provider-sdk-conversation-ui.md)
+refines the conversation-facing extension contract: full provider worker parity,
+namespaced typed operations, separate backend/UI contributions, readable fallbacks
+and independent installed-provider proof. Its production UI loader and safe-mode
+acceptance remain work to verify, not guarantees supplied by manifest declarations.
+
 This specification records required behavior, not implemented completeness. The shared v1 register contains all 140 original catalogue dispositions, scope corrections, delivery dependencies and remaining decisions. No source file layout or package candidate overrides the agreed product behavior.

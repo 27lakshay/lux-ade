@@ -75,6 +75,207 @@ pub fn approval_result(
     }
 }
 
+use ade_core::requests::{
+    QuestionOption, RequestChoice, RequestMetadata, RequestQuestion, RequestSchema, RequestScope,
+};
+
+fn request_metadata(id: &Value, method: &str, params: &Value) -> RequestMetadata {
+    let unsupported = |reason: &str| RequestSchema::Unsupported {
+        reason: reason.into(),
+    };
+    let schema = match method {
+        "item/commandExecution/requestApproval" | "item/fileChange/requestApproval" => {
+            match params["availableDecisions"].as_array() {
+                Some(decisions) if !decisions.is_empty() => RequestSchema::Choices {
+                    choices: decisions
+                        .iter()
+                        .map(|value| {
+                            let (label, scope) = match value.as_str() {
+                                Some("accept") => ("Allow once".into(), Some(RequestScope::Once)),
+                                Some("acceptForSession") => {
+                                    ("Allow for session".into(), Some(RequestScope::Session))
+                                }
+                                Some("decline") => ("Decline".into(), None),
+                                Some("cancel") => ("Cancel turn".into(), None),
+                                Some(other) => (other.to_owned(), None),
+                                None => {
+                                    let name = value
+                                        .as_object()
+                                        .and_then(|object| {
+                                            (object.len() == 1)
+                                                .then(|| object.keys().next().unwrap().as_str())
+                                        })
+                                        .unwrap_or("Native decision");
+                                    let scope = (name == "acceptWithExecpolicyAmendment")
+                                        .then_some(RequestScope::Persistent);
+                                    let label = match name {
+                                        "acceptWithExecpolicyAmendment" => {
+                                            "Allow with execution-policy amendment".into()
+                                        }
+                                        _ => name.into(),
+                                    };
+                                    (label, scope)
+                                }
+                            };
+                            RequestChoice {
+                                value: value.clone(),
+                                label,
+                                scope,
+                                duration: None,
+                            }
+                        })
+                        .collect(),
+                },
+                _ => unsupported("Codex did not provide its available native decisions"),
+            }
+        }
+        "item/permissions/requestApproval" => {
+            if params["permissions"].is_object() {
+                RequestSchema::Permissions {
+                    requested: params["permissions"].clone(),
+                    scopes: vec![RequestScope::Turn, RequestScope::Session],
+                    supports_strict_auto_review: true,
+                }
+            } else {
+                unsupported("Codex permission profile is malformed")
+            }
+        }
+        "item/tool/requestUserInput" => {
+            let parsed = (|| -> Result<Vec<RequestQuestion>> {
+                let questions = params["questions"]
+                    .as_array()
+                    .context("Codex user-input questions are missing")?;
+                ensure!(
+                    !questions.is_empty(),
+                    "Codex user-input questions are empty"
+                );
+                questions
+                    .iter()
+                    .map(|question| {
+                        let id = question["id"]
+                            .as_str()
+                            .filter(|value| !value.is_empty())
+                            .context("Codex question ID is missing")?;
+                        let prompt = question["question"]
+                            .as_str()
+                            .context("Codex question prompt is missing")?;
+                        let options = match question.get("options") {
+                            None | Some(Value::Null) => None,
+                            Some(Value::Array(options)) => Some(
+                                options
+                                    .iter()
+                                    .map(|option| {
+                                        let label = option["label"]
+                                            .as_str()
+                                            .context("Codex option label is missing")?;
+                                        let description =
+                                            option["description"].as_str().unwrap_or("");
+                                        Ok(QuestionOption {
+                                            value: Value::String(label.into()),
+                                            label: label.into(),
+                                            description: description.into(),
+                                        })
+                                    })
+                                    .collect::<Result<Vec<_>>>()?,
+                            ),
+                            _ => bail!("Codex question options are malformed"),
+                        };
+                        Ok(RequestQuestion {
+                            id: id.into(),
+                            header: question["header"].as_str().map(str::to_owned),
+                            prompt: prompt.into(),
+                            secret: question["isSecret"] == true,
+                            allow_other: question["isOther"] == true,
+                            multiple: question["multiSelect"] == true,
+                            options,
+                        })
+                    })
+                    .collect()
+            })();
+            match parsed {
+                Ok(questions) => RequestSchema::Questions {
+                    questions,
+                    decline: None,
+                },
+                Err(_) => unsupported("Codex user-input request has an unsupported schema"),
+            }
+        }
+        _ => unsupported("This Codex request has no supported answer schema"),
+    };
+    let summary = match method {
+        "item/commandExecution/requestApproval" => params["command"]
+            .as_str()
+            .unwrap_or("Codex requests command approval")
+            .to_owned(),
+        "item/fileChange/requestApproval" => params["reason"]
+            .as_str()
+            .unwrap_or("Codex requests file-change approval")
+            .to_owned(),
+        "item/permissions/requestApproval" => params["reason"]
+            .as_str()
+            .unwrap_or("Codex requests a permission grant")
+            .to_owned(),
+        "item/tool/requestUserInput" => "Codex asks for input".into(),
+        _ => "Codex native request requires attention".into(),
+    };
+    RequestMetadata {
+        schema_version: 1,
+        summary,
+        schema,
+        blocking: params["isBlocking"].as_bool(),
+        created_at_ms: params["startedAtMs"].as_i64(),
+        expires_at_ms: None,
+        native_revision: params.get("revision").cloned(),
+        native_session_id: params["threadId"].as_str().map(str::to_owned),
+        native_turn_id: params["turnId"].as_str().map(str::to_owned),
+        native_request_id: id.clone(),
+        native_item_id: params["itemId"].as_str().map(str::to_owned),
+        native_callback_id: None,
+    }
+}
+pub(super) fn typed_approval_result(
+    method: &str,
+    answer: &ade_core::requests::RequestAnswer,
+) -> Result<Value> {
+    use ade_core::requests::{RequestAnswer, RequestScope};
+    match (method, answer) {
+        (
+            "item/commandExecution/requestApproval" | "item/fileChange/requestApproval",
+            RequestAnswer::Choice { value },
+        ) => Ok(json!({"decision":value})),
+        (
+            "item/permissions/requestApproval",
+            RequestAnswer::Permissions {
+                permissions,
+                scope,
+                strict_auto_review,
+            },
+        ) => {
+            let scope = match scope {
+                RequestScope::Turn => "turn",
+                RequestScope::Session => "session",
+                _ => bail!("Codex permission scope is not supported"),
+            };
+            let mut result = serde_json::Map::from_iter([
+                ("permissions".into(), permissions.clone()),
+                ("scope".into(), Value::String(scope.into())),
+            ]);
+            if let Some(value) = strict_auto_review {
+                result.insert("strictAutoReview".into(), Value::Bool(*value));
+            }
+            Ok(Value::Object(result))
+        }
+        ("item/tool/requestUserInput", RequestAnswer::Questions { answers }) => {
+            let answers = answers
+                .iter()
+                .map(|(id, values)| (id.clone(), json!({"answers":values})))
+                .collect::<serde_json::Map<_, _>>();
+            Ok(json!({"answers":answers}))
+        }
+        _ => bail!("Answer does not match this Codex native request"),
+    }
+}
+
 use crate::{
     model::PendingRequest,
     provider::{Config, Connected, Event, Item, Provider},
@@ -85,13 +286,17 @@ use std::{
     process::Command,
     sync::{Arc, Mutex, mpsc},
 };
+mod history;
+mod worker;
+pub use worker::{public_descriptor, run_native_client};
+
 /// Whether a launch runs on the shared app-server transport, which Bun
 /// serves. A managed-account launch, and any launch with
 /// `ADE_CODEX_TRANSPORT=stdio`, runs the Codex CLI directly.
 pub fn shared_transport(managed: bool) -> bool {
     !managed && std::env::var("ADE_CODEX_TRANSPORT").as_deref() != Ok("stdio")
 }
-pub struct Adapter {
+struct NativeClient {
     rpc: Arc<Rpc>,
     cwd: String,
     socket_directory: Option<std::path::PathBuf>,
@@ -99,9 +304,72 @@ pub struct Adapter {
     identity: Option<CodexIdentity>,
     /// The `mcp_servers` table from the profile MCP catalog (F131).
     mcp_servers: Mutex<Option<Value>>,
+    initialized: Mutex<bool>,
 }
-impl Adapter {
-    pub fn spawn(
+impl NativeClient {
+    fn initialize_native(&self) -> Result<()> {
+        let mut initialized = self.initialized.lock().unwrap();
+        if !*initialized {
+            self.rpc.request("initialize", json!({
+                "clientInfo":{"name":"ade","title":"lux-ade","version":"0.3.0"},
+                "capabilities":if self.identity.is_some() {json!({"experimentalApi":true})} else {json!({})}
+            }))?;
+            self.rpc.notify("initialized", json!({}))?;
+            *initialized = true;
+        }
+        Ok(())
+    }
+
+    fn verify_identity(&self) -> Result<()> {
+        if let Some(expected) = &self.identity {
+            let config = self
+                .rpc
+                .request("config/read", json!({"includeLayers":false}))?;
+            ensure!(
+                crate::provider::codex_probe::effective_config_supported(&config),
+                "Codex effective configuration may override file credentials"
+            );
+            let account = self
+                .rpc
+                .request("account/read", json!({"refreshToken":false}))?;
+            ensure!(
+                crate::provider::codex_probe::readback_identity(&account)? == *expected,
+                "Codex account identity changed for the pinned execution"
+            );
+        }
+        Ok(())
+    }
+
+    fn rewind_message(
+        &self,
+        session: &str,
+        locator: &ade_core::provider::NativeMessageLocator,
+        operation: &str,
+    ) -> Result<Option<String>> {
+        ensure!(
+            locator.provider == "codex" && locator.session == session,
+            "Codex rewind locator belongs to a different provider session"
+        );
+        ensure!(
+            !locator.message_id.is_empty(),
+            "Codex rewind message ID is empty"
+        );
+        let read = self.rpc.request(
+            "thread/read",
+            json!({"threadId":session,"includeTurns":true}),
+        )?;
+        ensure!(
+            read["thread"]["id"].as_str() == Some(session),
+            "Codex returned a different thread; nothing was rewound"
+        );
+        let turns = read["thread"]["turns"]
+            .as_array()
+            .context("Codex omitted the thread's turns; nothing was rewound")?;
+        let turn = turn_for_user_message(turns, &locator.message_id)?;
+        Provider::rewind(self, session, turn, operation)
+    }
+
+    fn spawn(
         cwd: &str,
         account: Option<&AccountExecution>,
         events: mpsc::SyncSender<Event>,
@@ -149,7 +417,13 @@ impl Adapter {
         if let Some(directory) = &socket_directory {
             command.env("ADE_CODEX_SOCKET_DIR", directory);
         }
-        let rpc = match Rpc::spawn(command, events, decode) {
+        let rpc = match Rpc::spawn_with_limit(
+            command,
+            events,
+            crate::rpc::Framing::Bare,
+            decode,
+            1024 * 1024,
+        ) {
             Ok(rpc) => rpc,
             Err(error) => {
                 if let Some(directory) = &socket_directory {
@@ -165,10 +439,11 @@ impl Adapter {
             session: Mutex::new(None),
             identity: account.and_then(|value| value.codex_identity.clone()),
             mcp_servers: Mutex::new(None),
+            initialized: Mutex::new(false),
         }))
     }
 }
-impl Provider for Adapter {
+impl Provider for NativeClient {
     fn child_transcript(
         &self,
         _session: &str,
@@ -200,28 +475,8 @@ impl Provider for Adapter {
         Ok(())
     }
     fn open(&self, resume: Option<&str>, config: &Config) -> Result<Connected> {
-        self.rpc.request(
-            "initialize",
-            json!({"clientInfo":{"name":"ade","title":"lux-ade","version":"0.3.0"},
-                "capabilities": if self.identity.is_some() { json!({"experimentalApi":true}) } else { json!({}) }}),
-        )?;
-        self.rpc.notify("initialized", json!({}))?;
-        if let Some(expected) = &self.identity {
-            let config = self
-                .rpc
-                .request("config/read", json!({"includeLayers":false}))?;
-            ensure!(
-                crate::provider::codex_probe::effective_config_supported(&config),
-                "Codex effective configuration may override file credentials"
-            );
-            let account = self
-                .rpc
-                .request("account/read", json!({"refreshToken":false}))?;
-            ensure!(
-                crate::provider::codex_probe::readback_identity(&account)? == *expected,
-                "Codex account identity changed before opening the session"
-            );
-        }
+        self.initialize_native()?;
+        self.verify_identity()?;
         let mut params = json!({"cwd":self.cwd,"approvalPolicy":"on-request","approvalsReviewer":"user","sandbox":if config.permission_mode=="read-only" {"read-only"}else{"workspace-write"}});
         if let Some(model) = &config.model {
             params["model"] = json!(model);
@@ -231,6 +486,8 @@ impl Provider for Adapter {
         }
         let method = if let Some(session) = resume {
             params["threadId"] = json!(session);
+            // Native 0.159 metadata-only resume; history loads through the query facade.
+            params["excludeTurns"] = json!(true);
             "thread/resume"
         } else {
             "thread/start"
@@ -245,14 +502,22 @@ impl Provider for Adapter {
             "Codex resumed another session; original identity retained"
         );
         let mut history = Vec::new();
+        let mut retained_bytes = 2;
         for turn in result["thread"]["turns"].as_array().into_iter().flatten() {
             for value in turn["items"].as_array().into_iter().flatten() {
                 if let Some(mut item) =
                     item(value, turn["id"].as_str(), turn["status"] == "completed")
                 {
+                    attach_native_message(&mut item, &session);
                     if turn["status"] != "completed" && item.role != "user" {
                         item.status = "interrupted".into();
                     }
+                    retained_bytes += ade_core::json_budget::encoded_size(&item)?
+                        + usize::from(!history.is_empty());
+                    ensure!(
+                        history.len() < 32 && retained_bytes <= 524288,
+                        ade_core::error::Failure::ResourceLimit
+                    );
                     history.push(item);
                 }
             }
@@ -271,22 +536,7 @@ impl Provider for Adapter {
         _message_id: Option<&str>,
         prompt: &crate::prompt::Prompt,
     ) -> Result<String> {
-        if let Some(expected) = &self.identity {
-            let config = self
-                .rpc
-                .request("config/read", json!({"includeLayers":false}))?;
-            ensure!(
-                crate::provider::codex_probe::effective_config_supported(&config),
-                "Codex effective configuration may override file credentials"
-            );
-            let account = self
-                .rpc
-                .request("account/read", json!({"refreshToken":false}))?;
-            ensure!(
-                crate::provider::codex_probe::readback_identity(&account)? == *expected,
-                "Codex account identity changed before starting a turn"
-            );
-        }
+        self.verify_identity()?;
         let input = user_input(prompt)?;
         let r = self.rpc.request(
             "turn/start",
@@ -295,7 +545,7 @@ impl Provider for Adapter {
         r["turn"]["id"]
             .as_str()
             .map(str::to_owned)
-            .ok_or_else(|| anyhow!("Codex omitted turn ID"))
+            .ok_or_else(|| anyhow!(ade_core::error::Failure::InvalidData))
     }
     fn cancel(&self, session: &str, turn: &str) -> Result<()> {
         self.rpc
@@ -361,6 +611,62 @@ impl Provider for Adapter {
         *self.session.lock().unwrap() = Some(id.clone());
         Ok(Some(id))
     }
+    fn request_metadata(&self, id: &Value, method: &str, params: &Value) -> RequestMetadata {
+        request_metadata(id, method, params)
+    }
+    fn answer_native(
+        &self,
+        p: &PendingRequest,
+        operation_id: &str,
+        answer: &ade_core::requests::RequestAnswer,
+    ) -> Result<()> {
+        self.validate_native_answer(p, answer)?;
+        ensure!(
+            !operation_id.is_empty() && operation_id.len() <= 256,
+            "Invalid operation ID"
+        );
+        let result = match (p.method.as_str(), answer) {
+            (
+                "item/commandExecution/requestApproval" | "item/fileChange/requestApproval",
+                ade_core::requests::RequestAnswer::Choice { value },
+            ) => json!({"decision":value}),
+            (
+                "item/permissions/requestApproval",
+                ade_core::requests::RequestAnswer::Permissions {
+                    permissions,
+                    scope,
+                    strict_auto_review,
+                },
+            ) => {
+                let scope = match scope {
+                    ade_core::requests::RequestScope::Turn => "turn",
+                    ade_core::requests::RequestScope::Session => "session",
+                    _ => bail!("Codex permission scope is not supported"),
+                };
+                let mut result = serde_json::Map::from_iter([
+                    ("permissions".into(), permissions.clone()),
+                    ("scope".into(), Value::String(scope.into())),
+                ]);
+                if let Some(value) = strict_auto_review {
+                    result.insert("strictAutoReview".into(), Value::Bool(*value));
+                }
+                Value::Object(result)
+            }
+            (
+                "item/tool/requestUserInput",
+                ade_core::requests::RequestAnswer::Questions { answers },
+            ) => {
+                let answers = answers
+                    .iter()
+                    .map(|(id, values)| (id.clone(), json!({"answers":values})))
+                    .collect::<serde_json::Map<_, _>>();
+                json!({"answers":answers})
+            }
+            _ => bail!("Answer does not match this Codex native request"),
+        };
+        self.rpc.respond(p.rpc_id.clone(), result)?;
+        Ok(())
+    }
     fn validate_answer(
         &self,
         p: &PendingRequest,
@@ -395,10 +701,23 @@ impl Provider for Adapter {
     }
 }
 
-impl Drop for Adapter {
+impl Drop for NativeClient {
     fn drop(&mut self) {
         let _ = self.stop_confirmed();
     }
+}
+fn turn_for_user_message<'a>(turns: &'a [Value], message_id: &str) -> Result<&'a str> {
+    turns
+        .iter()
+        .find(|turn| {
+            turn["items"].as_array().is_some_and(|items| {
+                items.iter().any(|item| {
+                    item["type"] == "userMessage" && item["id"].as_str() == Some(message_id)
+                })
+            })
+        })
+        .and_then(|turn| turn["id"].as_str())
+        .context("Codex history has no such user message; nothing was rewound")
 }
 
 /// The turn a rewind forks through: the one before `drop_from`. Refuses when
@@ -461,7 +780,7 @@ fn child_page(result: &Value, child: &str, offset: u64) -> Result<Value> {
         .ok_or_else(|| anyhow!("Codex omitted child turns"))?;
     let mut items = Vec::new();
     let mut position = 0_u64;
-    let mut bytes = 0;
+    let mut bytes = 2;
     let mut more = false;
     'turns: for turn in turns {
         for value in turn["items"]
@@ -469,31 +788,31 @@ fn child_page(result: &Value, child: &str, offset: u64) -> Result<Value> {
             .ok_or_else(|| anyhow!("Codex omitted child items"))?
         {
             // Use the same public-content projection as the parent transcript;
-            // reasoning items remain excluded. Reading never resumes a thread.
-            if let Some(projected) = item(value, turn["id"].as_str(), turn["status"] == "completed")
+            // private reasoning remains excluded. Reading never resumes a thread.
+            if let Some(mut projected) =
+                item(value, turn["id"].as_str(), turn["status"] == "completed")
             {
+                attach_native_message(&mut projected, child);
                 position += 1;
                 if position <= offset {
                     continue;
                 }
-                if items.len() == 50 {
+                if items.len() == 32 {
                     more = true;
                     break 'turns;
                 }
                 if let Some(content) = &projected.content {
                     content.validate()?;
                 }
-                bytes += serde_json::to_vec(&projected)?.len();
-                ensure!(
-                    bytes <= 2 * 1024 * 1024,
-                    "Codex child page exceeds display limits"
-                );
+                bytes += ade_core::json_budget::encoded_size(&projected)?
+                    + usize::from(!items.is_empty());
+                ensure!(bytes <= 524288, ade_core::error::Failure::ResourceLimit);
                 items.push(projected);
             }
         }
     }
     Ok(
-        json!({"type":"child_transcript","child_id":child,"items":items,"next_offset":if more {Some(offset+50)} else {None}}),
+        json!({"type":"child_transcript","child_id":child,"items":items,"next_offset":if more {Some(offset+32)} else {None}}),
     )
 }
 fn decode(wire: WireEvent) -> Result<Option<Event>> {
@@ -507,13 +826,16 @@ fn decode(wire: WireEvent) -> Result<Option<Event>> {
                     | "item/permissions/requestApproval"
                     | "item/tool/requestUserInput"
             );
+            let metadata = request_metadata(&id, &method, &params);
             Event::Request {
                 session: text(&params, "threadId"),
-                turn: text(&params, "turnId"),
+                submission: None,
+                turn: Some(text(&params, "turnId")),
                 id,
                 method,
                 params,
                 supported,
+                metadata: Some(metadata),
             }
         }
         WireEvent::Notification(method, p) => match method.as_str() {
@@ -525,8 +847,10 @@ fn decode(wire: WireEvent) -> Result<Option<Event>> {
                 content.validate()?;
                 Event::Item {
                     session: text(&p, "threadId"),
+                    submission: None,
                     item: Item {
                         id: format!("{}:plan", text(&p, "turnId")),
+                        native_message: None,
                         client_id: None,
                         turn: p["turnId"].as_str().map(str::to_owned),
                         role: "assistant".into(),
@@ -539,11 +863,13 @@ fn decode(wire: WireEvent) -> Result<Option<Event>> {
             }
             "turn/started" => Event::Started {
                 session: text(&p, "threadId"),
-                turn: text(&p["turn"], "id"),
+                submission: None,
+                turn: Some(text(&p["turn"], "id")),
             },
             "turn/completed" => Event::Finished {
                 session: text(&p, "threadId"),
-                turn: text(&p["turn"], "id"),
+                submission: None,
+                turn: Some(text(&p["turn"], "id")),
                 status: text(&p["turn"], "status"),
                 error: (!p["turn"]["error"].is_null()).then(|| {
                     ade_core::error::Failure::provider(
@@ -552,39 +878,48 @@ fn decode(wire: WireEvent) -> Result<Option<Event>> {
                     )
                     .to_string()
                 }),
+                native_terminal: None,
+                interrupt_requested: false,
             },
             "item/started" | "item/completed" => {
-                let Some(item) = item(&p["item"], p["turnId"].as_str(), method == "item/completed")
+                let Some(mut item) =
+                    item(&p["item"], p["turnId"].as_str(), method == "item/completed")
                 else {
                     return Ok(None);
                 };
+                attach_native_message(&mut item, text(&p, "threadId").as_str());
                 Event::Item {
                     session: text(&p, "threadId"),
+                    submission: None,
                     item,
                 }
             }
-            "item/agentMessage/delta" | "item/commandExecution/outputDelta" | "item/plan/delta" => {
-                Event::Delta {
-                    session: text(&p, "threadId"),
-                    turn: p["turnId"].as_str().map(str::to_owned),
-                    id: text(&p, "itemId"),
-                    role: if method.contains("commandExecution") {
-                        "tool"
-                    } else {
-                        "assistant"
-                    }
-                    .into(),
-                    kind: if method.contains("commandExecution") {
-                        "commandExecution"
-                    } else if method.contains("/plan/") {
-                        "plan"
-                    } else {
-                        "text"
-                    }
-                    .into(),
-                    text: text(&p, "delta"),
+            "item/agentMessage/delta"
+            | "item/commandExecution/outputDelta"
+            | "item/plan/delta"
+            | "item/reasoning/summaryTextDelta" => Event::Delta {
+                session: text(&p, "threadId"),
+                submission: None,
+                turn: p["turnId"].as_str().map(str::to_owned),
+                id: text(&p, "itemId"),
+                role: if method.contains("commandExecution") {
+                    "tool"
+                } else {
+                    "assistant"
                 }
-            }
+                .into(),
+                kind: if method.contains("commandExecution") {
+                    "commandExecution"
+                } else if method.contains("/plan/") {
+                    "plan"
+                } else if method == "item/reasoning/summaryTextDelta" {
+                    "reasoning"
+                } else {
+                    "text"
+                }
+                .into(),
+                text: text(&p, "delta"),
+            },
             // Usage is forwarded as reported; the daemon normalizes it and
             // never fills in a figure Codex left out.
             "thread/tokenUsage/updated" => Event::Usage {
@@ -601,7 +936,10 @@ fn decode(wire: WireEvent) -> Result<Option<Event>> {
                 report: p["rateLimits"].clone(),
             },
             "serverRequest/resolved" => Event::Resolved {
+                session: p["threadId"].as_str().unwrap_or_default().to_owned(),
+                submission: None,
                 id: p["requestId"].clone(),
+                resolution: Some(ade_core::requests::RequestResolution::Resolved),
             },
             "error" => Event::Error {
                 error: ade_core::error::Failure::provider(
@@ -629,6 +967,16 @@ fn user_input(prompt: &crate::prompt::Prompt) -> Result<Vec<Value>> {
     }
     Ok(input)
 }
+pub(super) fn attach_native_message(item: &mut Item, session: &str) {
+    if item.role == "user" {
+        item.native_message = Some(ade_core::provider::NativeMessageLocator {
+            provider: "codex".into(),
+            session: session.into(),
+            message_id: item.id.clone(),
+        });
+    }
+}
+
 fn item(value: &Value, turn: Option<&str>, completed: bool) -> Option<Item> {
     let id = value["id"].as_str()?;
     let kind = value["type"].as_str()?;
@@ -665,8 +1013,28 @@ fn item(value: &Value, turn: Option<&str>, completed: bool) -> Option<Item> {
                 value["result"]
             ),
         ),
-        // Native reasoning is private and must never enter the shared history.
-        "reasoning" => return None,
+        // Only native-exposed summaries are public; never project raw reasoning content/text.
+        "reasoning" => {
+            let summary = value["summary"].as_array()?;
+            let mut text = String::with_capacity(
+                summary
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::len)
+                    .sum::<usize>()
+                    + summary.len().saturating_sub(1),
+            );
+            for (index, part) in summary.iter().filter_map(Value::as_str).enumerate() {
+                if index > 0 {
+                    text.push('\n');
+                }
+                text.push_str(part);
+            }
+            if text.is_empty() {
+                return None;
+            }
+            ("assistant", text)
+        }
         // The provider's own record that it compacted context (F040). Codex
         // does not expose the retained summary, so none is claimed.
         "contextCompaction" => (
@@ -794,6 +1162,7 @@ fn item(value: &Value, turn: Option<&str>, completed: bool) -> Option<Item> {
     Some(Item {
         content,
         id: id.into(),
+        native_message: None,
         client_id: if role == "user" {
             value["clientId"].as_str().map(str::to_owned)
         } else {
@@ -910,6 +1279,12 @@ pub const INSTALLATION: &[crate::capabilities::Executable] = &[
         default: Some("bun"),
         used_by: crate::capabilities::UsedBy::CodexSharedTransport,
     },
+    crate::capabilities::Executable {
+        check: "runtime:node",
+        env: "ADE_NODE_BIN",
+        default: Some("node"),
+        used_by: crate::capabilities::UsedBy::Every,
+    },
 ];
 
 /// The `config` overrides for the catalog's servers, one `mcp_servers.<name>`
@@ -939,6 +1314,15 @@ mod tests {
             json!({"id":"t2","status":"completed"}),
             json!({"id":"t3","status":"completed"}),
         ];
+        let native_turns = vec![
+            json!({"id":"t1","status":"completed","items":[{"id":"u1","type":"userMessage"}]}),
+            json!({"id":"t2","status":"completed","items":[{"id":"u2","type":"userMessage"},{"id":"c2","type":"commandExecution"}]}),
+        ];
+        let target_turn = turn_for_user_message(&native_turns, "u2").unwrap();
+        assert_eq!(target_turn, "t2");
+        assert_eq!(fork_boundary(&native_turns, target_turn).unwrap(), "t1");
+        assert!(turn_for_user_message(&native_turns, "c2").is_err());
+        assert!(turn_for_user_message(&native_turns, "missing").is_err());
         assert_eq!(fork_boundary(&turns, "t2").unwrap(), "t1");
         assert_eq!(fork_boundary(&turns, "t3").unwrap(), "t2");
         assert!(
@@ -986,13 +1370,14 @@ mod tests {
         let mut command = Command::new("/bin/sleep");
         command.arg("60");
         let rpc = Rpc::spawn(command, events, decode).unwrap();
-        let adapter = Adapter {
+        let adapter = NativeClient {
             rpc,
             cwd: "/tmp".into(),
             socket_directory: Some(directory.clone()),
             session: Mutex::new(None),
             identity: None,
             mcp_servers: Mutex::new(None),
+            initialized: Mutex::new(false),
         };
         adapter.stop_confirmed().unwrap();
         assert!(!directory.exists());
@@ -1008,14 +1393,31 @@ mod tests {
             json!({"id":"private","type":"reasoning","text":"PRIVATE"}),
         );
         let result = json!({"thread":{"id":"child","turns":[{"id":"turn","status":"completed","items":values}]}});
-        let first = child_page(&result, "child", 0).unwrap();
-        assert_eq!(first["items"].as_array().unwrap().len(), 50);
-        assert_eq!(first["next_offset"], 50);
-        assert!(!first.to_string().contains("PRIVATE"));
-        let last = child_page(&result, "child", 50).unwrap();
-        assert_eq!(last["items"][0]["text"], "answer 50");
-        assert_eq!(last["items"].as_array().unwrap().len(), 5);
-        assert!(last["next_offset"].is_null());
+        let mut offset = 0;
+        let mut ids = Vec::new();
+        loop {
+            let page = child_page(&result, "child", offset).unwrap();
+            assert_eq!(page["child_id"], "child");
+            let items = page["items"].as_array().unwrap();
+            assert!(items.len() <= 32);
+            assert!(!page.to_string().contains("PRIVATE"));
+            ids.extend(
+                items
+                    .iter()
+                    .map(|item| item["id"].as_str().unwrap().to_owned()),
+            );
+            assert!(ids.len() <= 55);
+            if page["next_offset"].is_null() {
+                break;
+            }
+            let next = page["next_offset"].as_u64().unwrap();
+            assert!(next > offset && next < 55);
+            offset = next;
+        }
+        assert_eq!(
+            ids,
+            (0..55).map(|n| format!("item-{n}")).collect::<Vec<_>>()
+        );
         assert!(child_page(&result, "unrelated", 0).is_err());
     }
     #[test]

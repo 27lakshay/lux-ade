@@ -89,12 +89,18 @@ export function createDaemonStore(host: Pick<AdeHost, 'profiles'>): { store: Dae
   // (Sequence numbers cannot order them: a profile switch starts a new client at zero.)
   let pushed = false
   const applyPerFrame = latestPerFrame(apply)
-  const stop = host.profiles.onClientState((client) => {
+  const unsubscribe = host.profiles.onClientState((client) => {
     pushed = true
-    applyPerFrame(client)
+    applyPerFrame.push(client)
   })
   void host.profiles.getClientState().then((client) => {
     if (!pushed) apply(client)
   })
-  return { store, stop }
+  return {
+    store,
+    stop: () => {
+      unsubscribe()
+      applyPerFrame.stop()
+    },
+  }
 }

@@ -25,15 +25,26 @@ export function createConversationStore(
 ): { store: ConversationStore; stop: () => void } {
   const store = createStore<ConversationState>(() => ({ status: 'loading', snapshot: null, error: null }))
   const publish = latestPerFrame((state: ConversationState) => store.setState(state, true))
-  const stop = startConversationProjection<Snapshot['conversation'], ConversationMessage, Snapshot['requests'][number]>(
-    {
-      conversationId,
-      fetchSnapshot: (id) => host.conversations.request('conversation.get', { conversation_id: id }),
-      subscribe: (listener) => host.conversations.onFeedFrame(listener),
-      onState: publish,
+  const stopProjection = startConversationProjection<
+    Snapshot['conversation'],
+    ConversationMessage,
+    Snapshot['requests'][number]
+  >({
+    conversationId,
+    fetchSnapshot: (id, limit) => host.conversations.request('conversation.get', { conversation_id: id, limit }),
+    subscribe: (listener) => host.conversations.onFeedFrame(listener),
+    onState: publish.push,
+  })
+  return {
+    store,
+    stop: () => {
+      try {
+        stopProjection()
+      } finally {
+        publish.stop()
+      }
     },
-  )
-  return { store, stop }
+  }
 }
 
 /** The message with this ID, or undefined. Stable across updates that do not change it. */

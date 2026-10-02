@@ -358,7 +358,8 @@ impl Sessions {
         // Mutations publish the durable snapshot while holding the state lock.
         // Clients needing current path health refresh with catalog.get, whose
         // filesystem probes run outside this lock.
-        let catalog = d.store.catalog()?;
+        let mut catalog = d.store.catalog()?;
+        self.present_catalog(d, &mut catalog)?;
         self.publish(
             d,
             json!({"type":"catalog","catalog":catalog,"providers":self.provider_descriptors()}),
@@ -396,6 +397,7 @@ impl Sessions {
                 && d.store.catalog_binding_claims(&current)? == claims
             {
                 current.workspaces = probed.workspaces;
+                self.present_catalog(&d, &mut current)?;
                 return finish(&mut d, current);
             }
         }

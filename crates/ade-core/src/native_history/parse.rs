@@ -1,7 +1,7 @@
 //! Pure pieces shared by the native session importers: the history item
 //! model, line splitting, bounded text, timestamps and the re-import decider.
 //! Nothing here reads files or touches SQLite.
-use ade_core::transcript::Content;
+use crate::transcript::Content;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
@@ -33,6 +33,8 @@ pub struct Parsed {
     /// The newest record timestamp, in milliseconds since the Unix epoch.
     pub last_at: Option<i64>,
     pub items: Vec<Item>,
+    /// Readers refuse a projected page when a record would require truncation.
+    pub budget_exceeded: bool,
     /// Complete lines that were not valid JSON records.
     pub skipped: u64,
     /// The file ended in a line without a newline, which was not read.
@@ -60,10 +62,19 @@ impl Parsed {
 
     /// Adds a tool call. Its output arrives later through [`Self::tool_output`].
     pub fn tool(&mut self, key: String, call_id: &str, name: &str, input: Option<Value>) {
+        if call_id.len() > 4096
+            || name.len() > 256
+            || input.as_ref().is_some_and(|value| {
+                crate::json_budget::encoded_size(value).map_or(true, |bytes| bytes > TOOL_LIMIT)
+            })
+        {
+            self.budget_exceeded = true;
+            return;
+        }
         let content = Content::Tool {
             call_id: bounded(if call_id.is_empty() { &key } else { call_id }, 4096),
             name: bounded(if name.is_empty() { "tool" } else { name }, 256),
-            input: input.map(bounded_value),
+            input,
             output: None,
             is_error: false,
         };
@@ -79,6 +90,10 @@ impl Parsed {
     /// Attaches a result to the latest tool call with this call ID. A result
     /// with no matching call becomes its own tool message so it is not lost.
     pub fn tool_output(&mut self, key: String, call_id: &str, output: &str, is_error: bool) {
+        if output.len() > TOOL_LIMIT {
+            self.budget_exceeded = true;
+            return;
+        }
         let found = self.items.iter().rposition(|item| {
             matches!(&item.content, Some(Content::Tool { call_id: id, .. }) if id == call_id)
         });
@@ -110,6 +125,10 @@ impl Parsed {
     }
 
     pub fn text(&mut self, key: String, role: &'static str, kind: &'static str, text: &str) {
+        if text.len() > TEXT_LIMIT {
+            self.budget_exceeded = true;
+            return;
+        }
         if text.trim().is_empty() {
             return;
         }
@@ -166,17 +185,6 @@ fn bounded(text: &str, limit: usize) -> String {
         end -= 1;
     }
     text[..end].to_owned()
-}
-
-/// Keeps a tool input whole when it is small, and as a truncated string
-/// otherwise, so validation limits are never exceeded.
-fn bounded_value(value: Value) -> Value {
-    let text = value.to_string();
-    if text.len() <= TOOL_LIMIT {
-        value
-    } else {
-        Value::String(truncate(&text, TOOL_LIMIT))
-    }
 }
 
 /// The first non-empty line of a prompt, shortened for a title.
@@ -288,7 +296,7 @@ pub fn digest(items: &[Item]) -> String {
                 ..
             }) => format!(
                 "{call_id}\u{0}{name}\u{0}{}",
-                input.clone().unwrap_or_default()
+                input.as_ref().unwrap_or(&Value::Null)
             ),
             _ => item.text.clone(),
         };

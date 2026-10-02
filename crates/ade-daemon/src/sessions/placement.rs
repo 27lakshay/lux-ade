@@ -235,6 +235,21 @@ fn workspace_host(connection: &Connection, workspace_id: &str) -> Result<Workspa
         ),
     })
 }
+/// Resolves the host from the same holder/record evidence as `placement.resolve`.
+pub(super) fn conversation_execution_host(
+    connection: &Connection,
+    workspace_id: &str,
+    conversation_id: &str,
+) -> Result<ExecutionHost> {
+    ensure_schema(connection)?;
+    let resource = PlacedResource::Conversation {
+        workspace_id: workspace_id.to_owned(),
+        conversation_id: conversation_id.to_owned(),
+    };
+    let held = held_by(connection, &resource)?;
+    let stored = recorded(connection, &resource)?;
+    Ok(decide::resolve(&resource, held.as_deref(), stored)?.host)
+}
 
 fn placement_reply(placement: Placement) -> Result<Value> {
     reply(&PlacementReply {

@@ -3,7 +3,7 @@
 // cancellation draws on reserved capacity, so the user can always stop the
 // running turn (architecture section 4: "Saturated normal command receipts
 // must not disable stopping existing work").
-import { conversationStatus, expect, prompts, send, startConversation, test } from '../fixtures'
+import { cancelActiveSubmission, conversationStatus, expect, prompts, send, startConversation, test } from '../fixtures'
 
 // The runtime's ordinary receipt bound per run (crates/ade-runtime/src/agent_budget.rs).
 const RECEIPT_COUNT = 4096
@@ -59,7 +59,7 @@ test('cancel is admitted and reaches the provider while ordinary command receipt
     'running',
   )
 
-  await profile.call('agent.cancel', { conversation_id: conversationId })
+  await cancelActiveSubmission(profile, conversationId)
   await expect
     .poll(async () => (await profile.mockCalls('codex')).filter((call) => call.method === 'turn/interrupt').length)
     .toBe(1)

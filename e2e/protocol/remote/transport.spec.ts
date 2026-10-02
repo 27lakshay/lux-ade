@@ -168,7 +168,15 @@ test('link loss during a turn reports unknown, sends nothing anywhere else, and 
   expect(after.conversation.status).toBe('running')
   const turns = (await started.host.mockCalls('codex')).filter((call) => call.method === 'turn/start')
   expect(turns).toHaveLength(1)
-  await remoteCall(transport, 'agent.cancel', { conversation_id: conversation.id })
+  if (!after.conversation.runtime_run || !after.conversation.runtime_submission) {
+    throw new Error('Conversation has no active cancellation identity')
+  }
+  await remoteCall(transport, 'agent.cancel', {
+    conversation_id: conversation.id,
+    source_attempt_id: after.conversation.runtime_run,
+    submission_id: after.conversation.runtime_submission,
+    ...(after.conversation.active_turn_id === null ? {} : { turn_id: after.conversation.active_turn_id }),
+  })
   await expect
     .poll(
       async () =>

@@ -107,6 +107,7 @@ export async function sendJournaled(
     draftText: '',
     draftRevision: 0,
     attachments: [],
+    contextNodes: [],
     dispatchStarted: false,
   }
   await journal.upsert(record)

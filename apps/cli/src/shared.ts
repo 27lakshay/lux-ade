@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto'
-import { requestDaemon, type DaemonResponse } from '@ade/client'
+import { requestDaemon, type DailyUseOperation, type DailyUseResponse } from '@ade/client'
 import { lockJournalDirectory, openClientJournals, type ClientJournals } from '@ade/client/journals'
 
-export type CommandResult = DaemonResponse | Record<string, unknown>
+export type CommandResult = DailyUseResponse<DailyUseOperation> | Record<string, unknown>
 
 export type ErrorCode =
   | 'usage'

@@ -2,17 +2,15 @@ import type { CallRequest, DailyUseResponse, FeedFrame } from '@ade/client'
 import type { ConversationOperation } from './operations'
 import type { PendingSend } from './types'
 
-type DraftError = { conversationId: string; message: string }
+type DraftError = { conversationId: string; viewId: string; message: string }
 
 /** A conversation draft as main holds it; it saves drafts to the daemon in the background. */
 export type Draft = {
   text: string
   revision: number
-  /**
-   * Opaque for now: main passes them between the daemon and its send journal, and the journal does
-   * not check their shape. Type them as the contract's attachments when the composer shows them.
-   */
+  /** Attachments and context nodes belong to the exact draft revision saved to the daemon. */
   attachments: unknown[]
+  context_nodes?: unknown[]
 }
 
 /** The prompt main is still delivering for a conversation, if any. */
@@ -48,20 +46,25 @@ type SendResult = DailyUseResponse<'agent.send'> | SendPending | SendReconciled
 
 /** Requests main answers itself (drafts and the send journal), not by forwarding one daemon call. */
 type LocalRequests = {
-  'draft.get': { conversation_id: string }
-  'draft.save': { conversation_id: string; text: string }
-  'draft.flush': { conversation_id: string }
+  'draft.get': { conversation_id: string; view_id: string }
+  'draft.save': { conversation_id: string; text: string; view_id: string }
+  'draft.flush': { conversation_id: string; view_id: string }
+  'draft.stash.list': { conversation_id: string; view_id: string }
+  'draft.stash.restore': { conversation_id: string; name: string; stash_revision: number; view_id: string }
   'agent.send': {
     conversation_id: string
     request_id: string
     text: string
+    view_id: string
   }
-  'agent.retry_send': { conversation_id: string; request_id?: string }
+  'agent.retry_send': { conversation_id: string; request_id?: string; view_id: string }
 }
 type LocalResponses = {
   'draft.get': DraftState
   'draft.save': DraftState
   'draft.flush': DraftState
+  'draft.stash.list': DailyUseResponse<'draft.stash.list'>
+  'draft.stash.restore': DraftState
   'agent.send': SendResult
   'agent.retry_send': SendResult
 }

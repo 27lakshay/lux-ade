@@ -79,12 +79,22 @@ fn response_item(parsed: &mut Parsed, key: String, item: &Value) {
                 // Developer and system messages are instructions, not history.
                 _ => return,
             };
-            let parts = match &item["content"] {
-                Value::Array(parts) => parts.clone(),
-                other => vec![other.clone()],
-            };
+            let content = &item["content"];
+            let parts = content
+                .as_array()
+                .map(Vec::as_slice)
+                .unwrap_or_else(|| std::slice::from_ref(content));
             for (index, part) in parts.iter().enumerate() {
-                let text = content_text(&Value::Array(vec![part.clone()]));
+                let text = match part {
+                    Value::String(text) => text.clone(),
+                    _ => match part["type"].as_str().unwrap_or("") {
+                        "text" | "input_text" | "output_text" => {
+                            part["text"].as_str().unwrap_or("").to_owned()
+                        }
+                        "image" | "input_image" => "[image]".into(),
+                        _ => continue,
+                    },
+                };
                 let kind = if role == "user" && injected(&text) {
                     "context"
                 } else {
@@ -97,6 +107,10 @@ fn response_item(parsed: &mut Parsed, key: String, item: &Value) {
         "reasoning" | "ghost_snapshot" | "compaction" => {}
         "function_call" => {
             let arguments = item["arguments"].as_str().unwrap_or("");
+            if !crate::json_budget::within_budget(arguments.as_bytes(), super::parse::TOOL_LIMIT) {
+                parsed.budget_exceeded = true;
+                return;
+            }
             let input = serde_json::from_str(arguments)
                 .unwrap_or_else(|_| Value::String(arguments.to_owned()));
             let name = match item["namespace"].as_str() {
@@ -193,7 +207,7 @@ pub fn index_titles(text: &str) -> HashMap<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ade_core::transcript::Content;
+    use crate::transcript::Content;
 
     // Trimmed from a Codex CLI rollout of September 2026: a sub-agent fork
     // with its own and its parent's metadata, injected context, a prompt, a

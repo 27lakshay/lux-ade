@@ -19,6 +19,7 @@
 //! runtime's one provider interface: bundled, adapter and plugin (F023).
 use super::usage::{UsageLimitWindow, UsageRecording};
 use super::{FrameSpec, OperationSpec, Tier};
+use crate::requests::RequestAnswer;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -37,6 +38,10 @@ pub fn operations() -> Vec<OperationSpec> {
             Tier::Query,
         ),
         OperationSpec::new::<ProviderQuotaRequest, ProviderQuota>("provider.quota", Tier::Query),
+        OperationSpec::new::<ProviderInspectRequest, ProviderInspect>(
+            "provider.inspect",
+            Tier::Query,
+        ),
         // Replays every provider registration through the runtime's provider
         // registry and reports each outcome. Starts no worker.
         OperationSpec::new::<ProviderRegistrationsRequest, ProviderRegistrations>(
@@ -216,6 +221,12 @@ pub struct ProviderReadinessRequest {
     pub account_id: Option<String>,
 }
 
+/// Inspect one enabled plugin worker without opening a session or submitting input.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ProviderInspectRequest {
+    pub provider: String,
+}
+
 /// The overall readiness verdict.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -236,6 +247,472 @@ pub enum ReadinessState {
     AccountDisabled,
     /// The check itself failed; nothing is known.
     Unavailable,
+}
+
+wire_tag!(ProviderInspectTag, "provider_inspect");
+
+/// A capability advertised by a provider worker. Support and current availability are independent.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderWorkerCapability {
+    pub name: ProviderWorkerCapabilityName,
+    pub support: Support,
+    pub available: bool,
+    pub reason: String,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderWorkerCapabilityName {
+    Streaming,
+    Images,
+    TextAttachments,
+    Resume,
+    Cancel,
+    Steering,
+    ToolApproval,
+    Questions,
+    ChildTranscript,
+}
+
+/// An operation handled by the current worker protocol. Unknown methods cannot be declared supported.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderWorkerMethod {
+    Initialize,
+    Open,
+    Send,
+    Steer,
+    Cancel,
+    Answer,
+    History,
+    ConfigureMcp,
+    Compact,
+    Rewind,
+    ChildTranscript,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderWorkerAvailability {
+    Available,
+    Unavailable,
+    Unsupported,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderWorkerOperation {
+    pub method: ProviderWorkerMethod,
+    pub tier: super::Tier,
+    pub availability: ProviderWorkerAvailability,
+    pub reason: String,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderWorkerLimits {
+    #[schemars(range(min = 1, max = 1048576))]
+    pub max_input_frame_bytes: u32,
+    /// Maximum immediate child values in any input JSON object or array.
+    #[schemars(range(min = 1, max = 1024))]
+    pub max_input_entries: u32,
+    #[schemars(range(min = 1, max = 15000))]
+    pub max_initialize_ms: u32,
+    #[schemars(range(min = 1, max = 1048576))]
+    pub max_output_frame_bytes: u32,
+    /// Maximum visible transcript items returned by open, history or child transcript.
+    #[schemars(range(min = 1, max = 32))]
+    pub max_history_page_items: u32,
+    /// Maximum immediate child values in any output JSON object or array.
+    #[schemars(range(min = 1, max = 32))]
+    pub max_output_entries: u32,
+    #[schemars(range(min = 2, max = 8))]
+    pub max_concurrency: u32,
+    #[schemars(range(min = 1, max = 10000))]
+    pub max_partial_frame_ms: u32,
+    #[schemars(range(min = 1, max = 45000))]
+    pub max_operation_ms: u32,
+    #[schemars(range(min = 1, max = 5000))]
+    pub max_cleanup_ms: u32,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderWorkerFailureCode {
+    InvalidRequest,
+    Unsupported,
+    AuthenticationRequired,
+    PermissionDenied,
+    RateLimited,
+    ResourceLimit,
+    ProviderFailure,
+    ProtocolMismatch,
+    TransportFailure,
+    Timeout,
+    Shutdown,
+    Cancelled,
+    IntegrationBug,
+    Internal,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderWorkerFailure {
+    pub code: ProviderWorkerFailureCode,
+    pub message: String,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProviderWorkerJsonRpcVersion {
+    #[serde(rename = "2.0")]
+    V2,
+}
+
+#[cfg(test)]
+mod provider_worker_jsonrpc_tests {
+    use super::ProviderWorkerJsonRpcVersion;
+
+    #[test]
+    fn version_uses_the_json_rpc_wire_value() {
+        assert_eq!(
+            serde_json::to_string(&ProviderWorkerJsonRpcVersion::V2).unwrap(),
+            r#""2.0""#
+        );
+        assert_eq!(
+            serde_json::from_str::<ProviderWorkerJsonRpcVersion>(r#""2.0""#).unwrap(),
+            ProviderWorkerJsonRpcVersion::V2
+        );
+    }
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum ProviderWorkerRequestId {
+    String(String),
+    Integer(i64),
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum ProviderWorkerResponseId {
+    String(String),
+    Integer(i64),
+    Null(()),
+}
+
+/// The request envelope spoken by every provider worker. Parameters remain
+/// provider-specific JSON, but the JSON-RPC envelope and method are generated.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderWorkerRequest {
+    pub jsonrpc: ProviderWorkerJsonRpcVersion,
+    pub id: ProviderWorkerRequestId,
+    pub method: ProviderWorkerMethod,
+    pub params: serde_json::Map<String, serde_json::Value>,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderWorkerRpcError {
+    pub code: i32,
+    pub message: String,
+    pub data: ProviderWorkerFailure,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderWorkerResultResponse {
+    pub jsonrpc: ProviderWorkerJsonRpcVersion,
+    pub id: ProviderWorkerResponseId,
+    pub result: serde_json::Value,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderWorkerErrorResponse {
+    pub jsonrpc: ProviderWorkerJsonRpcVersion,
+    pub id: ProviderWorkerResponseId,
+    pub error: ProviderWorkerRpcError,
+}
+
+/// A JSON-RPC response with an ADE-owned typed failure in error.data.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+#[serde(untagged)]
+pub enum ProviderWorkerResponse {
+    Result(ProviderWorkerResultResponse),
+    Error(ProviderWorkerErrorResponse),
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderWorkerSteerRequest {
+    pub session: String,
+    pub turn: String,
+    pub message_id: String,
+    pub text: String,
+    #[serde(default)]
+    pub attachments: Vec<crate::prompt::Content>,
+}
+/// What the adapter can prove after requesting a native interruption.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderCancelScope {
+    Turn,
+    Submission,
+    Session,
+    Process,
+    Unknown,
+}
+
+/// Evidence returned by a native cancellation command and any follow-up status sample.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderCancelEvidence {
+    pub scope: ProviderCancelScope,
+    pub interruption_requested: bool,
+    pub termination: ProviderCancelTermination,
+    /// Null means the provider has no evidence about remaining foreground work.
+    #[serde(default)]
+    pub active_work_remaining: Option<bool>,
+    /// Null means the provider has no queue-depth evidence.
+    #[serde(default)]
+    pub queued_work_count: Option<u64>,
+    /// Null means the provider has no evidence about background work.
+    #[serde(default)]
+    pub background_work_remaining: Option<bool>,
+    /// Unix milliseconds for a point-in-time native state sample, when available.
+    #[serde(default)]
+    pub observed_at_ms: Option<u64>,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderCancelTermination {
+    Requested,
+    Confirmed,
+    Unknown,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderWorkerCancelResult {
+    #[serde(rename = "type")]
+    pub tag: ProviderWorkerCancelTag,
+    pub evidence: ProviderCancelEvidence,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderWorkerCancelTag {
+    CancelResult,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderWorkerCancelRequest {
+    pub session: String,
+    pub source_attempt_id: String,
+    pub submission_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn: Option<String>,
+}
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderWorkerAnswerRequest {
+    pub id: serde_json::Value,
+    pub operation_id: String,
+    pub answer: RequestAnswer,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderWorkerCompactRequest {
+    pub session: String,
+    pub operation: String,
+}
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderWorkerRewindRequest {
+    pub session: String,
+    #[serde(default)]
+    pub turn: Option<String>,
+    pub operation: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_message: Option<crate::provider::NativeMessageLocator>,
+}
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderWorkerRewindResult {
+    pub session: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_session: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<crate::contract::conversations::RewindScope>,
+}
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderWorkerConfigureMcpRequest {
+    pub servers: serde_json::Map<String, serde_json::Value>,
+}
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderWorkerChildTranscriptRequest {
+    pub session: String,
+    pub child: String,
+    pub offset: u64,
+    pub cursor: Option<String>,
+}
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderWorkerAck {}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderWorkerOpenRequest {
+    pub resume: Option<String>,
+    pub config: crate::provider::Config,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderWorkerSendRequest {
+    pub session: String,
+    pub source_attempt_id: String,
+    pub submission: String,
+    pub message_id: Option<String>,
+    pub text: String,
+    #[serde(default)]
+    pub attachments: Vec<crate::prompt::Content>,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderWorkerSendResult {
+    pub turn: Option<String>,
+    pub admitted: bool,
+    pub dispatch: crate::contract::conversations::SubmissionDispatch,
+    pub native_outcome: crate::contract::conversations::SubmissionNativeOutcome,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderWorkerEventNotification {
+    pub jsonrpc: ProviderWorkerJsonRpcVersion,
+    pub method: ProviderWorkerEventMethod,
+    pub params: crate::provider::Event,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug)]
+pub enum ProviderWorkerEventMethod {
+    #[serde(rename = "event")]
+    Event,
+}
+
+/// Native snapshot identity; never an ADE feed cursor or message sequence.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderHistorySnapshot {
+    pub provider: String,
+    pub session: String,
+    pub execution_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lineage: Option<String>,
+    pub source: String,
+    pub generation: String,
+    /// Actual measured native file bytes; unknown is absent/null, never a page cap or synthetic zero.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_bytes: Option<u64>,
+    /// Native source timestamp in milliseconds since Unix epoch; unknown is absent/null.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modified_at_ms: Option<i64>,
+    pub consistency: ProviderHistoryConsistency,
+    pub invalidation_epoch: u64,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderHistoryConsistency {
+    Snapshot,
+    BestEffort,
+}
+
+/// Pinned by the daemon/runtime for this query. Querying never implicitly opens/resumes execution.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderHistoryContext {
+    pub provider: String,
+    pub execution_id: String,
+    pub account_id: Option<String>,
+    pub lineage: Option<String>,
+    pub invalidation_epoch: u64,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderWorkerHistoryRequest {
+    pub session: String,
+    pub context: ProviderHistoryContext,
+    pub snapshot: Option<ProviderHistorySnapshot>,
+    pub cursor: Option<String>,
+    #[schemars(range(min = 1, max = 32))]
+    pub max_items: u32,
+    #[schemars(range(min = 1, max = 524288))]
+    pub max_bytes: u32,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderWorkerHistoryPage {
+    pub snapshot: ProviderHistorySnapshot,
+    pub items: Vec<crate::provider::Item>,
+    pub next_cursor: Option<String>,
+    /// Genuine native continuation after each item, when the source supports exact byte-window trimming.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(length(max = 32))]
+    pub item_cursors: Vec<String>,
+    pub complete: bool,
+    pub retained_bytes: u64,
+    /// A failed refresh may retain only content with this exact snapshot identity.
+    pub error: Option<ProviderWorkerFailure>,
+}
+
+/// Version metadata declared by the packaged SDK worker.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderWorkerRequirements {
+    pub sdk_api_version: u32,
+    pub sdk_version: String,
+    pub effect_version: String,
+    pub platform_node_version: String,
+    pub node_engine: String,
+}
+
+/// Exact JSON-RPC initialize reply; every field is required and unknown fields are rejected.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderWorkerInitialize {
+    pub protocol_version: u32,
+    pub compatible_protocol_versions: Vec<u32>,
+    pub name: String,
+    pub capabilities: Vec<ProviderWorkerCapability>,
+    pub permission_modes: Vec<String>,
+    pub operations: Vec<ProviderWorkerOperation>,
+    pub limits: ProviderWorkerLimits,
+    pub requirements: ProviderWorkerRequirements,
+}
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ProviderInspect {
+    #[serde(rename = "type")]
+    pub tag: ProviderInspectTag,
+    pub provider: String,
+    pub state: ReadinessState,
+    pub reason: String,
+    pub version: Option<String>,
+    pub descriptor: Option<ProviderWorkerInitialize>,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]

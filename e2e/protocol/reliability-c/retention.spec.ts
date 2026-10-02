@@ -9,6 +9,7 @@ import { mkdir, readdir, utimes, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import {
+  cancelActiveSubmission,
   conversationStatus,
   expect,
   isRunning,
@@ -202,6 +203,6 @@ test('retention during a backup, upload finalization and active execution remove
   const draft = await copy.call('draft.get', { conversation_id: idle.conversationId, window_id: 'retention-window' })
   expect(JSON.stringify(draft)).toContain(finalized.id)
 
-  await profile.call('agent.cancel', { conversation_id: held.conversationId })
+  await cancelActiveSubmission(profile, held.conversationId)
   await profile.call('service.stop', { workspace_id: workspace.id, name: 'web' })
 })

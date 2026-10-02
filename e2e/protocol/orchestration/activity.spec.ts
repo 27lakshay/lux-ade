@@ -2,6 +2,8 @@
 // it describes, cursor paging, read and dismissed state, the activity feed,
 // and notification delivery claims that a reconnect or restart cannot repeat.
 import {
+  answerFor,
+  answerIntent,
   expect,
   prompts,
   send,
@@ -76,7 +78,7 @@ test('a finished turn and a pending request each record one activity, committed 
     const request = await waitForPendingRequest(profile, conversationId)
     const approval = (await activities(profile)).find((item) => item.kind === 'approval_requested')
     expect(approval).toMatchObject({ target: { conversation_id: conversationId, request_id: request.id } })
-    await profile.call('agent.answer', { conversation_id: conversationId, request_id: request.id, decision: 'decline' })
+    await profile.call('agent.answer', answerIntent(request, answerFor(request, 'decline')))
     await waitForIdle(profile, conversationId)
 
     await send(profile, conversationId, prompts.questions)

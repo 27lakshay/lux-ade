@@ -2,7 +2,15 @@
 // Run after `pnpm build:sdk`: node --test packages/client/src/sync.test.mjs
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { CONVERSATION_WINDOW, reduceFrame, startConversationProjection } from '../dist/sync.js'
+import {
+  CONVERSATION_WINDOW,
+  MAX_BUFFERED_FRAME_BYTES,
+  MAX_BUFFERED_FRAME_COUNT,
+  MAX_PROJECTION_DECODED_BYTES,
+  MAX_PROJECTION_ITEMS,
+  reduceFrame,
+  startConversationProjection,
+} from '../dist/sync.js'
 
 const conversation = { id: 'c1', title: 'One' }
 const snapshot = (revision, messages = [], boot = 'b1') => ({
@@ -42,7 +50,26 @@ test('keeps only the newest window of messages', () => {
   const many = Array.from({ length: CONVERSATION_WINDOW + 5 }, (_, index) => message(`m${index}`, index))
   const outcome = reduceFrame(snapshot(0), changed(1, many), 'c1')
   assert.equal(outcome.snapshot.messages.length, CONVERSATION_WINDOW)
+  assert.equal(outcome.snapshot.messages.length, 32)
   assert.equal(outcome.snapshot.messages[0].id, 'm5')
+})
+
+test('rejects a single oversized live message instead of admitting it as the newest item', () => {
+  const oversized = { ...message('huge', 2), native_content: 'x'.repeat(8 * 1024 * 1024) }
+  const outcome = reduceFrame(snapshot(0, [message('retained', 1)]), changed(1, [oversized]), 'c1')
+  assert.deepEqual(outcome, { kind: 'degraded', reason: 'resource-limit' })
+})
+
+test('rejects retained snapshots and incoming deltas that exceed the aggregate item ceiling', () => {
+  const requests = Array.from({ length: MAX_PROJECTION_ITEMS + 1 }, (_, index) => ({ id: 'request-' + index }))
+  assert.deepEqual(reduceFrame(snapshot(0), changed(1, [], requests), 'c1'), {
+    kind: 'degraded',
+    reason: 'resource-limit',
+  })
+  assert.deepEqual(reduceFrame({ ...snapshot(0), requests }, changed(1, []), 'c1'), {
+    kind: 'degraded',
+    reason: 'resource-limit',
+  })
 })
 
 test('advances the global revision for other frames and other conversations', () => {
@@ -91,6 +118,16 @@ test('a deletion of this conversation ends it, even across a gap; another conver
 })
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
+
+function heldRead() {
+  let resolve
+  let reject
+  const promise = new Promise((done, fail) => {
+    resolve = done
+    reject = fail
+  })
+  return { promise, resolve, reject }
+}
 
 test('a snapshot delivered after the deletion frame is dropped, and nothing loads again', async () => {
   let release
@@ -166,7 +203,7 @@ test('buffers frames until the snapshot loads, then replays those after its revi
   h.send(changed(2, [message('dup', 9)]))
   h.send(changed(3, [message('b', 2)]))
   await settle()
-  assert.deepEqual(h.fetches, [CONVERSATION_WINDOW])
+  assert.deepEqual(h.fetches, [32])
   const last = h.states.at(-1)
   assert.equal(last.cause, 'loaded')
   assert.equal(last.status, 'current')
@@ -188,16 +225,259 @@ test('marks the projection stale during a gap repair and current after it', asyn
   assert.equal(h.states.at(-1).snapshot.revision, 9)
 })
 
-test('reports a failed load and stays loading', async () => {
+test('ignores a queued feed callback after disposal and unsubscribes only once', async () => {
   const states = []
+  let listener = () => {}
+  let fetches = 0
+  let unsubscribes = 0
+  const stop = startConversationProjection({
+    conversationId: 'c1',
+    fetchSnapshot: async () => {
+      fetches += 1
+      return snapshot(1, [message('a', 1)])
+    },
+    subscribe: (next) => {
+      listener = next
+      return () => {
+        unsubscribes += 1
+      }
+    },
+    onState: (state, cause) => states.push({ ...state, cause }),
+  })
+  await settle()
+  stop()
+  stop()
+  // A callback already queued by the source may still arrive after unsubscribe.
+  listener(changed(2, [message('b', 2)]))
+  await settle()
+  assert.equal(fetches, 1)
+  assert.equal(unsubscribes, 1)
+  assert.deepEqual(
+    states.map((state) => state.cause),
+    ['loaded'],
+  )
+})
+
+test('drops a delayed initial snapshot after idempotent disposal', async () => {
+  let release
+  const gate = new Promise((resolve) => {
+    release = resolve
+  })
+  let markStarted
+  const started = new Promise((resolve) => {
+    markStarted = resolve
+  })
+  const states = []
+  let fetches = 0
+  let unsubscribes = 0
+  const stop = startConversationProjection({
+    conversationId: 'c1',
+    fetchSnapshot: async () => {
+      fetches += 1
+      markStarted()
+      await gate
+      return snapshot(1, [message('late', 1)])
+    },
+    subscribe: () => () => {
+      unsubscribes += 1
+    },
+    onState: (state, cause) => states.push({ ...state, cause }),
+  })
+  await started
+  stop()
+  stop()
+  release()
+  await settle()
+  assert.equal(fetches, 1)
+  assert.equal(unsubscribes, 1)
+  assert.deepEqual(states, [])
+})
+
+test('marks an oversized snapshot degraded and limits automatic recovery to one retry', async () => {
+  const oversized = snapshot(0, [{ ...message('huge', 1), native_content: 'x'.repeat(8 * 1024 * 1024) }])
+  const states = []
+  let fetches = 0
   startConversationProjection({
     conversationId: 'c1',
     fetchSnapshot: async () => {
-      throw new Error('down')
+      fetches++
+      return oversized
     },
     subscribe: () => () => {},
     onState: (state, cause) => states.push({ ...state, cause }),
   })
   await settle()
-  assert.deepEqual(states, [{ status: 'loading', snapshot: null, error: 'Error: down', cause: 'failed' }])
+  await settle()
+  assert.equal(fetches, 2)
+  assert.equal(states.at(-1).status, 'degraded')
+  assert.equal(states.at(-1).cause, 'degraded')
+  assert.match(states.at(-1).error, /resource limits/)
+  assert.equal(states.at(-1).snapshot, null)
+})
+
+test('bounds pre-snapshot frame entries and recovers once without publishing the incomplete buffer', async () => {
+  let release
+  const gate = new Promise((resolve) => {
+    release = resolve
+  })
+  const states = []
+  let listener = () => {}
+  let fetches = 0
+  startConversationProjection({
+    conversationId: 'c1',
+    fetchSnapshot: async () => {
+      fetches++
+      if (fetches === 1) return gate
+      return snapshot(1)
+    },
+    subscribe: (next) => {
+      listener = next
+      return () => {}
+    },
+    onState: (state, cause) => states.push({ ...state, cause }),
+  })
+  await settle()
+  for (let revision = 1; revision <= MAX_BUFFERED_FRAME_COUNT + 1; revision++) listener(changed(revision, []))
+  assert.equal(states.at(-1).status, 'degraded')
+  assert.match(states.at(-1).error, /resource limits/)
+  release(snapshot(0))
+  await settle()
+  await settle()
+  assert.equal(fetches, 2)
+  assert.equal(states.at(-1).status, 'current')
+  assert.deepEqual(states.at(-1).snapshot.messages, [])
+})
+
+test('bounds pre-snapshot decoded bytes even when the frame buffer has room', async () => {
+  let release
+  const gate = new Promise((resolve) => {
+    release = resolve
+  })
+  const states = []
+  let listener = () => {}
+  let fetches = 0
+  startConversationProjection({
+    conversationId: 'c1',
+    fetchSnapshot: async () => {
+      fetches++
+      if (fetches === 1) return gate
+      return snapshot(1)
+    },
+    subscribe: (next) => {
+      listener = next
+      return () => {}
+    },
+    onState: (state, cause) => states.push({ ...state, cause }),
+  })
+  await settle()
+  listener({ ...changed(1, []), native_content: 'x'.repeat(MAX_BUFFERED_FRAME_BYTES + 1) })
+  assert.equal(states.at(-1).status, 'degraded')
+  assert.match(states.at(-1).error, /resource limits/)
+  release(snapshot(0))
+  await settle()
+  await settle()
+  assert.equal(fetches, 2)
+  assert.equal(states.at(-1).status, 'current')
+  assert.deepEqual(states.at(-1).snapshot.messages, [])
+})
+
+test('rejects an ASCII native field that fits the UTF-8 cap but exceeds the retained UTF-16 budget', () => {
+  const nativeContent = 'x'.repeat(MAX_PROJECTION_DECODED_BYTES / 2 + 1)
+  assert.ok(nativeContent.length < MAX_PROJECTION_DECODED_BYTES)
+  const frame = changed(1, [{ ...message('large', 1), native_content: nativeContent }])
+  assert.deepEqual(reduceFrame(snapshot(0), frame, 'c1'), { kind: 'degraded', reason: 'resource-limit' })
+})
+
+test('replays frames received during recovery before claiming the recovered snapshot current', async () => {
+  const first = heldRead()
+  const second = heldRead()
+  const states = []
+  let listener = () => {}
+  let fetches = 0
+  startConversationProjection({
+    conversationId: 'c1',
+    fetchSnapshot: async () => (++fetches === 1 ? first.promise : second.promise),
+    subscribe: (next) => {
+      listener = next
+      return () => {}
+    },
+    onState: (state, cause) => states.push({ ...state, cause }),
+  })
+  await settle()
+  for (let revision = 1; revision <= MAX_BUFFERED_FRAME_COUNT + 1; revision++) listener(changed(revision, []))
+  first.resolve(snapshot(0))
+  await settle()
+  assert.equal(fetches, 2)
+
+  listener(changed(1, [message('newer', 1)]))
+  second.resolve(snapshot(0))
+  await settle()
+  assert.equal(fetches, 2)
+  assert.equal(states.at(-1).status, 'current')
+  assert.equal(states.at(-1).snapshot.revision, 1)
+  assert.deepEqual(
+    states.at(-1).snapshot.messages.map((item) => item.id),
+    ['newer'],
+  )
+})
+
+test('keeps recovery degraded and finite when the recovery read overflows again', async () => {
+  const first = heldRead()
+  const second = heldRead()
+  const states = []
+  let listener = () => {}
+  let fetches = 0
+  startConversationProjection({
+    conversationId: 'c1',
+    fetchSnapshot: async () => (++fetches === 1 ? first.promise : second.promise),
+    subscribe: (next) => {
+      listener = next
+      return () => {}
+    },
+    onState: (state, cause) => states.push({ ...state, cause }),
+  })
+  await settle()
+  for (let revision = 1; revision <= MAX_BUFFERED_FRAME_COUNT + 1; revision++) listener(changed(revision, []))
+  first.resolve(snapshot(0))
+  await settle()
+  assert.equal(fetches, 2)
+
+  listener({ ...changed(1, []), native_content: 'x'.repeat(MAX_BUFFERED_FRAME_BYTES / 2 + 1) })
+  second.resolve(snapshot(0))
+  await settle()
+  listener(changed(1, [message('ignored', 1)]))
+  await settle()
+  assert.equal(fetches, 2)
+  assert.equal(states.at(-1).status, 'degraded')
+  assert.match(states.at(-1).error, /resource limits/)
+})
+
+test('does not restart snapshots on later frames after the bounded recovery read fails', async () => {
+  const first = heldRead()
+  const second = heldRead()
+  const states = []
+  let listener = () => {}
+  let fetches = 0
+  startConversationProjection({
+    conversationId: 'c1',
+    fetchSnapshot: async () => (++fetches === 1 ? first.promise : second.promise),
+    subscribe: (next) => {
+      listener = next
+      return () => {}
+    },
+    onState: (state, cause) => states.push({ ...state, cause }),
+  })
+  await settle()
+  for (let revision = 1; revision <= MAX_BUFFERED_FRAME_COUNT + 1; revision++) listener(changed(revision, []))
+  first.resolve(snapshot(0))
+  await settle()
+  assert.equal(fetches, 2)
+
+  second.reject(new Error('recovery unavailable'))
+  await settle()
+  for (let revision = 1; revision <= MAX_BUFFERED_FRAME_COUNT; revision++) listener(changed(revision, []))
+  await settle()
+  assert.equal(fetches, 2)
+  assert.equal(states.at(-1).status, 'degraded')
+  assert.match(states.at(-1).error, /Resnapshot failed/)
 })

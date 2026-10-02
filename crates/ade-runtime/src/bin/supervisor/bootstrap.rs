@@ -1,6 +1,9 @@
 use anyhow::{Context, Result};
 
 pub(super) fn run() -> Result<()> {
+    if std::env::args().nth(1).as_deref() == Some("--codex-native-client") {
+        return ade_runtime::codex::run_native_client();
+    }
     let logs = ade_platform::resources::logs();
     if let Some(destination) = std::env::args()
         .skip(1)

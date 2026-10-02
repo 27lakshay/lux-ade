@@ -6,33 +6,10 @@ import { TaskPlans } from './tasks.mjs'
 import { Subagents } from './subagents.mjs'
 import { toolContent, toolOutput } from '../tool.mjs'
 import { pathToFileURL } from 'node:url'
-import { accessSync, constants, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { accessSync, constants } from 'node:fs'
 import { resolve, join } from 'node:path'
+import { loadAliases, saveAliases } from './identity.mjs'
 import { isDeepStrictEqual } from 'node:util'
-// A rewind's fork gives kept entries new UUIDs. This record maps them back
-// to the IDs ADE stored, beside ADE's data, so a later resume or rewind of
-// the fork names the same messages. Without ADE_DATA_DIR it lives in memory.
-function aliasFile(session) {
-  if (!process.env.ADE_DATA_DIR || !/^[a-zA-Z0-9_-]{1,128}$/.test(session)) return null
-  return join(process.env.ADE_DATA_DIR, 'claude-forks', `${session}.json`)
-}
-function loadAliases(session) {
-  const path = aliasFile(session)
-  if (!path) return new Map()
-  try {
-    return new Map(Object.entries(JSON.parse(readFileSync(path, 'utf8')).aliases))
-  } catch (error) {
-    if (error.code === 'ENOENT') return new Map()
-    throw new Error(`Claude fork record for ${session} is unreadable: ${error.message}`)
-  }
-}
-function saveAliases(session, forked_from, aliases) {
-  const path = aliasFile(session)
-  if (!path) return
-  mkdirSync(join(path, '..'), { recursive: true })
-  writeFileSync(`${path}.tmp`, JSON.stringify({ forked_from, aliases: Object.fromEntries(aliases) }))
-  renameSync(`${path}.tmp`, path)
-}
 function executable() {
   const requested = process.env.ADE_CLAUDE_BIN ?? 'claude'
   const candidates = requested.includes('/')
@@ -237,7 +214,7 @@ export class Bridge {
         })
         continue
       }
-      const child = this.subagents.consume(message, active?.turn)
+      const child = this.subagents.consume(message, { session: this.session, turn: active?.turn ?? null })
       if (child) this.event({ type: 'item', session: this.session, item: child })
       if (!active) continue
       if (message.type === 'stream_event' && !message.parent_tool_use_id) {

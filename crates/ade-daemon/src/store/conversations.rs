@@ -1,5 +1,30 @@
 use super::*;
 
+fn bounded_message_rows(mut rows: rusqlite::Rows<'_>) -> Result<Vec<Message>> {
+    let mut messages = Vec::new();
+    let mut aggregate = ade_core::json_budget::Usage { bytes: 2, nodes: 1 };
+    while let Some(row) = rows.next()? {
+        ensure!(messages.len() < 32, ade_core::error::Failure::ResourceLimit);
+        // Borrow SQLite text; admit all unknown fields before allocating a decoded row.
+        let raw = row.get_ref(0)?.as_str()?;
+        let mut usage = ade_core::json_budget::usage(raw.as_bytes(), 524288)
+            .context(ade_core::error::Failure::ResourceLimit)?;
+        usage.bytes += usize::from(!messages.is_empty());
+        ensure!(
+            aggregate.fits_with(usage, 524288),
+            ade_core::error::Failure::ResourceLimit
+        );
+        aggregate.add(usage);
+        let message: Message = serde_json::from_str(raw)?;
+        messages.push(message);
+    }
+    ensure!(
+        ade_core::json_budget::encoded_usage(&messages, 524288)?.is_some(),
+        ade_core::error::Failure::ResourceLimit
+    );
+    Ok(messages)
+}
+
 /// Where a prompt stands after `enqueue_content` inserted or found it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum QueueEntry {
@@ -244,6 +269,7 @@ impl Store {
             runtime_run: None,
             runtime_cursor: 0,
             runtime_submission: None,
+            execution_host: None,
             id: new_id("conversation"),
             workspace_id: workspace_id.into(),
             title: title.into(),
@@ -274,12 +300,8 @@ impl Store {
     pub fn messages(&self, id: &str, before: Option<i64>, limit: usize) -> Result<Vec<Message>> {
         self.conversation(id)?;
         let mut statement = self.connection.prepare("SELECT data FROM messages WHERE conversation_id=?1 AND (?2 IS NULL OR sequence<?2) ORDER BY sequence DESC LIMIT ?3")?;
-        let mut messages: Vec<Message> = statement
-            .query_map(params![id, before, limit.min(200) as i64], |r| {
-                r.get::<_, String>(0)
-            })?
-            .map(|row| decode(row?))
-            .collect::<Result<_>>()?;
+        let mut messages =
+            bounded_message_rows(statement.query(params![id, before, limit.min(32) as i64])?)?;
         messages.reverse();
         Ok(messages)
     }
@@ -300,15 +322,12 @@ impl Store {
             .optional()?;
         Ok(epoch.unwrap_or(0).max(0) as u64)
     }
-    /// Every message from `sequence` on, oldest first.
+    /// A complete rewind preview, refused rather than truncated beyond the shared page budget.
     pub fn messages_from(&self, conversation: &str, sequence: i64) -> Result<Vec<Message>> {
         let mut statement = self.connection.prepare(
             "SELECT data FROM messages WHERE conversation_id=?1 AND sequence>=?2 ORDER BY sequence",
         )?;
-        let messages = statement
-            .query_map(params![conversation, sequence], |r| r.get::<_, String>(0))?
-            .map(|row| decode(row?))
-            .collect::<Result<_>>()?;
+        let messages = bounded_message_rows(statement.query(params![conversation, sequence])?)?;
         Ok(messages)
     }
     /// Removes every message from `sequence` on and moves the history epoch,
@@ -679,6 +698,9 @@ impl Store {
         let message = Message {
             content: None,
             review_feedback: review_feedback.cloned(),
+            delivery: Some(
+                ade_core::contract::conversations::SubmissionDelivery::admitted(request_id),
+            ),
             id: request_id.into(),
             conversation_id: conversation_id.into(),
             role: "user".into(),
@@ -687,6 +709,7 @@ impl Store {
             status: "completed".into(),
             turn_id: None,
             provider_item_id: None,
+            native_message: None,
             sequence: next_sequence(&tx, conversation_id)?,
             attachments: attachments.to_vec(),
         };

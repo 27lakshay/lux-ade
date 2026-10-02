@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS draft_history(id INTEGER PRIMARY KEY AUTOINCREMENT, c
 CREATE INDEX IF NOT EXISTS draft_history_by_window ON draft_history(conversation_id, window_id, id);
 CREATE TABLE IF NOT EXISTS draft_context(conversation_id TEXT NOT NULL, window_id TEXT NOT NULL, revision INTEGER NOT NULL, context_nodes TEXT NOT NULL, PRIMARY KEY(conversation_id, window_id));
 CREATE TABLE IF NOT EXISTS draft_stashes(conversation_id TEXT NOT NULL, name TEXT NOT NULL, revision INTEGER NOT NULL CHECK(revision>0), text TEXT NOT NULL, attachments TEXT NOT NULL, context_nodes TEXT NOT NULL, window_id TEXT NOT NULL, saved_at INTEGER NOT NULL, PRIMARY KEY(conversation_id, name));
+
 ";
 
 /// Recalled drafts kept per window; the oldest go first.
@@ -42,7 +43,7 @@ const CONTEXT_NODE_LIMIT: usize = 64;
 const CONTEXT_FIELD_LIMIT: usize = 256;
 const CONTEXT_BYTES_LIMIT: usize = 256 * 1024;
 
-fn ensure_tables(db: &Connection) -> Result<()> {
+pub(super) fn ensure_tables(db: &Connection) -> Result<()> {
     db.execute_batch(SCHEMA)?;
     Ok(())
 }
@@ -184,7 +185,10 @@ pub(crate) fn check_context_nodes(nodes: &[DraftContextNode]) -> Result<()> {
     Ok(())
 }
 
-fn context_row(row: &rusqlite::Row<'_>, column: usize) -> rusqlite::Result<Vec<DraftContextNode>> {
+pub(super) fn context_row(
+    row: &rusqlite::Row<'_>,
+    column: usize,
+) -> rusqlite::Result<Vec<DraftContextNode>> {
     let value: String = row.get(column)?;
     serde_json::from_str(&value).map_err(|error| {
         rusqlite::Error::FromSqlConversionFailure(

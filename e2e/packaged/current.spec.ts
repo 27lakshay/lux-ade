@@ -78,6 +78,7 @@ test('candidate Electron bridge sends through the bundled provider and replays o
       ({ conversationId }) =>
         window.adeHost.conversations.request('draft.save', {
           conversation_id: conversationId,
+          view_id: 'candidate-view',
           text: 'hello',
         }),
       { conversationId: conversation.id },
@@ -90,6 +91,7 @@ test('candidate Electron bridge sends through the bundled provider and replays o
           conversation_id: conversationId,
           request_id: 'candidate-send',
           text: 'hello',
+          view_id: 'candidate-view',
         }),
       { conversationId: conversation.id },
     )

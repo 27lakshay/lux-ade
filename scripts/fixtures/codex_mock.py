@@ -20,7 +20,10 @@ send_lock = threading.Lock()
 
 def send(value):
     with send_lock:
-        print(json.dumps(value), flush=True)
+        encoded = json.dumps(value)
+        with (root / "frames.jsonl").open("a") as file:
+            file.write(json.dumps({"pid": os.getpid(), "frame": value}) + "\n")
+        print(encoded, flush=True)
 
 def note(method, params):
     send({"method": method, "params": params})
@@ -53,6 +56,9 @@ if len(sys.argv) > 1 and sys.argv[1] == "resume":
     save()
     sys.exit(0)
 
+if (root / "immediate-startup").exists():
+    note("account/rateLimits/updated", {"rateLimits": {"limitId": None, "planType": "pro", "primary": {"usedPercent": 13, "windowDurationMins": 300, "resetsAt": 4102444800}, "secondary": None}})
+
 for line in sys.stdin:
     message = json.loads(line)
     method = message.get("method")
@@ -65,7 +71,7 @@ for line in sys.stdin:
             note("serverRequest/resolved", {"threadId": thread["id"], "requestId": rpc_id})
             finish()
         continue
-    record({"method": method, "params": params})
+    record({"method": method, "params": params, "id": rpc_id})
     if method == "initialize":
         send({"id": rpc_id, "result": {"userAgent": "ade-test-fixture"}})
     elif method == "initialized":
@@ -75,10 +81,34 @@ for line in sys.stdin:
             child={'id':params['threadId'],'turns':[{'id':'child-turn','status':'completed','items':[{'id':'child-answer','type':'agentMessage','text':'Child Codex transcript'}]}]}
             send({'id':rpc_id,'result':{'thread':child}})
         elif thread is not None and params['threadId'] == thread['id']:
-            read = dict(thread) if params.get('includeTurns') else {**thread, 'turns': []}
-            send({'id':rpc_id,'result':{'thread':read}})
+            source = json.loads((root / (thread['id'] + '.json')).read_text())
+            read = dict(source) if params.get('includeTurns') else {**source, 'turns': []}
+            mode = root / 'history-mode.json'
+            if mode.exists(): read.update(json.loads(mode.read_text()))
+            failure = root / 'history-failure.json'
+            if failure.exists():
+                send({'id': rpc_id, 'error': json.loads(failure.read_text())})
+            elif not params.get('includeTurns') and (root / 'history-hold').exists():
+                (root / 'history-held').write_text(str(rpc_id))
+                def held_history(reply=read, request_id=rpc_id):
+                    deadline = time.monotonic() + 15
+                    while not (root / 'history-release').exists() and time.monotonic() < deadline: time.sleep(.01)
+                    send({'id': request_id, 'result': {'thread': reply}})
+                threading.Thread(target=held_history).start()
+            else:
+                send({'id':rpc_id,'result':{'thread':read}})
         else:
             send({'id':rpc_id,'error':{'code':-32000,'message':'Unknown child thread'}})
+    elif method == "thread/items/list":
+        source = json.loads((root / (params["threadId"] + ".json")).read_text())
+        entries = [{"turnId": turn["id"], "item": item, "startedAtMs": 1700000000123,
+                    "completedAtMs": 1700000000456 if turn.get("status") == "completed" else None}
+                   for turn in source["turns"] for item in turn["items"]]
+        cursor = params.get("cursor")
+        offset = int(cursor.removeprefix("fixture-native:")) if cursor else 0
+        limit = params.get("limit", 1)
+        end = min(offset + limit, len(entries))
+        send({"id": rpc_id, "result": {"data": entries[offset:end], "nextCursor": "fixture-native:" + str(end) if end < len(entries) else None, "backwardsCursor": None}})
     elif method == "thread/fork":
         # Codex 0.157.0 v2 ThreadForkParams: `lastTurnId` keeps the turns
         # through that turn, inclusive; it must name a persisted turn that is
@@ -114,6 +144,14 @@ for line in sys.stdin:
     elif method == "turn/start":
         text = params["input"][0]["text"]
         key = params["clientUserMessageId"]
+        if text == "receipt-reject":
+            send({"id": rpc_id, "error": {"code": -32000, "message": "Fixture definite turn refusal"}})
+            continue
+        if text == "receipt-malformed":
+            send({"id": rpc_id, "result": {"turn": {"status": "inProgress"}}})
+            continue
+        if text == "receipt-disconnect":
+            sys.exit(3)
         if text == "queue-admission":
             deadline=time.monotonic()+5
             while not (root/"release-admission").exists() and time.monotonic()<deadline:time.sleep(.01)
@@ -134,14 +172,15 @@ for line in sys.stdin:
         if text == "typed-plan":
             note("turn/plan/updated", {**base, "explanation": "Verify structured persistence", "plan": [{"step": "Inspect", "status": "inProgress"}]})
             note("turn/plan/updated", {**base, "explanation": "Verify structured persistence", "plan": [{"step": "Inspect", "status": "completed"}]})
-        if text in ("typed-tool", "typed-unknown", "demo"):
+        if text in ("typed-tool", "typed-unknown", "typed-summary-large-tool", "demo"):
             command={"id":"command-"+key,"type":"commandExecution","command":"fixture command","cwd":"/fixture","aggregatedOutput":"","status":"inProgress"}
             note("item/started",{**base,"item":command})
-            note("item/commandExecution/outputDelta",{**base,"itemId":command['id'],"delta":"fixture failure"})
-            command.update(aggregatedOutput='fixture failure',exitCode=1,status='completed')
+            output = "fixture failure\n" + "x" * 8000 + "\nTOOL_OUTPUT_TAIL_SENTINEL" if text == "typed-summary-large-tool" else "fixture failure"
+            note("item/commandExecution/outputDelta",{**base,"itemId":command['id'],"delta":output})
+            command.update(aggregatedOutput=output,exitCode=1,status='completed')
             active['items'].append(command)
             note("item/completed",{**base,"item":command})
-        if text == "typed-unknown":
+        if text in ("typed-unknown", "typed-summary-large-tool"):
             private={"id":"reasoning-"+key,"type":"reasoning","text":"PRIVATE_REASONING"}
             active['items'].append(private)
             note("item/completed",{**base,"item":private})
@@ -149,6 +188,15 @@ for line in sys.stdin:
                     "title":"Example preview","details":{"secret":"PRIVATE_NATIVE_PAYLOAD"}}
             active['items'].append(future)
             note("item/completed",{**base,"item":future})
+        if text == "typed-summary-large-tool":
+            reasoning = {"id": "public-reasoning-" + key, "type": "reasoning", "summary": [], "content": ["PRIVATE_REASONING"]}
+            note("item/started", {**base, "item": reasoning})
+            summary = "Checking the fixture command before answering."
+            note("item/reasoning/summaryTextDelta", {**base, "itemId": reasoning["id"], "delta": summary, "summaryIndex": 0})
+            note("item/reasoning/textDelta", {**base, "itemId": reasoning["id"], "delta": "PRIVATE_DELTA_REASONING", "contentIndex": 0})
+            reasoning["summary"] = [summary]
+            active["items"].append(reasoning)
+            note("item/completed", {**base, "item": reasoning})
         if text == "typed-subagents":
             children={"id":"children-"+key,"type":"collabAgentToolCall","tool":"spawnAgent","status":"completed","senderThreadId":thread['id'],"receiverThreadIds":["fixture-child-running","fixture-child-completed"],"agentsStates":{"fixture-child-running":{"status":"running"},"fixture-child-completed":{"status":"completed","message":"Child finished"}}}
             active['items'].append(children)
@@ -187,12 +235,13 @@ output.write_text('tool completed once')
                     time.sleep(.04)
             note("item/completed", {**base, "item": answer}); finish()
             continue
-        if text in ("approval", "approval-cancel", "approval-both", "approval-expire", "large-approval", "questions", "rich-questions", "permissions", "permissions-deny"):
+        if text in ("approval", "approval-cancel", "approval-both", "approval-expire", "large-approval", "questions", "rich-questions", "permissions", "permissions-deny", "unsupported-request"):
             permission = "permission-" + key
             request_method = {"questions": "item/tool/requestUserInput",
                               "rich-questions": "item/tool/requestUserInput",
                               "permissions": "item/permissions/requestApproval",
-                              "permissions-deny": "item/permissions/requestApproval"}.get(text, "item/commandExecution/requestApproval")
+                              "permissions-deny": "item/permissions/requestApproval",
+                              "unsupported-request": "item/unknown/requestUnsupported"}.get(text, "item/commandExecution/requestApproval")
             pending[permission] = request_method
             request_params = {**base, "itemId": "command-" + key}
             if text == "rich-questions":
@@ -206,7 +255,10 @@ output.write_text('tool completed once')
                     {"id": "secret", "question": "Fixture secret", "isSecret": True},
                 ]
             elif text == "questions":
-                request_params["questions"] = [{"id": "first", "question": "First?"}, {"id": "second", "question": "Second?"}]
+                request_params["questions"] = [
+                    {"id": "first", "question": "First?", "isOther": True},
+                    {"id": "second", "question": "Second?", "isOther": True},
+                ]
             elif text.startswith("permissions"):
                 request_params["permissions"] = {"network": {"enabled": True}, "fileSystem": {"write": ["/fixture-only"]}}
             else:
@@ -216,7 +268,7 @@ output.write_text('tool completed once')
                                       availableDecisions=choices)
             send({"id": permission, "method": request_method, "params": request_params})
             save()
-            if text == "approval-expire":
+            if text in ("approval-expire", "unsupported-request"):
                 def expire():
                     while not (root / "expire-approval").exists(): time.sleep(.01)
                     if pending.pop(permission, None) is not None:
@@ -239,8 +291,7 @@ output.write_text('tool completed once')
             deferred_reply = ({"id": rpc_id, "error": {"code": -32000, "message": "Stale A error"}}
                               if text == "late-error" else {"id": rpc_id, "result": {"turn": json.loads(json.dumps(active))}})
             continue
-        # Force events to commit before the turn/start response is delivered.
-        time.sleep(0.12)
+        # Notifications are flushed in protocol order before the submit reply.
         send({"id": rpc_id, "result": {"turn": active}})
     elif method == "turn/interrupt":
         finish("interrupted")

@@ -245,6 +245,9 @@ pub enum AgentOp {
     /// Probe an account; `account` is an `ade_core::model::AccountExecution`.
     #[serde(rename = "agent.account_inspect")]
     AccountInspect { account: Value },
+    /// Read-only initialize/descriptor inspection for an installed provider artifact.
+    #[serde(rename = "agent.provider_inspect")]
+    ProviderInspect { worker: Value },
     /// List live runs; answered with `contract::agents::AgentList`. Each run
     /// carries the descendants the runtime tracks in its provider's tree.
     #[serde(rename = "agent.list")]
@@ -278,7 +281,10 @@ impl AgentOp {
             | Self::Events { run, .. }
             | Self::Ack { run, .. }
             | Self::Stop { run } => Some(run),
-            Self::AccountInspect { .. } | Self::List | Self::Create { .. } => None,
+            Self::AccountInspect { .. }
+            | Self::ProviderInspect { .. }
+            | Self::List
+            | Self::Create { .. } => None,
         }
     }
 }

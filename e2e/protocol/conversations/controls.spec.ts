@@ -126,7 +126,16 @@ test('F040: Codex compaction is acknowledged and its native record appears in th
     conversation_id: conversationId,
   })
   expect(busy).toMatchObject({ outcome: 'unavailable', reason: expect.stringContaining('A turn is running') })
-  await profile.call('agent.cancel', { conversation_id: conversationId })
+  const beforeCancel = await snapshot(profile, conversationId)
+  const cancelled = await profile.cli('conversation', 'cancel', conversationId)
+  expect(cancelled.code, cancelled.stderr).toBe(0)
+  expect(cancelled.json).toMatchObject({
+    type: 'agent_cancel_outcome',
+    conversation_id: conversationId,
+    source_attempt_id: beforeCancel.conversation.runtime_run,
+    submission_id: beforeCancel.conversation.runtime_submission,
+    evidence: { scope: 'turn', interruption_requested: true, termination: 'requested' },
+  })
   await expect.poll(() => conversationStatus(profile, conversationId)).toBe('interrupted')
 
   const compact = { operation_id: 'compact-1', conversation_id: conversationId }

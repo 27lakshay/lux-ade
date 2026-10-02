@@ -1,0 +1,10 @@
+{
+  "manifest_version": 1,
+  "id": "e2e.sdk-diagnostic",
+  "name": "ADE SDK diagnostic provider",
+  "version": "1.0.0",
+  "api_version": 1,
+  "data_schema": 1,
+  "description": "Read-only Effect SDK provider worker for install and protocol inspection.",
+  "entry_points": { "provider": "examples/diagnostic-worker.mjs" }
+}

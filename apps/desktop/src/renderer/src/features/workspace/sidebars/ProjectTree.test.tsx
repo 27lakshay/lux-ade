@@ -32,7 +32,15 @@ const conversation = (
   workspace_id: string,
   title: string,
   attention: Conversation['attention'] = 'idle',
-): Conversation => ({ id, workspace_id, title, provider: 'codex', status: 'idle', attention })
+): Conversation => ({
+  id,
+  workspace_id,
+  title,
+  provider: 'codex',
+  status: 'idle',
+  attention,
+  execution_host: { kind: 'local' },
+})
 const projects: CatalogProject[] = [
   { id: 'r1', kind: 'repository', name: 'shop', root: '/code/shop/.git' },
   { id: 'f1', kind: 'folder', name: 'notes', root: '/code/notes' },

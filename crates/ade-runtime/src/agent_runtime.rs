@@ -199,6 +199,37 @@ impl Run {
         std::thread::spawn(move || {
             while let Ok(event) = rx.recv() {
                 let Some(run) = weak.upgrade() else { break };
+                let event = match event {
+                    Event::Request {
+                        session,
+                        submission,
+                        turn,
+                        id,
+                        method,
+                        params,
+                        supported,
+                        metadata,
+                    } => {
+                        let metadata = metadata
+                            .unwrap_or_else(|| run.adapter.request_metadata(&id, &method, &params));
+                        let supported = supported
+                            && !matches!(
+                                metadata.schema,
+                                ade_core::requests::RequestSchema::Unsupported { .. }
+                            );
+                        Event::Request {
+                            session,
+                            submission,
+                            turn,
+                            id,
+                            method,
+                            params,
+                            supported,
+                            metadata: Some(metadata),
+                        }
+                    }
+                    event => event,
+                };
                 match run.append(event) {
                     Journaling::Accept | Journaling::Discard => {}
                     // Keep draining so the provider never blocks, and stop it off
@@ -369,7 +400,7 @@ impl Run {
     /// Must run while the supervisor still holds its owner-admission lock.
     pub fn admit(&self, request: &Value) -> Result<Admission> {
         let method = request["method"].as_str().context("Missing Agent method")?;
-        if method == "validate" || method == "child_transcript" {
+        if matches!(method, "validate" | "child_transcript" | "history") {
             return Ok(Admission {
                 class: CommandClass::Normal,
                 request: request.clone(),
@@ -437,6 +468,30 @@ impl Run {
         let request = &admission.request;
         let method = request["method"].as_str().context("Missing Agent method")?;
 
+        if method == "history" {
+            let query: ade_core::contract::providers::ProviderWorkerHistoryRequest =
+                serde_json::from_value(request["query"].clone())?;
+            ensure!(
+                query.context.provider == self.spec.provider
+                    && query.context.execution_id == self.spec.run,
+                "History context belongs to another execution"
+            );
+            ensure!(
+                query.context.account_id.as_deref()
+                    == self
+                        .spec
+                        .account
+                        .as_ref()
+                        .map(|account| account.id.as_str()),
+                "History account does not match execution"
+            );
+            let connected = self.connected()?;
+            ensure!(
+                connected["connected"]["session"].as_str() == Some(query.session.as_str()),
+                "History session does not match execution"
+            );
+            return Ok(serde_json::to_value(self.adapter.history(&query)?)?);
+        }
         if method == "child_transcript" {
             return self.adapter.child_transcript(
                 request["session"].as_str().context("Missing session")?,
@@ -468,11 +523,23 @@ impl Run {
             match method {
                 "open" => Ok(json!({"type":"connected","connected":self.adapter.open(request["resume"].as_str(), &serde_json::from_value(request["config"].clone())?)?})),
                 "send" => {
-                    let turn = self.adapter.send(string("session")?, string("submission")?, request["message_id"].as_str(), &serde_json::from_value(request.get("prompt").cloned().unwrap_or_else(||json!({"text":request["text"]})))?)?;
-                    self.append(Event::Submitted { submission: string("submission")?.into(), turn: turn.clone() });
-                    Ok(json!({"type":"sent","turn":turn}))
+                    let source_attempt_id = string("source_attempt_id")?;
+                    ensure!(source_attempt_id == self.spec.run, "Submission targets another source attempt");
+                    let submission = string("submission")?;
+                    let receipt = self.adapter.send_evidence(
+                        string("session")?, source_attempt_id, submission, request["message_id"].as_str(),
+                        &serde_json::from_value(request.get("prompt").cloned().unwrap_or_else(||json!({"text":request["text"]})))?,
+                    )?;
+                    self.append(Event::Submitted { submission: submission.into(), turn: receipt.turn.clone(), admitted: receipt.admitted, dispatch: Some(receipt.dispatch), native_outcome: Some(receipt.native_outcome) });
+                    Ok(json!({"type":"sent","receipt":receipt}))
                 }
-                "cancel" => { self.adapter.cancel(string("session")?, string("turn")?)?; Ok(json!({"type":"ack"})) }
+                "cancel" => {
+                    let evidence = self.adapter.cancel_target(string("session")?, string("source_attempt_id")?, string("submission_id")?, request["turn"].as_str())?;
+                    Ok(serde_json::to_value(ade_core::contract::providers::ProviderWorkerCancelResult {
+                        tag: ade_core::contract::providers::ProviderWorkerCancelTag::CancelResult,
+                        evidence,
+                    })?)
+                }
                 "steer" => {
                     let turn = self.adapter.steer(string("session")?, string("turn")?, string("message_id")?, &serde_json::from_value(request["prompt"].clone())?)?;
                     Ok(json!({"type":"steered","turn":turn}))
@@ -491,8 +558,9 @@ impl Run {
                     if p.answer_attempt == 0 && std::env::var("ADE_E2E_ANSWER_FAULT").as_deref() == Ok("before_native") {
                         Ok(json!({"type":"answer_not_sent"}))
                     } else {
-                        self.adapter.answer(&p, string("decision")?, request.get("answers").filter(|v| !v.is_null()))?;
-                        self.append(Event::Resolved { id: p.rpc_id });
+                        let answer: ade_core::requests::RequestAnswer = serde_json::from_value(request["answer"].clone())?;
+                        let operation_id = string("operation_id")?;
+                        self.adapter.answer_native(&p, operation_id, &answer)?;
                         Ok(json!({"type":"ack"}))
                     }
                 }
@@ -631,6 +699,16 @@ impl Remote {
     }
 }
 impl Provider for Remote {
+    fn history(
+        &self,
+        request: &ade_core::contract::providers::ProviderWorkerHistoryRequest,
+    ) -> Result<ade_core::contract::providers::ProviderWorkerHistoryPage> {
+        Ok(serde_json::from_value(self.call(
+            "history",
+            String::new(),
+            json!({"query":request}),
+        )?)?)
+    }
     fn child_transcript(
         &self,
         session: &str,
@@ -654,19 +732,37 @@ impl Provider for Remote {
     }
     fn send(
         &self,
+        _session: &str,
+        _submission: &str,
+        _message_id: Option<&str>,
+        _prompt: &crate::prompt::Prompt,
+    ) -> Result<String> {
+        anyhow::bail!("Remote Agent sends require attempt-aware delivery evidence")
+    }
+    fn send_evidence(
+        &self,
         session: &str,
+        source_attempt_id: &str,
         submission: &str,
         message_id: Option<&str>,
         prompt: &crate::prompt::Prompt,
-    ) -> Result<String> {
-        Ok(self.call(
+    ) -> Result<ade_core::contract::providers::ProviderWorkerSendResult> {
+        ensure!(
+            source_attempt_id == self.spec.run,
+            "Submission targets another source attempt"
+        );
+        let response = self.call(
             "send",
             format!("send:{submission}"),
-            json!({"session":session,"submission":submission,"message_id":message_id,"prompt":prompt}),
-        )?["turn"]
-            .as_str()
-            .context("Missing turn")?
-            .into())
+            json!({"session":session,"source_attempt_id":source_attempt_id,"submission":submission,"message_id":message_id,"prompt":prompt}),
+        )?;
+        serde_json::from_value(
+            response
+                .get("receipt")
+                .cloned()
+                .context("Agent send reply omitted delivery evidence")?,
+        )
+        .context("Agent send reply contained malformed delivery evidence")
     }
     fn prepare_submission(&self) -> Option<String> {
         match self.spec.provider.as_str() {
@@ -679,12 +775,28 @@ impl Provider for Remote {
         }
     }
     fn cancel(&self, session: &str, turn: &str) -> Result<()> {
-        self.call(
+        self.cancel_target(session, &self.spec.run, turn, Some(turn))
+            .map(|_| ())
+    }
+    fn cancel_target(
+        &self,
+        session: &str,
+        source_attempt_id: &str,
+        submission_id: &str,
+        turn: Option<&str>,
+    ) -> Result<ade_core::contract::providers::ProviderCancelEvidence> {
+        ensure!(
+            source_attempt_id == self.spec.run,
+            "Cancellation targets another source attempt"
+        );
+        let result = self.call(
             "cancel",
-            format!("cancel:{turn}"),
-            json!({"session":session,"turn":turn}),
+            format!("cancel:{source_attempt_id}:{submission_id}"),
+            json!({"session":session,"source_attempt_id":source_attempt_id,"submission_id":submission_id,"turn":turn}),
         )?;
-        Ok(())
+        let result: ade_core::contract::providers::ProviderWorkerCancelResult =
+            serde_json::from_value(result)?;
+        Ok(result.evidence)
     }
     fn steer(
         &self,
@@ -738,6 +850,25 @@ impl Provider for Remote {
             "answer",
             p.answer_command_key(),
             json!({"request":p,"decision":decision,"answers":answers}),
+        )?;
+        if result["type"] == "answer_not_sent" {
+            return Err(AnswerNotSent.into());
+        }
+        ensure!(result["type"] == "ack", "Invalid Agent answer receipt");
+        Ok(())
+    }
+    fn answer_native(
+        &self,
+        p: &PendingRequest,
+        operation_id: &str,
+        answer: &ade_core::requests::RequestAnswer,
+    ) -> Result<()> {
+        self.validate_native_answer(p, answer)?;
+        let key = format!("{operation_id}:attempt-{}", p.answer_attempt);
+        let result = self.call(
+            "answer",
+            key,
+            json!({"request":p,"operation_id":operation_id,"answer":answer}),
         )?;
         if result["type"] == "answer_not_sent" {
             return Err(AnswerNotSent.into());
@@ -856,7 +987,7 @@ mod tests {
     #[test]
     fn lost_reply_retry_runs_once_and_cancel_does_not_wait_for_send_reply() {
         let (run, fake) = fixture();
-        let send = json!({"method":"send","key":"send:1","submission":"1","session":"session","text":"hello"});
+        let send = json!({"method":"send","key":"send:1","source_attempt_id":"r","submission":"1","session":"session","text":"hello"});
         let admitted = run.admit(&send).unwrap();
         assert!(
             run.describe()["commands"]
@@ -880,10 +1011,10 @@ mod tests {
         let before = std::time::Instant::now();
         assert_eq!(
             run.execute(
-                &json!({"method":"cancel","key":"cancel:turn","session":"session","turn":"turn"})
+                &json!({"method":"cancel","key":"cancel:turn","session":"session","source_attempt_id":"r","submission_id":"1","turn":"turn"})
             )
             .unwrap()["type"],
-            "ack"
+            "cancel_result"
         );
         assert!(before.elapsed() < Duration::from_secs(1));
         assert_eq!(first.join().unwrap(), retry.join().unwrap());
@@ -898,7 +1029,7 @@ mod tests {
         *fake.gate.0.lock().unwrap() = true;
         let payload = "A".repeat(8 * 1024 * 1024);
         for index in 0..6 {
-            let request = json!({"method":"send","key":format!("send:{index}"),"submission":index.to_string(),"session":"session","prompt":{"text":"Image","attachments":[{"attachment":{"id":format!("image-{index}"),"name":"image.png","media_type":"image/png","size":6*1024*1024},"data":payload}]}});
+            let request = json!({"method":"send","key":format!("send:{index}"),"source_attempt_id":"r","submission":index.to_string(),"session":"session","prompt":{"text":"Image","attachments":[{"attachment":{"id":format!("image-{index}"),"name":"image.png","media_type":"image/png","size":6*1024*1024},"data":payload}]}});
             let result = run
                 .execute(&request)
                 .expect("Completed image requests must release their payloads");
@@ -917,9 +1048,17 @@ mod tests {
     #[test]
     fn replay_retains_unacknowledged_events_and_rejects_cursor_gaps() {
         let (run, _) = fixture();
-        run.append(Event::Resolved { id: json!("first") });
         run.append(Event::Resolved {
+            session: "session".into(),
+            submission: None,
+            id: json!("first"),
+            resolution: None,
+        });
+        run.append(Event::Resolved {
+            session: "session".into(),
+            submission: None,
             id: json!("second"),
+            resolution: None,
         });
         let first = run.events(0).unwrap();
         assert_eq!(first, run.events(0).unwrap()); // caller lost the response

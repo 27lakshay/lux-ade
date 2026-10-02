@@ -258,7 +258,30 @@ pub const DOMAINS: &[Domain] = &[
 
 /// Types clients need before any operation carries them, so parallel work can
 /// agree on their shape first. A type may stay here once an operation uses it.
-const SHARED_TYPES: &[SchemaFn] = &[subschema::<layout::TabTarget>];
+const SHARED_TYPES: &[SchemaFn] = &[
+    subschema::<layout::TabTarget>,
+    subschema::<providers::ProviderWorkerFailure>,
+    subschema::<providers::ProviderWorkerRequest>,
+    subschema::<providers::ProviderWorkerResponse>,
+    subschema::<providers::ProviderWorkerOpenRequest>,
+    subschema::<providers::ProviderWorkerSendRequest>,
+    subschema::<providers::ProviderWorkerSendResult>,
+    subschema::<providers::ProviderWorkerEventNotification>,
+    subschema::<providers::ProviderWorkerHistoryRequest>,
+    subschema::<providers::ProviderWorkerHistoryPage>,
+    subschema::<crate::provider::Connected>,
+    subschema::<providers::ProviderWorkerSteerRequest>,
+    subschema::<providers::ProviderWorkerCancelRequest>,
+    subschema::<providers::ProviderWorkerAnswerRequest>,
+    subschema::<providers::ProviderWorkerCompactRequest>,
+    subschema::<providers::ProviderWorkerRewindRequest>,
+    subschema::<providers::ProviderWorkerRewindResult>,
+    subschema::<providers::ProviderWorkerConfigureMcpRequest>,
+    subschema::<providers::ProviderWorkerChildTranscriptRequest>,
+    subschema::<providers::ProviderWorkerAck>,
+    subschema::<providers::ProviderWorkerCancelResult>,
+    subschema::<providers::ProviderHistoryContext>,
+];
 
 /// Streams outside `session.subscribe`, each with its own frames. Their frames
 /// are not feed frames: a terminal attachment carries PTY output, not catalog
@@ -280,7 +303,9 @@ pub struct Domain {
 }
 
 /// The durability tier of an operation (proposed architecture, section 4).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum Tier {
     /// Reads state. Retrying is free.

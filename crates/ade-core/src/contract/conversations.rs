@@ -1,7 +1,8 @@
 //! Conversation, draft, send-intent, queue, attachment, prompt and
 //! answer contracts.
 use super::{FrameSpec, OperationSpec, Tier};
-use crate::model::{Attachment, Conversation, Draft, Message, PendingRequest, QueuedPrompt};
+use crate::model::{Attachment, Conversation, Draft, Message, QueuedPrompt};
+pub use crate::requests::{AgentAnswerRequest, PendingRequest};
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
@@ -15,8 +16,15 @@ pub fn operations() -> Vec<OperationSpec> {
             "conversation.get",
             Tier::Query,
         ),
+        OperationSpec::new::<ConversationHistoryRequest, ConversationHistory>(
+            "conversation.history",
+            Tier::Query,
+        ),
         OperationSpec::new::<AgentSendRequest, Ack>("agent.send", Tier::EffectCommand),
-        OperationSpec::new::<AgentAnswerRequest, Ack>("agent.answer", Tier::EffectCommand),
+        OperationSpec::new::<AgentAnswerRequest, AgentAnswerOutcome>(
+            "agent.answer",
+            Tier::EffectCommand,
+        ),
         // Each call makes a Conversation with a fresh ID, so a retry duplicates it.
         OperationSpec::new::<ConversationCreateRequest, ConversationCreated>(
             "conversation.create",
@@ -148,9 +156,9 @@ pub struct ConversationGetRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "i64")]
     pub before: Option<i64>,
-    /// Page size; the daemon uses 50 when it is absent.
+    /// Page size; defaults to 32 and may not exceed 32. ADE sequence/epoch paging is unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(with = "u64")]
+    #[schemars(with = "u64", range(max = 32))]
     pub limit: Option<u64>,
     /// The `history_epoch` of the snapshot the caller is paging from. An
     /// older page (`before` set) is refused once a rewind replaced history,
@@ -158,6 +166,51 @@ pub struct ConversationGetRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "u64")]
     pub history_epoch: Option<u64>,
+}
+
+/// Read native history through the owning daemon, not the provider SDK or runtime.
+/// The daemon constructs and validates execution/account/source context. Native
+/// cursors below are distinct from conversation.get's ADE message sequence.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ConversationHistoryRequest {
+    pub conversation_id: String,
+    /// Echo a previously returned native snapshot; null/absent starts an identified read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot: Option<super::providers::ProviderHistorySnapshot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_cursor: Option<String>,
+    /// ADE's durable invalidation fence, never a native cursor or source generation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history_epoch: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "u32", range(min = 1, max = 32))]
+    pub max_items: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "u32", range(min = 1, max = 524288))]
+    pub max_bytes: Option<u32>,
+}
+
+wire_tag!(ConversationHistoryTag, "conversation_history");
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ConversationHistory {
+    #[serde(rename = "type")]
+    pub tag: ConversationHistoryTag,
+    pub conversation_id: String,
+    /// Null only when an initial read failed before identifying its native source.
+    pub snapshot: Option<super::providers::ProviderHistorySnapshot>,
+    pub messages: Vec<Message>,
+    pub next_native_cursor: Option<String>,
+    /// False for a failed or truncated read, including a single oversized item.
+    pub complete: bool,
+    /// Actual encoded retained Message array bytes, not a claimed source/page limit.
+    pub retained_bytes: u64,
+    /// True only for safely matching identified content retained after a temporary refusal.
+    pub stale: bool,
+    pub error: Option<super::providers::ProviderWorkerFailure>,
+    pub history_epoch: u64,
 }
 
 /// `agent.send`: submit a prompt. `request_id` is the caller-owned operation ID.
@@ -170,18 +223,23 @@ pub struct AgentSendRequest {
     pub attachments: Vec<Attachment>,
 }
 
-/// `agent.answer`: answer a pending provider request by its ID.
+/// `agent.answer`: the durable effect receipt and latest native resolution evidence.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
-pub struct AgentAnswerRequest {
-    pub conversation_id: String,
+#[serde(deny_unknown_fields)]
+pub struct AgentAnswerOutcome {
+    #[serde(rename = "type")]
+    pub tag: AgentAnswerOutcomeTag,
+    pub operation_id: String,
     pub request_id: String,
-    pub decision: String,
-    /// Structured answers; required by the `answer` decision.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(with = "Value")]
-    pub answers: Option<Value>,
+    pub source_attempt_id: Option<String>,
+    pub request_revision: u64,
+    pub response_delivery: crate::requests::ResponseDelivery,
+    pub resolution: crate::requests::RequestResolution,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
-
+wire_tag!(AgentAnswerOutcomeTag, "agent_answer_outcome");
 wire_tag!(ConversationSnapshotTag, "conversation_snapshot");
 wire_tag!(ConversationChangedTag, "conversation_changed");
 wire_tag!(AckTag, "ack");
@@ -312,6 +370,8 @@ pub struct DraftSendGetRequest {
 pub struct DraftSendPrepareRequest {
     pub draft_text: String,
     pub revision: i64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub context_nodes: Vec<DraftContextNode>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<Attachment>,
     pub conversation_id: String,
@@ -470,11 +530,76 @@ pub struct SendIntent {
     pub conversation_id: String,
     pub window_id: String,
     pub draft_revision: i64,
+    pub context_nodes: Vec<DraftContextNode>,
     pub draft_text: String,
     pub text: String,
     pub attachments: Vec<Attachment>,
     /// `pending`, `rejected`, `completed` or `aborted`.
     pub state: String,
+}
+
+/// Durable, request-correlated send evidence. A command acknowledgement is not native acceptance.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SubmissionDelivery {
+    pub request_id: String,
+    /// The saved user Message whose prompt/attachments remain available for manual recovery.
+    pub recoverable_message_id: String,
+    pub admitted: bool,
+    pub dispatch: SubmissionDispatch,
+    pub native_outcome: SubmissionNativeOutcome,
+    pub native_turn_id: Option<String>,
+    pub terminal: Option<SubmissionTerminal>,
+    pub error: Option<crate::error::Failure>,
+    pub recovery: Option<crate::error::Recovery>,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SubmissionDispatch {
+    Pending,
+    Dispatched,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SubmissionNativeOutcome {
+    Pending,
+    Accepted,
+    Rejected,
+    Unknown,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SubmissionTerminal {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<String>,
+    /// False until the send receipt proves this native turn belongs to request_id.
+    pub correlated: bool,
+    /// Native terminal status, including unknown provider values; not derived from assistant text.
+    pub status: String,
+    pub error: Option<crate::error::Failure>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_terminal: Option<crate::provider::NativeTerminalEvidence>,
+    #[serde(default)]
+    pub interrupt_requested: bool,
+}
+
+impl SubmissionDelivery {
+    pub fn admitted(request: &str) -> Self {
+        Self {
+            request_id: request.into(),
+            recoverable_message_id: request.into(),
+            admitted: true,
+            dispatch: SubmissionDispatch::Pending,
+            native_outcome: SubmissionNativeOutcome::Pending,
+            native_turn_id: None,
+            terminal: None,
+            error: None,
+            recovery: None,
+        }
+    }
 }
 
 /// The `draft.send.get` reply. `intent` is null when no send is unresolved.
@@ -720,6 +845,9 @@ pub struct ConversationRewindHistory {
     pub before_message_id: String,
     /// The provider turn the rewind returns to before.
     pub turn_id: String,
+    /// Provider-native locator for the prompt the rewind removes; distinct from ADE IDs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_message: Option<crate::provider::NativeMessageLocator>,
     pub removed_messages: u64,
     pub removed_turns: u64,
     pub kept_messages: u64,
@@ -762,6 +890,9 @@ pub struct ConversationRewindRequest {
     /// Required for `conversation`: the user message to remove with every later message.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub before_message_id: Option<String>,
+    /// Exact provider-native locator returned by the matching history preview.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_message: Option<crate::provider::NativeMessageLocator>,
     /// The preview's `state_token` (of `files` or `history`); required for both scopes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_state: Option<String>,
@@ -1006,6 +1137,11 @@ mod tests {
             request_id: "send_1".into(),
             conversation_id: "conversation_1".into(),
             window_id: "window_1".into(),
+            context_nodes: vec![DraftContextNode {
+                id: "selection_1".into(),
+                kind: "selection".into(),
+                data: json!({"text": "selected"}),
+            }],
             draft_revision: 2,
             draft_text: "draft".into(),
             text: "prompt".into(),
@@ -1241,6 +1377,7 @@ mod tests {
         let conversation: Conversation = serde_json::from_value(json!({
             "id": "conversation_1", "workspace_id": "workspace_1", "title": "Title",
             "provider": "codex", "provider_thread_id": null, "status": "idle",
+            "execution_host": {"kind": "local"},
             "active_turn_id": null, "error": null, "updated_at": 1, "account_context": "ambient",
             "queue_paused": false, "runtime_cursor": 0, "provider_config": {}, "attention": "idle", "unread": false,
         }))
@@ -1319,7 +1456,7 @@ mod tests {
             "draft.send.prepare",
             json!({"op": "draft.send.prepare", "conversation_id": "c", "window_id": "w",
                 "request_id": "send_1", "draft_text": "draft", "text": "prompt",
-                "revision": 1}),
+                "revision": 1, "context_nodes": [{"id": "selection_1", "kind": "selection", "data": {"text": "selected"}}]}),
         );
         request::<DraftSendCompleteRequest>(
             "draft.send.complete",
@@ -1332,8 +1469,8 @@ mod tests {
                 "request_id": "send_1"}),
         );
         let wire_intent = json!({"request_id": "send_1", "conversation_id": "conversation_1",
-            "window_id": "window_1", "draft_revision": 2, "draft_text": "draft",
-            "text": "prompt", "attachments": [attachment()], "state": "pending"});
+            "window_id": "window_1", "context_nodes": [{"id": "selection_1", "kind": "selection", "data": {"text": "selected"}}],
+            "draft_revision": 2, "draft_text": "draft", "text": "prompt", "attachments": [attachment()], "state": "pending"});
         response(
             "draft.send.get",
             &SendIntentState {

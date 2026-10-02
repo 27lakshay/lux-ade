@@ -10,6 +10,7 @@ import { readFile, stat, writeFile } from 'node:fs/promises'
 import { createConnection, type Socket } from 'node:net'
 import { join } from 'node:path'
 import {
+  cancelActiveSubmission,
   expect,
   isRunning,
   prompts,
@@ -131,7 +132,7 @@ test('status correlates identity, queues, live runs, terminals, services and cla
 
   // A cancelled turn and a stopped service.
   await profile.call('queue.cancel', { conversation_id: conversationId, request_id: 'diag-queued' })
-  await profile.call('agent.cancel', { conversation_id: conversationId })
+  await cancelActiveSubmission(profile, conversationId)
   await expect.poll(() => conversationState(profile, conversationId)).toBe('interrupted')
   // A turn the user cancelled has a known outcome; it is not unknown execution.
   expect((await status(profile)).unknown).toEqual([])

@@ -3,6 +3,7 @@
 // e2e/protocol/fixtures/adapters/exec_agent.sh. Everything it cannot do is
 // refused with its capability limitation.
 import {
+  cancelActiveSubmission,
   conversationStatus,
   expect,
   send,
@@ -16,7 +17,7 @@ import { defineExecAdapter, execPrompts, releaseExec, stageAdapterAgents } from 
 
 /** Cancel the running turn: it settles as interrupted and pauses the queue, which is resumed for the next send. */
 async function cancelTurn(profile: ScratchProfile, conversationId: string) {
-  await profile.call('agent.cancel', { conversation_id: conversationId })
+  await cancelActiveSubmission(profile, conversationId)
   await expect.poll(() => conversationStatus(profile, conversationId)).toBe('interrupted')
   await profile.call('queue.pause', { conversation_id: conversationId, paused: false })
 }
@@ -40,7 +41,7 @@ test('F024: a custom executable runs turns, cancel stops a running one, and unsu
     (await profile.call('catalog.get', {})).providers.find((descriptor) => descriptor.id === provider),
   ).toMatchObject({ capabilities: ['streaming', 'cancel'], permission_modes: ['default'] })
 
-  const { conversationId } = await startConversation(profile, provider as never)
+  const { conversationId } = await startConversation(profile, provider)
   await send(profile, conversationId, 'hello')
   await waitForMessage(profile, conversationId, 'Echo: hello')
   await waitForIdle(profile, conversationId)

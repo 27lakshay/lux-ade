@@ -12,7 +12,15 @@
 // (context/rewind.spec.ts); file rewind goes through ADE checkpoints.
 import { chmod, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { expect, send, startConversation, test, waitForIdle, type ScratchProfile } from '../fixtures'
+import {
+  cancelActiveSubmission,
+  expect,
+  send,
+  startConversation,
+  test,
+  waitForIdle,
+  type ScratchProfile,
+} from '../fixtures'
 import { sendAndLoseReply } from '../fixtures/lost-reply'
 import { mockDirectory } from '../fixtures/providers'
 
@@ -349,7 +357,7 @@ test('F039: a rewind is refused while a turn runs, without the Agent, before the
       expected_state: 'unused',
     }),
   ).toMatchObject({ outcome: 'unavailable' })
-  await profile.call('agent.cancel', { conversation_id: conversationId })
+  await cancelActiveSubmission(profile, conversationId)
   await expect
     .poll(async () => (await profile.call('conversation.get', { conversation_id: conversationId })).conversation.status)
     .toBe('interrupted')

@@ -6,6 +6,7 @@
 import { access, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
+  cancelActiveSubmission,
   expect,
   isRunning,
   prompts,
@@ -18,6 +19,31 @@ import {
   type ScratchProfile,
 } from '../fixtures'
 import { mockDirectory } from '../fixtures/providers'
+
+let cancelOperationNumber = 0
+
+function nextCancelOperation() {
+  return `cancel-fencing-${++cancelOperationNumber}`
+}
+
+async function cancellationRequest(profile: ScratchProfile, conversationId: string, turnId?: string) {
+  const current = await conversation(profile, conversationId)
+  const source_attempt_id = current.runtime_run
+  const submission_id = current.runtime_submission
+  if (!source_attempt_id || !submission_id) throw new Error('Running turn has no exact ADE cancellation identity')
+  const target_turn_id = turnId ?? current.active_turn_id ?? undefined
+  return {
+    operation_id: nextCancelOperation(),
+    conversation_id: conversationId,
+    source_attempt_id,
+    submission_id,
+    ...(target_turn_id === undefined ? {} : { turn_id: target_turn_id }),
+  }
+}
+
+function retryCancellation<T extends { operation_id: string }>(request: T) {
+  return { ...request, operation_id: nextCancelOperation() }
+}
 
 async function conversation(profile: ScratchProfile, conversationId: string) {
   return (await profile.call('conversation.get', { conversation_id: conversationId })).conversation
@@ -67,14 +93,15 @@ test('a cancel that names the previous turn is refused and never stops its succe
 }) => {
   const { conversationId } = await startConversation(profile, 'codex')
   const first = await runningTurn(profile, conversationId)
-  await profile.call('agent.cancel', { conversation_id: conversationId, turn_id: first })
+  const firstCancel = await cancellationRequest(profile, conversationId, first)
+  await profile.call('agent.cancel', firstCancel)
   await waitForStatus(profile, conversationId, 'interrupted')
   expect(await interruptedTurns(profile)).toEqual([first])
 
   const second = await runningTurn(profile, conversationId)
   expect(second).not.toBe(first)
   // A retried or late cancel for the first turn, through the SDK and the CLI.
-  await expect(profile.call('agent.cancel', { conversation_id: conversationId, turn_id: first })).rejects.toThrow(
+  await expect(profile.call('agent.cancel', retryCancellation(firstCancel))).rejects.toThrow(
     `Turn ${first} is no longer active; nothing was cancelled`,
   )
   const cli = await profile.cli('conversation', 'cancel', conversationId, '--turn', first)
@@ -85,9 +112,7 @@ test('a cancel that names the previous turn is refused and never stops its succe
 
   // The fence holds across a daemon crash: the running turn is reattached and still protected.
   await profile.restartDaemon('kill')
-  await expect(profile.call('agent.cancel', { conversation_id: conversationId, turn_id: first })).rejects.toThrow(
-    'no longer active',
-  )
+  await expect(profile.call('agent.cancel', retryCancellation(firstCancel))).rejects.toThrow('no longer active')
   expect(await conversation(profile, conversationId)).toMatchObject({ status: 'running', active_turn_id: second })
   expect(await interruptedTurns(profile)).toEqual([first])
 
@@ -103,7 +128,8 @@ test('a cancel racing the admission of the next turn stops only the turn it was 
   const first = await runningTurn(profile, conversationId)
   // Cancel, and at once try to admit the next turn under one request ID until
   // the daemon accepts it; the cancelled turn's cleanup runs meanwhile.
-  const cancelled = profile.call('agent.cancel', { conversation_id: conversationId, turn_id: first })
+  const firstCancellation = await cancellationRequest(profile, conversationId, first)
+  const cancelled = profile.call('agent.cancel', firstCancellation)
   const successor = `successor-${test.info().testId}`
   await expect
     .poll(
@@ -136,7 +162,7 @@ test('a cancellation whose provider reply fails after the turn ended does not fa
   const { conversationId } = await startConversation(profile, 'codex')
   await runningTurn(profile, conversationId)
   await profile.releaseMock('codex', 'hold-interrupt-reply')
-  await profile.call('agent.cancel', { conversation_id: conversationId })
+  await cancelActiveSubmission(profile, conversationId)
   // The provider interrupted the turn, but its reply to the cancel is held.
   await expect.poll(() => exists(join(directory, 'interrupt-held'))).toBe(true)
   await waitForStatus(profile, conversationId, 'interrupted')
@@ -161,7 +187,7 @@ test('a cancellation whose provider reply fails after the turn ended does not fa
 
   // Only the second turn's own cancel stops it, and it stops cleanly.
   await rm(join(directory, 'hold-interrupt-reply'))
-  await profile.call('agent.cancel', { conversation_id: conversationId })
+  await cancelActiveSubmission(profile, conversationId)
   await waitForStatus(profile, conversationId, 'interrupted')
   expect((await conversation(profile, conversationId)).error ?? null).toBeNull()
   expect(await interruptedTurns(profile)).toHaveLength(2)
@@ -190,7 +216,7 @@ test('a late provider reply to a finished turn neither fails nor replaces its su
       }),
     ).toMatchObject({ outcome: 'acknowledged', turn_id: successor })
     expect(await conversation(profile, conversationId)).toMatchObject({ status: 'running', active_turn_id: successor })
-    await profile.call('agent.cancel', { conversation_id: conversationId })
+    await cancelActiveSubmission(profile, conversationId)
     await waitForStatus(profile, conversationId, 'interrupted')
     expect((await conversation(profile, conversationId)).error ?? null).toBeNull()
     await profile.call('queue.pause', { conversation_id: conversationId, paused: false })

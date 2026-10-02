@@ -39,11 +39,20 @@ test('an effect command without an operation ID gets a fresh one; a query never 
 
 test('an error from an effect command names the operation ID it was sent under', async () => {
   await assert.rejects(
-    call('/nonexistent/ade.sock', 'agent.cancel', { conversation_id: 'c1' }),
+    call('/nonexistent/ade.sock', 'agent.cancel', {
+      conversation_id: 'c1',
+      source_attempt_id: 'run-1',
+      submission_id: 'submission-1',
+    }),
     (error) => error.code === 'unavailable' && typeof error.operationId === 'string',
   )
   await assert.rejects(
-    call('/nonexistent/ade.sock', 'agent.cancel', { operation_id: 'mine', conversation_id: 'c1' }),
+    call('/nonexistent/ade.sock', 'agent.cancel', {
+      operation_id: 'mine',
+      conversation_id: 'c1',
+      source_attempt_id: 'run-1',
+      submission_id: 'submission-1',
+    }),
     (error) => error.operationId === 'mine',
   )
 })

@@ -7,7 +7,7 @@
     "prepare": "husky",
     "dev": "pnpm build:sdk && pnpm --filter @ade/cli build && node scripts/dev-desktop.mjs",
     "build": "nx run-many -t build",
-    "build:sdk": "nx run-many -t build -p @ade/contracts @ade/client",
+    "build:sdk": "nx run-many -t build -p @ade/contracts @ade/client @ade/provider-sdk && node packages/provider-sdk/scripts/package-diagnostic.mjs",
     "contract:generate": "node scripts/generate-contracts.mjs",
     "contract:check": "node scripts/generate-contracts.mjs --check",
     "build:backend": "node scripts/cargo.mjs build --locked -p ade-daemon -p ade-runtime --features ade-runtime/native-terminal --bins",

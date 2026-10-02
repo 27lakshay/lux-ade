@@ -91,14 +91,25 @@ test('F036: a cleared or sent draft is recalled with its context, only over the 
 
   // Send a second draft with the same context through the send intent.
   await profile.call('draft.save', { ...owner, text: 'hello', revision: 3, attachments, context_nodes: [node] })
-  await profile.call('draft.send.prepare', {
+  const prepared = await profile.call('draft.send.prepare', {
     ...owner,
     request_id: 'send-with-context',
     draft_text: 'hello',
     text: 'hello',
     revision: 3,
     attachments,
+    context_nodes: [node],
   })
+  expect(prepared.intent.context_nodes).toEqual([node])
+  expect((await profile.call('draft.send.get', owner)).intent).toMatchObject({
+    request_id: 'send-with-context',
+    context_nodes: [node],
+  })
+  expect((await profile.call('draft.send.list', { window_id: owner.window_id })).sends).toEqual([
+    expect.objectContaining({
+      intent: expect.objectContaining({ request_id: 'send-with-context', context_nodes: [node] }),
+    }),
+  ])
   await profile.call('agent.send', {
     conversation_id: conversationId,
     request_id: 'send-with-context',

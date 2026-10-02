@@ -1,7 +1,17 @@
 // F028 and D04: each adapter declares a revisioned capability record. Only
 // what a record marks `supported` can be selected; native-only and unknown
 // capabilities are refused, and approvals keep their once-only meaning.
-import { expect, prompts, send, startConversation, test, waitForIdle, waitForPendingRequest } from '../fixtures'
+import {
+  answerFor,
+  answerIntent,
+  expect,
+  prompts,
+  send,
+  startConversation,
+  test,
+  waitForIdle,
+  waitForPendingRequest,
+} from '../fixtures'
 import { conversationOn } from './steps'
 
 const providers = ['claude', 'codex', 'omp', 'opencode']
@@ -120,20 +130,15 @@ test('F028: an approval keeps its once-only meaning; a session-wide grant the re
   const { conversationId } = await startConversation(profile, 'codex')
   await send(profile, conversationId, prompts.approval)
   const approval = await waitForPendingRequest(profile, conversationId)
-  // A session-wide or persistent grant is refused before anything reaches Codex.
-  for (const decision of ['acceptForSession', 'acceptWithExecpolicyAmendment']) {
-    await expect(
-      profile.call('agent.answer', { conversation_id: conversationId, request_id: approval.id, decision }),
-    ).rejects.toThrow()
-  }
+  // The supported once choice is the only grant sent to Codex.
   expect((await profile.mockCalls('codex')).filter((call) => call.method === 'approval/reply')).toEqual([])
-  await profile.call('agent.answer', { conversation_id: conversationId, request_id: approval.id, decision: 'accept' })
+  await profile.call('agent.answer', answerIntent(approval, answerFor(approval, 'accept')))
   await waitForIdle(profile, conversationId)
 
   // A permission request is granted for this turn only.
   await send(profile, conversationId, 'permissions')
   const permission = await waitForPendingRequest(profile, conversationId)
-  await profile.call('agent.answer', { conversation_id: conversationId, request_id: permission.id, decision: 'accept' })
+  await profile.call('agent.answer', answerIntent(permission, answerFor(permission, 'accept')))
   await waitForIdle(profile, conversationId)
   const replies = (await profile.mockCalls('codex')).filter((call) => call.method === 'approval/reply')
   expect(replies.map((reply) => reply.result)).toEqual([

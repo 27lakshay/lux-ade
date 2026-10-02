@@ -2,7 +2,7 @@
 // cancellation settles a wait already in progress, a cancelled queued message
 // is reported blocked, a deadline survives a daemon restart, and out-of-range
 // waits are refused. The CLI wait is a loop of non-blocking daemon queries.
-import { expect, prompts, test } from '../fixtures'
+import { cancelActiveSubmission, expect, prompts, test } from '../fixtures'
 import { delegate, opId, parentIn, waitForChild, waitOnce } from './steps'
 
 test('a wait times out at its deadline and leaves the child running (F107 timeout)', async ({ profile }) => {
@@ -40,7 +40,7 @@ test('cancelling the child ends a CLI wait already in progress with an interrupt
   const waiting = profile.cli('child', 'wait', child, '--timeout-ms', '120000')
   // The CLI is polling; its wait is pending until the cancellation lands.
   expect((await waitOnce(profile, child, { timeoutMs: 0 })).phase).toBe('running')
-  await profile.call('agent.cancel', { conversation_id: child })
+  await cancelActiveSubmission(profile, child)
   const result = await waiting
   expect(result.code).toBe(0)
   expect(result.json).toMatchObject({ type: 'child_wait', state: 'settled', outcome: 'interrupted', done: true })
@@ -101,7 +101,7 @@ test('a wait deadline carries across a daemon restart, and the settled outcome a
     deadline_ms: first.deadline_ms,
     message_id: first.message_id,
   })
-  await profile.call('agent.cancel', { conversation_id: child })
+  await cancelActiveSubmission(profile, child)
   const settled = await waitForChild(profile, child, 'settled', { outcome: 'interrupted' })
   await profile.restartDaemon('kill')
   expect(await waitOnce(profile, child, { deadlineMs: first.deadline_ms })).toMatchObject({

@@ -1,0 +1,52 @@
+{
+  "name": "@ade/provider-sdk",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "import": "./dist/node.js"
+    }
+  },
+  "dependencies": {
+    "@ade/contracts": "workspace:*",
+    "@effect/platform-node": "4.0.0-rc.118",
+    "effect": "4.0.0-rc.118"
+  },
+  "devDependencies": {
+    "@effect/tsgo": "0.47.1",
+    "typescript": "7.0.2",
+    "@types/node": "24.6.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit",
+    "effect:diagnostics": "effect-tsgo diagnostics --project tsconfig.json"
+  },
+  "nx": {
+    "targets": {
+      "build": {
+        "outputs": [
+          "{projectRoot}/dist"
+        ]
+      },
+      "typecheck": {},
+      "effect:diagnostics": {}
+    }
+  },
+  "files": [
+    "dist/*.js",
+    "dist/*.d.ts",
+    "examples/*"
+  ]
+}

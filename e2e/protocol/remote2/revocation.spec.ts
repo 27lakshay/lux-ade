@@ -183,7 +183,15 @@ test('a start grants the pairing on an authenticated paired endpoint, and revoca
   const after = await remoteCall(renewedLink, 'conversation.get', { conversation_id: conversation.id })
   expect(after.conversation.status).toBe('running')
   expect(await remoteTurns(started)).toBe(1)
-  await remoteCall(renewedLink, 'agent.cancel', { conversation_id: conversation.id })
+  if (!after.conversation.runtime_run || !after.conversation.runtime_submission) {
+    throw new Error('Conversation has no active cancellation identity')
+  }
+  await remoteCall(renewedLink, 'agent.cancel', {
+    conversation_id: conversation.id,
+    source_attempt_id: after.conversation.runtime_run,
+    submission_id: after.conversation.runtime_submission,
+    ...(after.conversation.active_turn_id === null ? {} : { turn_id: after.conversation.active_turn_id }),
+  })
   await expect
     .poll(
       async () =>

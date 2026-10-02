@@ -16,6 +16,28 @@ This is the complete 140-item catalogue reconstructed from the agreed conversati
 - F065 can resolve a supported PR source into a checkout; this does not add excluded F076/F077 PR management/review.
 - F046 snoozing changes attention state, not scheduled agent execution.
 
+## Provider SDK and conversation UI refinement — 2026-09-30
+
+The [detailed delivery specification](02-providers/provider-sdk-conversation-ui.md)
+records TypeScript adapter authoring with Effect v4 RC, generated Rust-owned contracts
+and provider/UI vertical slices. Its PC01–PC38 acceptance rows refine existing IDs;
+they do not add catalogue features or change dispositions. The additional rows cover
+subscription readiness, dependent configuration, semantic output ordering, transcript
+cache identity, partial tool history, teardown, successor work and Effect tooling.
+
+| Existing requirements | Added delivery evidence | Status |
+|---|---|---|
+| F021–F030 | Public SDK/worker parity, semantic capability matrices, managed account execution and independent native provider packaging | Unverified against the detailed specification |
+| F031–F043, F046, F049–F050 | Production conversation UI, composer/requests/history/recovery and integration with retained work | Unverified against the detailed specification |
+| Conversation-facing F051–F060 | Timeline/composer contribution loader, core fallback, leases and independent extension proof | Unverified against the detailed specification |
+| R001–R020 as applicable | Cross-boundary conformance, failure evidence and measured desktop/SDK resource policy | Unverified against the detailed specification |
+
+Keep the feature register's existing headless acceptance and evidence links intact.
+They certify only their recorded behavior. They do not establish this new SDK,
+desktop or contract-freeze acceptance. F044–F048 retain their individual dispositions;
+the selected snooze action remains in scope without adding excluded task organization,
+automatic settlement or hibernation.
+
 ## Feature register
 
 | ID | Requirement | Disposition | Owning specification | Implementation |

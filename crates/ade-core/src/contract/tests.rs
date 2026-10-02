@@ -3,7 +3,7 @@
 use super::conversations::*;
 use super::workspaces::*;
 use super::*;
-use crate::model::{Attachment, Catalogue, Conversation, Message, PendingRequest, QueuedPrompt};
+use crate::model::{Attachment, Catalogue, Conversation};
 use serde::de::DeserializeOwned;
 
 fn validator(name: &str) -> jsonschema::Validator {
@@ -66,6 +66,7 @@ fn conversation() -> Conversation {
     serde_json::from_value(json!({
         "id": "conversation_1", "workspace_id": "workspace_1", "title": "Title",
         "provider": "codex", "provider_thread_id": null, "status": "idle",
+        "execution_host": {"kind": "local"},
         "active_turn_id": null, "error": null, "updated_at": 1, "account_context": "ambient",
             "queue_paused": false, "runtime_cursor": 0, "provider_config": {}, "attention": "idle", "unread": false,
     }))
@@ -78,35 +79,6 @@ fn attachment() -> Attachment {
         name: "notes.txt".into(),
         media_type: "text/plain".into(),
         size: 12,
-    }
-}
-
-fn message() -> Message {
-    serde_json::from_value(json!({
-        "id": "message_1", "conversation_id": "conversation_1", "role": "user",
-        "kind": "text", "text": "hello", "status": "complete", "turn_id": null,
-        "provider_item_id": null, "sequence": 3, "attachments": [attachment()],
-        "review_feedback": {"workspace_id": "workspace_1"},
-    }))
-    .unwrap()
-}
-
-fn pending() -> PendingRequest {
-    serde_json::from_value(json!({
-        "id": "request_1", "conversation_id": "conversation_1", "run_id": "run_1",
-        "rpc_id": 7, "method": "item/tool/requestUserInput", "params": {"questions": []},
-        "status": "pending",
-    }))
-    .unwrap()
-}
-
-fn queued() -> QueuedPrompt {
-    QueuedPrompt {
-        id: "queued_1".into(),
-        conversation_id: "conversation_1".into(),
-        text: "later".into(),
-        status: "queued".into(),
-        attachments: Vec::new(),
     }
 }
 
@@ -203,49 +175,6 @@ fn catalog_get_round_trips() {
 }
 
 #[test]
-fn conversation_get_round_trips() {
-    request_round_trip(
-        "conversation.get",
-        &ConversationGetRequest {
-            conversation_id: "conversation_1".into(),
-            before: None,
-            limit: None,
-            history_epoch: None,
-        },
-    );
-    request_round_trip(
-        "conversation.get",
-        &ConversationGetRequest {
-            conversation_id: "conversation_1".into(),
-            before: Some(10),
-            limit: Some(200),
-            history_epoch: Some(2),
-        },
-    );
-    let snapshot = ConversationSnapshot {
-        tag: ConversationSnapshotTag::Tag,
-        conversation: conversation(),
-        messages: vec![message()],
-        requests: vec![pending()],
-        queued: vec![queued()],
-        boot_id: "boot_1".into(),
-        revision: 9,
-        history_epoch: 0,
-    };
-    response_round_trip("conversation.get", &snapshot);
-    let changed = ConversationChanged {
-        tag: ConversationChangedTag::Tag,
-        conversation: conversation(),
-        messages: vec![message()],
-        requests: Vec::new(),
-        queued: Vec::new(),
-        boot_id: "boot_1".into(),
-        revision: 10,
-    };
-    reply_round_trip("ConversationChanged", &changed);
-}
-
-#[test]
 fn agent_send_and_answer_round_trip() {
     request_round_trip(
         "agent.send",
@@ -259,23 +188,29 @@ fn agent_send_and_answer_round_trip() {
     request_round_trip(
         "agent.answer",
         &AgentAnswerRequest {
+            operation_id: "answer-op-1".into(),
             conversation_id: "conversation_1".into(),
             request_id: "request_1".into(),
-            decision: "answer".into(),
-            answers: Some(json!({"q1": ["yes"]})),
+            source_attempt_id: Some("run_1".into()),
+            request_revision: 1,
+            answer: crate::requests::RequestAnswer::Questions {
+                answers: std::collections::BTreeMap::from([("q1".into(), vec!["yes".into()])]),
+            },
         },
     );
-    request_round_trip(
+    response_round_trip(
         "agent.answer",
-        &AgentAnswerRequest {
-            conversation_id: "conversation_1".into(),
+        &AgentAnswerOutcome {
+            tag: AgentAnswerOutcomeTag::default(),
+            operation_id: "answer-op-1".into(),
             request_id: "request_1".into(),
-            decision: "decline".into(),
-            answers: None,
+            source_attempt_id: Some("run_1".into()),
+            request_revision: 1,
+            response_delivery: crate::requests::ResponseDelivery::Acknowledged,
+            resolution: crate::requests::RequestResolution::Outstanding,
+            error: None,
         },
     );
-    response_round_trip("agent.send", &Ack::default());
-    response_round_trip("agent.answer", &Ack::default());
 }
 
 #[test]
@@ -284,6 +219,13 @@ fn requests_are_closed_and_replies_are_open() {
     assert!(!validator("CatalogGetRequest").is_valid(&json!({"op": "agent.send"})));
     assert!(validator("Ack").is_valid(&json!({"type": "ack", "request_id": "send_1"})));
     assert!(!validator("Ack").is_valid(&json!({"type": "catalog"})));
+    let conversation_get = validator("ConversationGetRequest");
+    assert!(conversation_get.is_valid(&json!({
+        "op": "conversation.get", "conversation_id": "c", "limit": 32,
+    })));
+    assert!(!conversation_get.is_valid(&json!({
+        "op": "conversation.get", "conversation_id": "c", "limit": 33,
+    })));
     assert!(!validator("ConversationGetRequest").is_valid(&json!({
         "op": "conversation.get", "conversation_id": "c", "limit": 9_007_199_254_740_992_u64,
     })));

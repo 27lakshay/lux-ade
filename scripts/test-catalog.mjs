@@ -19,6 +19,7 @@ export const externalTests = {
     'providers/omp/loopback.test.mjs',
     'scripts/test_codex_loopback.py',
     'scripts/test_claude_loopback.py',
+    'providers/claude/loopback.test.mjs',
     'scripts/test_agent_handoff_loopback.py',
   ],
   'provider-live': ['scripts/test_agent_handoff_live.py', 'scripts/live_provider_check.py'],

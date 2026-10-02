@@ -2,6 +2,7 @@ import { WarpThemeImportDialog } from './WarpThemeImportDialog'
 import { GhosttyThemeImportDialog } from './GhosttyThemeImportDialog'
 import { ThemeImportDialog } from './ThemeImportDialog'
 import { useState } from 'react'
+import { ProviderSettings } from './ProviderSettings'
 import { ThemeLibraryDialog } from './ThemeLibraryDialog'
 import { ThemeValidationPanel } from './ThemeValidationPanel'
 import { AppearancePreview } from './AppearancePreview'
@@ -355,6 +356,7 @@ export function SettingsScreen() {
           />
         )}
       </FieldGroup>
+      <ProviderSettings />
     </FullScreen>
   )
 }

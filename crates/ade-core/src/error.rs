@@ -320,7 +320,17 @@ pub struct HostResourcesUnavailable(pub String);
 
 /// Categories carry no raw provider payload. Recovery is advice, never an
 /// authorization to replay a mutation whose outcome might be unknown.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    thiserror::Error,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum Failure {
     #[error(
@@ -357,8 +367,12 @@ pub enum Failure {
         "Provider rejected the operation. Check the provider configuration and requested operation before retrying"
     )]
     Rejected,
+    #[error(
+        "Provider data exceeds the supported byte, node, or nesting budget. Read a smaller identified history page"
+    )]
+    ResourceLimit,
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Recovery {
     SignIn,
@@ -378,7 +392,7 @@ impl Failure {
                 Recovery::ReconnectAndReconcile
             }
             Self::SaveFailed => Recovery::CheckStorage,
-            Self::Unavailable | Self::SessionUnavailable | Self::Rejected => {
+            Self::Unavailable | Self::SessionUnavailable | Self::Rejected | Self::ResourceLimit => {
                 Recovery::CheckProvider
             }
         }
@@ -386,6 +400,24 @@ impl Failure {
     /// Classify structured provider status first. Text-only bridges get narrow
     /// known signatures, never broad matches against words like "token".
     pub fn provider(value: &serde_json::Value, fallback: Self) -> Self {
+        if let Some(detail) = value.get("data") {
+            let category = match detail.get("code").and_then(serde_json::Value::as_str) {
+                Some("resource_limit") => Some(Self::ResourceLimit),
+                Some("authentication_required") => Some(Self::Authentication),
+                Some("rate_limited") => Some(Self::RateLimit),
+                Some("transport_failure" | "timeout" | "cancelled") => Some(Self::OutcomeUnknown),
+                Some("shutdown") => Some(Self::Disconnected),
+                Some("integration_bug" | "protocol_mismatch") => Some(Self::InvalidData),
+                Some(
+                    "provider_failure" | "unsupported" | "permission_denied" | "invalid_request",
+                ) => Some(Self::Rejected),
+                Some("internal") => Some(Self::Unavailable),
+                _ => None,
+            };
+            if let Some(category) = category {
+                return Self::provider(detail, category);
+            }
+        }
         let code = value
             .get("code")
             .or_else(|| value.get("type"))
@@ -433,6 +465,7 @@ impl Failure {
             Self::Unavailable,
             Self::SessionUnavailable,
             Self::Rejected,
+            Self::ResourceLimit,
         ] {
             if message == known.to_string() {
                 return known;
@@ -499,7 +532,8 @@ impl From<TransportError> for Failure {
     fn from(error: TransportError) -> Self {
         match error {
             TransportError::Disconnected => Self::Disconnected,
-            TransportError::InvalidMessage | TransportError::MessageTooLarge => Self::InvalidData,
+            TransportError::InvalidMessage => Self::InvalidData,
+            TransportError::MessageTooLarge => Self::ResourceLimit,
             TransportError::Overloaded | TransportError::StateUnavailable => Self::Unavailable,
             TransportError::WriteTimeout | TransportError::OutcomeUnknown => Self::OutcomeUnknown,
         }

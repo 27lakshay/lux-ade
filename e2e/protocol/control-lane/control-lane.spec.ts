@@ -11,6 +11,7 @@ import { rm, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import {
+  cancellationIntent,
   expect,
   isRunning,
   primaryShell,
@@ -109,14 +110,17 @@ test('the control lane refuses a peer that is not the profile user, through the 
   const profile = await ade.profile({ env: { ADE_E2E_DAEMON_PEER_UID_FILE: peerUid } })
   const { conversationId } = await startConversation(profile, 'codex')
   const turn = await runningTurn(profile, conversationId)
-  await writeFile(peerUid, `${me + 1}\n`)
+  const cancellation = await cancellationIntent(profile, conversationId, turn)
+  await writeFile(peerUid, String(me + 1) + '\n')
   try {
     const hello = await socketReply(controlSocket(profile), { op: 'hello' })
     expect(hello.frame).toMatchObject({ type: 'error', code: 'unauthenticated' })
     // The refusal is a reply, so the SDK does not fall back to the profile socket.
-    await expect(
-      profile.call('agent.cancel', { conversation_id: conversationId, turn_id: turn }),
-    ).rejects.toMatchObject({ code: 'unauthenticated', delivery: 'not_sent', replied: true })
+    await expect(profile.call('agent.cancel', cancellation)).rejects.toMatchObject({
+      code: 'unauthenticated',
+      delivery: 'not_sent',
+      replied: true,
+    })
     const cli = await profile.cli('conversation', 'cancel', conversationId, '--turn', turn)
     expect(cli.code).not.toBe(0)
     expect(cli.stderr).toMatch(/unauthenticated/)
@@ -124,7 +128,7 @@ test('the control lane refuses a peer that is not the profile user, through the 
   } finally {
     await rm(peerUid, { force: true })
   }
-  await profile.call('agent.cancel', { conversation_id: conversationId, turn_id: turn })
+  await profile.call('agent.cancel', cancellation)
   await expect.poll(() => interrupts(profile)).toEqual([turn])
 })
 
@@ -133,10 +137,10 @@ test('a cancel sent while a connection flood fills the profile socket backlog is
 }) => {
   const { conversationId } = await startConversation(profile, 'codex')
   const turn = await runningTurn(profile, conversationId)
+  const cancellation = await cancellationIntent(profile, conversationId, turn)
   const full = await fillBacklog(profile, conversationId)
-  // One attempt through the SDK, with no retry. The profile socket still
   // refuses connections after the cancel has connected to the control lane.
-  const cancelled = outcome(profile.call('agent.cancel', { conversation_id: conversationId, turn_id: turn }))
+  const cancelled = outcome(profile.call('agent.cancel', cancellation))
   try {
     expect(await connectOutcome(profile.socket)).toBe('ECONNREFUSED')
   } finally {
@@ -158,15 +162,13 @@ test('a cancel sent while a connection flood fills the profile socket backlog is
 test('without the control lane, the same full backlog refuses the cancel before it is sent', async ({ profile }) => {
   const { conversationId } = await startConversation(profile, 'codex')
   const turn = await runningTurn(profile, conversationId)
-  // An older daemon has no control lane: the SDK falls back to the profile socket.
+  const cancellation = await cancellationIntent(profile, conversationId, turn)
   await rm(controlSocket(profile))
   const full = await fillBacklog(profile, conversationId)
   try {
     // The daemon stays paused until the cancel settles, so its fallback
     // connection meets the full backlog however late it is made.
-    const cancelled = await outcome(
-      profile.call('agent.cancel', { conversation_id: conversationId, turn_id: turn }, { timeoutMs: 10_000 }),
-    )
+    const cancelled = await outcome(profile.call('agent.cancel', cancellation, { timeoutMs: 10_000 }))
     // The refusal is truthful: nothing was sent, so a retry is safe.
     expect(cancelled).toMatchObject({ error: { code: 'unavailable', delivery: 'not_sent', replied: false } })
   } finally {
@@ -174,7 +176,7 @@ test('without the control lane, the same full backlog refuses the cancel before 
   }
   expectNoneLost(await full.replies)
   expect(await interrupts(profile)).toEqual([])
-  await profile.call('agent.cancel', { conversation_id: conversationId, turn_id: turn })
+  await profile.call('agent.cancel', cancellation)
   await expect.poll(() => interrupts(profile)).toEqual([turn])
 })
 
@@ -225,14 +227,15 @@ test('without a control lane, as with an older daemon, the SDK and the CLI stop 
   // Remove the lane's socket file: the daemon keeps serving its profile socket only.
   await rm(controlSocket(profile))
   const turn = await runningTurn(profile, conversationId)
-  expect((await profile.call('hello', {})).pid).toBe(profile.hello.pid)
+  const cancellation = await cancellationIntent(profile, conversationId, turn)
   const cli = await profile.cli('conversation', 'cancel', conversationId, '--turn', turn)
   expect(cli.code, cli.stderr).toBe(0)
   await expect.poll(() => interrupts(profile)).toEqual([turn])
   // A daemon refusal over the profile socket arrives as its reply.
-  await expect(
-    profile.call('agent.cancel', { conversation_id: conversationId, turn_id: 'turn-not-this-one' }),
-  ).rejects.toMatchObject({ replied: true, message: expect.stringMatching(/no longer active/) })
+  await expect(profile.call('agent.cancel', { ...cancellation, turn_id: 'turn-not-this-one' })).rejects.toMatchObject({
+    replied: true,
+    message: expect.stringMatching(/no longer active/),
+  })
 })
 
 test('shutdown over the control lane hands the runtime over and removes both sockets', async ({ profile }) => {

@@ -4,6 +4,8 @@
 // every reply; `conversation.mark_seen` clears unread. Orchestration children
 // carry their parent and group links on the catalog record.
 import {
+  answerFor,
+  answerIntent,
   expect,
   prompts,
   send,
@@ -13,6 +15,7 @@ import {
   waitForPendingRequest,
   type ScratchProfile,
 } from '../fixtures'
+import { cancelActiveSubmission } from '../fixtures'
 import { subscribeFeed } from '../fixtures/feed'
 import { opId, parentIn, waitForChild } from '../orchestration/steps'
 
@@ -37,7 +40,7 @@ test('attention and unread follow a real turn, an open approval and mark_seen', 
   const approval = await waitForPendingRequest(profile, conversationId)
   expect(await attention(profile, conversationId)).toBe('needs_you')
   expect((await listed(profile, conversationId))?.attention).toBe('needs_you')
-  await profile.call('agent.answer', { conversation_id: conversationId, request_id: approval.id, decision: 'decline' })
+  await profile.call('agent.answer', answerIntent(approval, answerFor(approval, 'decline')))
   await waitForIdle(profile, conversationId)
   expect(await attention(profile, conversationId)).toBe('idle')
 
@@ -78,7 +81,7 @@ test('attention and unread follow a real turn, an open approval and mark_seen', 
       frame.conversation.attention === 'running',
   )
   again.stop()
-  await profile.call('agent.cancel', { conversation_id: conversationId })
+  await cancelActiveSubmission(profile, conversationId)
   await expect
     .poll(async () => (await profile.call('conversation.get', { conversation_id: conversationId })).conversation.status)
     .not.toMatch(/^(starting|running|waiting|cancelling)$/)
