@@ -6,6 +6,7 @@
 // observations, just before a runtime kill, keeps the attempt quarantined
 // after the provider exits: across a fresh observation, a later daemon start,
 // and until it exits itself.
+import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   expect,
@@ -50,12 +51,16 @@ test('an escaped provider descendant that survives a runtime kill keeps its agen
   // half a second later, so it is orphaned to launchd before escaped.pid exists.
   await profile.releaseMock('codex', 'escape-now')
   const escapedPid = await waitForPidFile(join(mockDirectory(profile.root, 'codex'), 'escaped.pid'))
+  // One escape only: the provider started after the resume below must not escape again.
+  await rm(join(mockDirectory(profile.root, 'codex'), 'escape-now'))
   await ade.ledger.own(escapedPid, 'escaped provider descendant')
   // Without a parent in the tree, the daemon can know it only from the
   // runtime's report. Wait for the record, not a time, then kill the runtime.
   await waitForRecordedDescendant(profile, key, escapedPid)
   const before = profile.hello
-  await profile.killRuntime()
+  // The runtime dies with its provider workers, so no worker shuts down in order and cleans up
+  // its native tree (an orderly worker shutdown kills the escapee it tracked).
+  await profile.killRuntimeAndWorkers()
   // The provider loses its stdin with the runtime and exits; the escapee does not.
   await expect.poll(() => isRunning(record.pid)).toBe(false)
   expect(await isRunning(escapedPid)).toBe(true)

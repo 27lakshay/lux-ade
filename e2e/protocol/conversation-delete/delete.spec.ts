@@ -273,7 +273,8 @@ test('a deletion survives a daemon kill: the tombstone holds, the receipt replay
   const olderPage = {
     conversation_id: conversationId,
     before: page.messages[0].sequence,
-    limit: 50,
+    // The largest page conversation.get takes.
+    limit: 32,
     history_epoch: page.history_epoch,
   }
   const deleted = await profile.call('conversation.delete', {

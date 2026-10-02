@@ -104,17 +104,21 @@ test('a quarantined provider tree keeps its lease and refuses admission until it
     })
     .toBeGreaterThan(0)
   const record = await waitForAttemptRecord(profile, `agent:${conversationId}`)
+  const nativePid = (await profile.mockCalls('codex')).find((call) => call.method === 'fixture/tool')!.pid
 
-  await profile.killRuntime()
-  // The provider is blocked in its tool and keeps running without an owner.
-  expect(await isRunning(record.pid)).toBe(true)
+  // The runtime dies with its provider workers, so no worker shuts down in order and cleans up the
+  // native tree (an orderly worker shutdown would stop the native provider and its tool).
+  await profile.killRuntimeAndWorkers()
+  // The worker is gone; the native provider is blocked in its tool and keeps running without an owner.
+  await expect.poll(() => isRunning(record.pid)).toBe(false)
+  expect(await isRunning(nativePid)).toBe(true)
   expect(await isRunning(toolPid)).toBe(true)
   await profile.restartDaemon()
 
   const key = `agent:${conversationId}`
   const found = await recoveryAttempt(profile, key)
   expect(found?.attempt).toMatchObject({ kind: 'provider_turn', classification: 'quarantined', resolved_at: null })
-  expect(found?.attempt.pids).toEqual(expect.arrayContaining([record.pid, toolPid]))
+  expect(found?.attempt.pids).toEqual(expect.arrayContaining([nativePid, toolPid]))
   expect(found?.report.open).toBeGreaterThan(0)
   const activity = await profile.call('activity.list', { limit: 200 })
   expect(
@@ -132,7 +136,7 @@ test('a quarantined provider tree keeps its lease and refuses admission until it
 
   // The orphaned tree finishes; a later observation settles the attempt.
   await profile.releaseMock('codex', 'release-tool')
-  await expect.poll(() => isRunning(record.pid), { timeout: 15_000 }).toBe(false)
+  await expect.poll(() => isRunning(nativePid), { timeout: 15_000 }).toBe(false)
   await expect
     .poll(async () => (await recoveryAttempt(profile, key))?.attempt.resolved_at ?? null, { timeout: 30_000 })
     .not.toBeNull()

@@ -14,7 +14,7 @@ import type { Response } from '../../../packages/contracts/dist/index.js'
 import { rpc } from '../../fixtures/daemon'
 import { binaries, scratchEnvironment, scratchGitConfig } from './environment'
 import { ScratchSecretStore } from './secret-store'
-import { isRunning, type ProcessLedger } from './processes'
+import { isRunning, processTable, type ProcessLedger } from './processes'
 import { mockCalls, providerEnvironment, releaseMock, type MockCall, type MockProvider } from './providers'
 
 export type Hello = Record<string, unknown> & {
@@ -290,6 +290,31 @@ export class ScratchProfile {
     await this.ledger.sweep()
     await this.logOperation({ via: 'fixture', event: 'kill runtime', pid: runtimePid })
     process.kill(runtimePid, 'SIGKILL')
+    await until(
+      'the killed runtime to exit',
+      async () => ((await isRunning(runtimePid)) ? undefined : true),
+      EXIT_TIMEOUT_MS,
+    )
+  }
+
+  /**
+   * SIGKILL the runtime and, at the same moment, the process group of every
+   * provider worker it started (the worker and the native client it owns), as
+   * a crash that takes the whole supervision chain down would. Unlike
+   * `killRuntime`, no worker shuts down in order, so nothing cleans up the
+   * native provider tree: a native provider, its tools and any escaped
+   * descendant keep running without an owner.
+   */
+  async killRuntimeAndWorkers(): Promise<void> {
+    const runtimePid = this.current?.runtime_pid ?? (await this.runtimeHello())?.pid
+    if (typeof runtimePid !== 'number') throw new Error('The scratch profile has no known runtime to kill')
+    await this.ledger.sweep()
+    const groups = new Set(
+      (await processTable()).filter((row) => row.ppid === runtimePid && row.pgid === row.pid).map((row) => row.pgid),
+    )
+    await this.logOperation({ via: 'fixture', event: 'kill runtime and workers', pid: runtimePid, groups: [...groups] })
+    process.kill(runtimePid, 'SIGKILL')
+    for (const group of groups) process.kill(-group, 'SIGKILL')
     await until(
       'the killed runtime to exit',
       async () => ((await isRunning(runtimePid)) ? undefined : true),

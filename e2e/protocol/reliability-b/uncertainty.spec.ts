@@ -123,7 +123,9 @@ test('a provider descendant that left its group before a runtime crash keeps the
     )
     .toContain(escapedPid)
 
-  await profile.killRuntime()
+  // The runtime dies with its provider workers, so no worker shuts down in order and cleans up
+  // its native tree (an orderly worker shutdown kills the escapee it tracked).
+  await profile.killRuntimeAndWorkers()
   await expect.poll(() => isRunning(record.pid)).toBe(false)
   expect(await isRunning(escapedPid)).toBe(true)
   await profile.restartDaemon()

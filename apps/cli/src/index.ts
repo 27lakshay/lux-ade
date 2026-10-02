@@ -436,6 +436,7 @@ async function main(): Promise<void> {
     }
     const result = await run(endpoint, words)
     const invalidTheme =
+      (result.type === 'theme_validation' && result.valid === false) ||
       (result.type === 'warp_theme_validation' &&
         typeof result.validation === 'object' &&
         result.validation !== null &&
